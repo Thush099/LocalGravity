@@ -22,11 +22,13 @@ import {
   deleteOllamaModel,
   ensureOllamaRunning,
   pullOllamaModel,
+  selectBestInstalledOllamaModel,
 } from './providers/ollama.mjs';
 import { CLOUD_PRESETS } from './providers/openai-compat.mjs';
 import {
   deleteSkill,
   importExternalSkills,
+  importSkillFromUrl,
   listExternalSkills,
   listSkills,
   readSkill,
@@ -50,6 +52,11 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.resolve(__dirname, '../ui');
 
+// Ensure Homebrew binaries are always reachable even if launched directly without Swift wrapper
+if (!String(process.env.PATH || '').includes('/opt/homebrew/bin')) {
+  process.env.PATH = `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:${process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'}`;
+}
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -60,9 +67,28 @@ const MIME_TYPES = {
   '.png': 'image/png',
 };
 
+let cachedToolStatus = null;
+let cachedToolStatusAt = 0;
+
 function sendJson(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
+}
+
+const PRIVATE_FETCH_HOST_RE = /^(?:localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
+
+function htmlToText(raw) {
+  return String(raw || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 async function readJsonBody(req, limitBytes = 4 * 1024 * 1024) {
@@ -120,21 +146,26 @@ async function getSystemStats() {
   } catch {
     // ignore
   }
-  const [ffmpegPath, magickPath, ollamaPath] = await Promise.all([
-    whichCmd('ffmpeg'),
-    whichCmd('magick'),
-    whichCmd('ollama'),
-  ]);
+  const now = Date.now();
+  if (!cachedToolStatus || now - cachedToolStatusAt > 60000) {
+    const [ffmpegPath, magickPath, ollamaPath] = await Promise.all([
+      whichCmd('ffmpeg'),
+      whichCmd('magick'),
+      whichCmd('ollama'),
+    ]);
+    cachedToolStatus = {
+      ffmpeg: Boolean(ffmpegPath),
+      magick: Boolean(magickPath),
+      ollama: Boolean(ollamaPath),
+    };
+    cachedToolStatusAt = now;
+  }
   return {
     arch: os.arch(),
     totalRamGb,
     freeDiskGb,
     totalDiskGb,
-    tools: {
-      ffmpeg: Boolean(ffmpegPath),
-      magick: Boolean(magickPath),
-      ollama: Boolean(ollamaPath),
-    },
+    tools: cachedToolStatus,
   };
 }
 
@@ -147,7 +178,7 @@ function maskConfigForClient(cfg) {
   return { config: rest, configuredKeys };
 }
 
-export function createAgentServer({ authToken, paths = getRuntimePaths() } = {}) {
+export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchFn = globalThis.fetch } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
   const resolveRunApprovals = (runState, reason) => {
@@ -198,11 +229,25 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
 
       // Health & System
       if (req.method === 'GET' && pathname === '/api/health') {
-        const [system, ollama, cfg] = await Promise.all([
+        const [system, ollama, loadedCfg] = await Promise.all([
           getSystemStats(),
           checkOllamaHealth(),
           loadConfig(paths),
         ]);
+        let cfg = loadedCfg;
+        // Auto-sync configured local model if default tag isn't installed but another local model is
+        if (
+          (cfg.provider || 'ollama') === 'ollama' &&
+          ollama.running &&
+          Array.isArray(ollama.models) &&
+          ollama.models.length > 0 &&
+          !ollama.models.some((m) => m.name === cfg.model)
+        ) {
+          const best = selectBestInstalledOllamaModel(ollama.models, cfg.model);
+          if (best && best !== cfg.model) {
+            cfg = await saveConfig({ model: best }, paths);
+          }
+        }
         sendJson(res, 200, {
           ok: true,
           system,
@@ -357,6 +402,7 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
               model: body.model || session.model || cfg.model,
               thinking: body.thinking !== undefined ? Boolean(body.thinking) : cfg.thinking,
               safetyMode: body.safetyMode || cfg.safetyMode,
+              ...(body.customBaseUrl ? { customBaseUrl: body.customBaseUrl } : {}),
             };
 
             await runAgentTurn({
@@ -401,6 +447,28 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
         const antigravitySkillsDir = path.join(os.homedir(), '.gemini', 'config', 'skills');
         const imported = await importExternalSkills(antigravitySkillsDir, body.names, paths);
         return sendJson(res, 200, { ok: true, imported });
+      }
+
+      // Import a SKILL.md from GitHub or any public raw URL
+      if (req.method === 'POST' && pathname === '/api/skills/import-url') {
+        const body = await readJsonBody(req);
+        const urls = (Array.isArray(body.urls) ? body.urls : body.url ? [body.url] : [])
+          .map((u) => String(u || '').trim())
+          .filter(Boolean)
+          .slice(0, 10);
+        if (urls.length === 0) {
+          return sendJson(res, 400, { ok: false, error: 'Provide a skill URL to import.' });
+        }
+        const imported = [];
+        const errors = [];
+        for (const rawUrl of urls) {
+          try {
+            imported.push(await importSkillFromUrl(rawUrl, { fetchFn, paths }));
+          } catch (err) {
+            errors.push({ url: rawUrl, error: err.message });
+          }
+        }
+        return sendJson(res, 200, { ok: imported.length > 0, imported, errors });
       }
 
       if (req.method === 'POST' && pathname === '/api/skills') {
@@ -455,6 +523,50 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
           paths
         );
         return sendJson(res, 200, { ok: true, saved });
+      }
+
+      // Pull a public page or raw text into the Knowledge Base
+      if (req.method === 'POST' && pathname === '/api/knowledge/import-url') {
+        const body = await readJsonBody(req);
+        const rawUrl = String(body.url || '').trim();
+        if (!rawUrl) return sendJson(res, 400, { ok: false, error: 'Provide a URL to import.' });
+        let parsed;
+        try {
+          parsed = new URL(rawUrl);
+        } catch {
+          return sendJson(res, 400, { ok: false, error: `Invalid URL: ${rawUrl}` });
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return sendJson(res, 400, { ok: false, error: 'Only http:// and https:// URLs are supported.' });
+        }
+        if (PRIVATE_FETCH_HOST_RE.test(parsed.hostname) || parsed.hostname.endsWith('.local')) {
+          return sendJson(res, 400, { ok: false, error: 'Refusing to import from local or private network hosts.' });
+        }
+        const fetched = await fetchFn(parsed.toString(), { signal: AbortSignal.timeout(15000) });
+        if (!fetched.ok) {
+          return sendJson(res, 502, { ok: false, error: `HTTP ${fetched.status} fetching ${parsed}` });
+        }
+        const text = htmlToText(await fetched.text()).slice(0, 200000);
+        if (!text) {
+          return sendJson(res, 422, { ok: false, error: 'The page contained no readable text.' });
+        }
+        const nameSource = String(body.name || parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname);
+        const name =
+          nameSource
+            .replace(/\.[a-z0-9]+$/i, '')
+            .replace(/[^a-zA-Z0-9_-]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 62) || `url-${Date.now()}`;
+        const saved = await saveKnowledge(
+          {
+            name,
+            title: String(body.title || parsed.hostname),
+            tags: ['imported', 'url'],
+            content: text,
+          },
+          paths
+        );
+        return sendJson(res, 200, { ok: true, saved, chars: text.length });
       }
 
       const knowMatch = pathname.match(/^\/api\/knowledge\/([^/]+)$/);
@@ -610,7 +722,13 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
     async start(port = 0) {
       await syncStarterSkills(paths);
       await ensureKnowledgeSeeded(paths);
-      await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', () => {
+          server.removeListener('error', reject);
+          resolve();
+        });
+      });
       const addr = server.address();
       return { port: addr.port, authToken: token };
     },

@@ -20,6 +20,8 @@ test('knowledge engine seeds MEMORY.md, stores docs safely, and searches matchin
   await ensureKnowledgeSeeded(paths);
   const initial = await listKnowledge(paths);
   assert.ok(initial.some((k) => k.name === 'MEMORY'));
+  assert.ok(initial.some((k) => k.name === 'LEARNED_FIXES'));
+  assert.equal(initial[0].name, 'LEARNED_FIXES');
 
   await saveKnowledge(
     {

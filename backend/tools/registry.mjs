@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import { LEARNED_FIXES_DOC, normalizeToolCall } from '../agent/self-improver.mjs';
 import { listKnowledge, readKnowledge, saveKnowledge, searchKnowledge } from '../knowledge-engine.mjs';
 import { listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
 import { getRuntimePaths } from '../state/paths.mjs';
@@ -5,7 +7,6 @@ import { runCommandTool } from './exec-tool.mjs';
 import { buildCompactDiff, editFileTool, listDir, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
 import { inspectMediaTool } from './media-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
-import fs from 'node:fs/promises';
 
 export const TOOL_DEFINITIONS = [
   {
@@ -164,6 +165,28 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'self_improve',
+      description: 'Record a mistake-prevention rule into LEARNED_FIXES.md and optionally program a reusable skill or helper script so you never repeat a mistake.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mistake: { type: 'string', description: 'What failed or caused friction.' },
+          fix: { type: 'string', description: 'Verified command, code pattern, or rule that solves it.' },
+          skill_name: { type: 'string', description: 'Optional lowercase hyphenated skill slug to create or update.' },
+          skill_content: { type: 'string', description: 'Optional markdown instructions for the skill.' },
+          helper_scripts: {
+            type: 'object',
+            description: 'Optional relative script files to bundle inside the skill (e.g. {"scripts/fix.sh": "..."}).',
+            additionalProperties: { type: 'string' },
+          },
+        },
+        required: ['mistake', 'fix'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'fetch_url',
       description: 'Fetch plain text/markdown content from a public HTTP/HTTPS URL (docs, raw GitHub SKILL.md, guides).',
       parameters: {
@@ -242,7 +265,11 @@ const ALWAYS_READONLY_TOOLS = new Set([
 /**
  * Evaluate whether a tool call should auto-run, pause for approval, or be blocked.
  */
-export function evaluateToolSafety({ name, args = {} }, context = {}) {
+export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, context = {}) {
+  const normalized = normalizeToolCall({ name: rawName, arguments: rawArgs });
+  const name = normalized.name;
+  const args = normalized.arguments;
+
   const {
     safetyMode = 'ask',
     isHeadless = false,
@@ -256,7 +283,7 @@ export function evaluateToolSafety({ name, args = {} }, context = {}) {
     return { decision: 'allow' };
   }
 
-  if (name === 'save_skill' || name === 'save_knowledge') {
+  if (name === 'save_skill' || name === 'save_knowledge' || name === 'self_improve') {
     return { decision: 'allow' };
   }
 
@@ -296,7 +323,11 @@ export function evaluateToolSafety({ name, args = {} }, context = {}) {
   return { decision: 'ask', reason: `Tool "${name}" requires approval.` };
 }
 
-export async function generateToolPreview({ name, args = {} }) {
+export async function generateToolPreview({ name: rawName, args: rawArgs = {} }) {
+  const normalized = normalizeToolCall({ name: rawName, arguments: rawArgs });
+  const name = normalized.name;
+  const args = normalized.arguments;
+
   if (name === 'run_command') return String(args.command || '');
   if (name === 'write_file') {
     const resolved = expandUserPath(args.path || '');
@@ -321,8 +352,12 @@ export async function generateToolPreview({ name, args = {} }) {
   return JSON.stringify(args, null, 2);
 }
 
-export async function executeToolCall({ name, args = {} }, context = {}) {
+export async function executeToolCall({ name: rawName, args: rawArgs = {} }, context = {}) {
+  const normalized = normalizeToolCall({ name: rawName, arguments: rawArgs });
+  const name = normalized.name;
+  const args = normalized.arguments;
   const paths = context.paths || getRuntimePaths();
+
   try {
     switch (name) {
       case 'list_dir':
@@ -368,12 +403,69 @@ export async function executeToolCall({ name, args = {} }, context = {}) {
         );
         return { ok: true, output: `Saved skill "${saved.slug}" to ${saved.path}` };
       }
+      case 'self_improve': {
+        const mistake = String(args.mistake || '').trim();
+        const fix = String(args.fix || '').trim();
+        if (!mistake || !fix) {
+          return { ok: false, output: 'Both "mistake" and "fix" are required for self_improve.' };
+        }
+        const existing = await readKnowledge(LEARNED_FIXES_DOC, paths);
+        const prevLines = existing?.content
+          ? existing.content
+              .split('\n')
+              .map((l) => l.trim())
+              .filter((l) => l.startsWith('- '))
+          : [];
+        const newRule = `- **Avoid**: ${mistake} -> **Fix**: ${fix}`;
+        if (!prevLines.some((l) => l.toLowerCase() === newRule.toLowerCase())) {
+          prevLines.push(newRule);
+        }
+        const body = [
+          '# Autonomous Self-Learned Mistake Prevention Rules',
+          '',
+          'Automatically programmed from past tool errors, command recoveries, and output struggles:',
+          '',
+          ...prevLines.slice(-25),
+        ].join('\n');
+        await saveKnowledge(
+          {
+            name: LEARNED_FIXES_DOC,
+            title: 'Self-Learned Mistake Prevention & Recovery Rules',
+            tags: ['self-improvement', 'mistakes', 'auto-learned'],
+            content: body,
+          },
+          paths
+        );
+        let skillMsg = '';
+        if (args.skill_name && args.skill_content) {
+          const slug = String(args.skill_name)
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/^-|-$/g, '');
+          const savedSkill = await saveSkill(
+            {
+              name: slug,
+              description: `Self-programmed workflow for: ${fix.slice(0, 100)}`,
+              triggers: ['self-improved', slug],
+              content: String(args.skill_content),
+              extraFiles: args.helper_scripts,
+            },
+            paths
+          );
+          skillMsg = ` Also programmed reusable skill "${savedSkill.slug}".`;
+        }
+        return {
+          ok: true,
+          output: `Recorded mistake-prevention rule into ${LEARNED_FIXES_DOC}.${skillMsg}`,
+        };
+      }
       case 'fetch_url': {
         const parsedUrl = new URL(String(args.url || ''));
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
           return { ok: false, output: 'Only http:// and https:// URLs are supported.' };
         }
-        const res = await fetch(parsedUrl.toString(), { signal: AbortSignal.timeout(12000) });
+        const fetchImpl = context.fetchFn || globalThis.fetch;
+        const res = await fetchImpl(parsedUrl.toString(), { signal: AbortSignal.timeout(12000) });
         if (!res.ok) {
           return { ok: false, output: `HTTP ${res.status} fetching ${parsedUrl}` };
         }

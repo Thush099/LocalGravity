@@ -1,17 +1,35 @@
 import crypto from 'node:crypto';
 
+function repairLooseJson(str) {
+  return String(str || '')
+    .trim()
+    // Remove trailing commas before } or ]
+    .replace(/,\s*([}\]])/g, '$1');
+}
+
 function parseToolBlock(inner) {
   const id = `fallback_${crypto.randomUUID().slice(0, 8)}`;
   const stripped = String(inner || '')
     .trim()
-    .replace(/^```(?:json|tool_call)?\s*\r?\n?/i, '')
+    .replace(/^```(?:json|tool_call|tool)?\s*\r?\n?/i, '')
     .replace(/\r?\n?```\s*$/, '')
     .trim();
   try {
-    const parsed = JSON.parse(stripped);
-    const name = parsed?.name || parsed?.function?.name;
-    const rawArgs = parsed?.arguments ?? parsed?.function?.arguments ?? {};
-    const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+    let parsed;
+    try {
+      parsed = JSON.parse(stripped);
+    } catch {
+      parsed = JSON.parse(repairLooseJson(stripped));
+    }
+    const name = parsed?.name || parsed?.tool || parsed?.function?.name;
+    const rawArgs =
+      parsed?.arguments ??
+      parsed?.args ??
+      parsed?.parameters ??
+      parsed?.input ??
+      parsed?.function?.arguments ??
+      {};
+    const args = typeof rawArgs === 'string' ? JSON.parse(repairLooseJson(rawArgs)) : rawArgs;
     if (!name || typeof name !== 'string') {
       return {
         id,
@@ -36,13 +54,33 @@ function parseToolBlock(inner) {
 }
 
 /**
- * Parse fallback tool calls emitted inside <tool_call>...</tool_call> tags or ```tool_call fences.
+ * Separate inline <think>...</think> blocks from assistant text if a model emits thinking inline.
+ */
+export function extractInlineThinking(text) {
+  const input = String(text || '');
+  const thoughts = [];
+  const thinkRe = /<think>\s*([\s\S]*?)\s*<\/think>/gi;
+  let cleaned = input.replace(thinkRe, (_m, inner) => {
+    if (inner && inner.trim()) thoughts.push(inner.trim());
+    return '';
+  });
+  return {
+    cleanedText: cleaned.trim(),
+    thinkingText: thoughts.join('\n\n'),
+  };
+}
+
+/**
+ * Parse fallback tool calls emitted inside <tool_call>...</tool_call>, ```tool_call fences,
+ * <function=name>{...}</function>, or standalone ```json tool call blocks.
  */
 export function extractFallbackToolCalls(text) {
   const input = String(text || '');
   const toolCalls = [];
   const tagRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
   const fenceRe = /```tool_call\s*\r?\n([\s\S]*?)\r?\n```/gi;
+  const fnTagRe = /<function=([a-zA-Z0-9_]+)>\s*([\s\S]*?)\s*<\/function>/gi;
+  const jsonFenceRe = /```json\s*\r?\n([\s\S]*?)\r?\n```/gi;
 
   let cleanedText = input.replace(tagRe, (_full, inner) => {
     toolCalls.push(parseToolBlock(inner));
@@ -53,6 +91,40 @@ export function extractFallbackToolCalls(text) {
     toolCalls.push(parseToolBlock(inner));
     return '';
   });
+
+  cleanedText = cleanedText.replace(fnTagRe, (_full, fnName, innerArgs) => {
+    const parsedArgs = safeParseArguments(innerArgs);
+    toolCalls.push({
+      id: `fallback_${crypto.randomUUID().slice(0, 8)}`,
+      name: fnName.trim(),
+      arguments: parsedArgs.arguments,
+      ...(parsedArgs.parseError ? { parseError: parsedArgs.parseError } : {}),
+    });
+    return '';
+  });
+
+  if (toolCalls.length === 0) {
+    cleanedText = cleanedText.replace(jsonFenceRe, (full, inner) => {
+      const trimmed = inner.trim();
+      if (!trimmed.startsWith('{')) return full;
+      try {
+        const candidate = JSON.parse(repairLooseJson(trimmed));
+        const hasToolKey = typeof (candidate?.name || candidate?.tool || candidate?.function?.name) === 'string';
+        const hasArgsKey =
+          candidate?.arguments !== undefined ||
+          candidate?.args !== undefined ||
+          candidate?.parameters !== undefined ||
+          candidate?.function?.arguments !== undefined;
+        if (hasToolKey && hasArgsKey) {
+          toolCalls.push(parseToolBlock(trimmed));
+          return '';
+        }
+      } catch {
+        // Keep regular JSON code block intact
+      }
+      return full;
+    });
+  }
 
   cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n').trim();
 
@@ -69,8 +141,13 @@ export function safeParseArguments(rawArgs) {
     try {
       const parsed = JSON.parse(trimmed);
       return { arguments: parsed && typeof parsed === 'object' ? parsed : {} };
-    } catch (err) {
-      return { arguments: {}, parseError: `Malformed tool arguments JSON: ${err.message}` };
+    } catch {
+      try {
+        const repaired = JSON.parse(repairLooseJson(trimmed));
+        return { arguments: repaired && typeof repaired === 'object' ? repaired : {} };
+      } catch (err) {
+        return { arguments: {}, parseError: `Malformed tool arguments JSON: ${err.message}` };
+      }
     }
   }
   return { arguments: {} };

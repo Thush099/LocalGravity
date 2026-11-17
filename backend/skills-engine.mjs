@@ -326,3 +326,92 @@ export async function importExternalSkills(sourceDir, names, paths = getRuntimeP
   }
   return imported;
 }
+
+const PRIVATE_HOST_RE = /^(?:localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
+
+/**
+ * Accept a raw SKILL.md URL or a github.com blob link and return a raw fetchable URL.
+ */
+export function normalizeSkillUrl(rawUrl) {
+  const text = String(rawUrl || '').trim();
+  if (!text) throw new Error('A skill URL is required.');
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`Invalid URL: ${text}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Only http:// and https:// skill URLs are supported.');
+  }
+  if (PRIVATE_HOST_RE.test(parsed.hostname) || parsed.hostname.endsWith('.local')) {
+    throw new Error('Refusing to fetch skills from local or private network hosts.');
+  }
+
+  const githubMatch = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/([^/]+)\/(.+)$/);
+  if (parsed.hostname === 'github.com' && githubMatch) {
+    const [, owner, repo, ref, filePath] = githubMatch;
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${filePath}`;
+  }
+  if (parsed.hostname === 'github.com') {
+    throw new Error('Use a direct file link (github.com/<owner>/<repo>/blob/<ref>/.../SKILL.md) or a raw URL.');
+  }
+  return parsed.toString();
+}
+
+/**
+ * Convert an arbitrary skill name into a safe directory slug.
+ */
+export function slugifySkillName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63);
+}
+
+/**
+ * Download a SKILL.md from GitHub or any public raw URL and install it as a LocalGravity skill.
+ */
+export async function importSkillFromUrl(rawUrl, { fetchFn = globalThis.fetch, paths = getRuntimePaths() } = {}) {
+  const url = normalizeSkillUrl(rawUrl);
+  const response = await fetchFn(url, { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} fetching ${url}`);
+  }
+  const raw = (await response.text()).replace(/^\uFEFF/, '');
+  if (raw.length > 512 * 1024) {
+    throw new Error('Skill file is larger than the 512 KB import limit.');
+  }
+
+  const parsed = parseFrontmatter(raw);
+  const fallbackName = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || '').replace(
+    /\.md$/i,
+    ''
+  );
+  const slug = slugifySkillName(parsed.name || fallbackName);
+  if (!SKILL_SLUG_RE.test(slug)) {
+    throw new Error(`Could not derive a valid skill slug from ${url}`);
+  }
+  if (!parsed.body.trim()) {
+    throw new Error(`No skill instructions found at ${url}`);
+  }
+
+  const firstProseLine = parsed.body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('#'));
+  const description = parsed.description || firstProseLine || 'Imported skill';
+
+  const saved = await saveSkill(
+    {
+      name: slug,
+      description,
+      triggers: parsed.triggers,
+      content: parsed.body,
+    },
+    paths
+  );
+
+  return { slug: saved.slug, description, triggers: parsed.triggers, sourceUrl: url };
+}

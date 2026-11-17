@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureKnowledgeSeeded, listKnowledge, readKnowledge } from '../knowledge-engine.mjs';
 import { streamAnthropicChat } from '../providers/anthropic.mjs';
@@ -6,12 +5,21 @@ import { DEFAULT_OLLAMA_URL, streamOllamaChat } from '../providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../providers/openai-compat.mjs';
 import { listSkills, syncStarterSkills } from '../skills-engine.mjs';
 import { getRepoPath, getRuntimePaths } from '../state/paths.mjs';
-import { saveSession } from '../state/storage.mjs';
+import { saveConfig, saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
 import { compactConversation, estimateMessagesTokens } from './compactor.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
+import { selectRelevantSkills } from './skill-match.mjs';
+import {
+  loadLearnedFixesExcerpt,
+  normalizeToolCall,
+  persistTurnLearnings,
+  synthesizeFallbackOutput,
+  TurnStruggleTracker,
+} from './self-improver.mjs';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.heic', '.gif', '.tiff', '.bmp']);
+const seededRoots = new Set();
 
 function resolveProviderChatFn(providerConfig = {}) {
   const provider = providerConfig.provider || 'ollama';
@@ -22,8 +30,8 @@ function resolveProviderChatFn(providerConfig = {}) {
         model: providerConfig.model || 'qwen3.5:9b',
         messages: req.messages,
         tools: req.tools,
-        thinking: providerConfig.thinking ?? true,
-        numCtx: providerConfig.numCtx || 16384,
+        thinking: providerConfig.thinking ?? false,
+        numCtx: providerConfig.numCtx || 8192,
         signal: req.signal,
         onEvent: req.onEvent,
       });
@@ -98,13 +106,22 @@ function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') 
     pendingToolImages = [];
   };
 
-  for (const msg of sessionMessages) {
+  const totalCount = sessionMessages.length;
+  for (let idx = 0; idx < totalCount; idx++) {
+    const msg = sessionMessages[idx];
     if (msg.role === 'system') continue;
     if (msg.role !== 'tool') {
       flushImages();
       out.push(msg);
     } else {
-      out.push(msg);
+      // Trim older giant tool outputs so local models don't bog down on multi-step turns
+      const isOlderTool = idx < totalCount - 4;
+      const rawContent = String(msg.content || '');
+      const trimmedContent =
+        isOlderTool && rawContent.length > 2400
+          ? `${rawContent.slice(0, 2200)}\n... [earlier tool output truncated for speed]`
+          : rawContent;
+      out.push({ ...msg, content: trimmedContent });
       if (Array.isArray(msg.images) && msg.images.length > 0) {
         pendingToolImages.push(...msg.images);
       }
@@ -115,7 +132,8 @@ function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') 
 }
 
 /**
- * Execute an iterative ReAct agent turn with streaming events, interactive approval, and vision feedback.
+ * Execute an iterative ReAct agent turn with streaming events, interactive approval, vision feedback,
+ * and autonomous self-healing / mistake learning.
  */
 export async function runAgentTurn({
   session,
@@ -133,8 +151,11 @@ export async function runAgentTurn({
   persistSession = true,
   cwd,
 }) {
-  await syncStarterSkills(paths);
-  await ensureKnowledgeSeeded(paths);
+  if (!seededRoots.has(paths.root)) {
+    await syncStarterSkills(paths);
+    await ensureKnowledgeSeeded(paths);
+    seededRoots.add(paths.root);
+  }
 
   const attached = await prepareAttachmentContext(attachments, paths);
   const fullUserText =
@@ -159,17 +180,25 @@ export async function runAgentTurn({
   const safetyMode = providerConfig.safetyMode || 'ask';
   const numCtx = Number(providerConfig.numCtx) || 8192;
   const provider = providerConfig.provider || 'ollama';
+  const tracker = new TurnStruggleTracker();
+  const executedToolResults = [];
+  let emptyOutputRetried = false;
 
-  const [skills, knowledgeDocs, memoryDoc] = await Promise.all([
+  const [skills, knowledgeDocs, memoryDoc, learnedFixesExcerpt] = await Promise.all([
     listSkills(paths),
     listKnowledge(paths),
     readKnowledge('MEMORY', paths),
+    loadLearnedFixesExcerpt(paths),
   ]);
+
+  const suggestedSkills = selectRelevantSkills(skills, fullUserText);
 
   const systemPrompt = buildSystemPrompt({
     skills,
+    suggestedSkills,
     knowledgeDocs,
     memoryContent: memoryDoc?.content || '',
+    learnedFixesContent: learnedFixesExcerpt,
     repoPath: getRepoPath(),
     safetyMode,
     isHeadless,
@@ -220,19 +249,79 @@ export async function runAgentTurn({
         messages: modelMessages,
         tools: TOOL_DEFINITIONS,
         signal: abortSignal,
-        onEvent,
+        onEvent: (evt) => {
+          if (evt?.type === 'self_improved' && evt.resolvedModel && persistSession) {
+            session.model = evt.resolvedModel;
+            saveConfig({ model: evt.resolvedModel }, paths).catch(() => {});
+          }
+          onEvent?.(evt);
+        },
       });
+
+      const rawToolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+      const normalizedCalls = rawToolCalls.map((tc) => {
+        const norm = normalizeToolCall(tc);
+        if (norm.repaired) {
+          tracker.recordAliasRepair(norm.name, norm.repairNote);
+        }
+        return norm;
+      });
+
+      // Self-healing when model struggles to produce visible output and emits no tool calls
+      let finalContent = String(response.content || '').trim();
+      if (!finalContent && normalizedCalls.length === 0) {
+        if (!emptyOutputRetried && step < maxSteps - 1 && !chatFn) {
+          emptyOutputRetried = true;
+          tracker.recordEmptyOutputRecovery('Model returned empty content; triggered self-correction step');
+          session.messages.push({
+            role: 'assistant',
+            content: '',
+            thinking: response.thinking || '',
+            createdAt: new Date().toISOString(),
+          });
+          session.messages.push({
+            role: 'user',
+            content:
+              '[Self-Correction] Your previous step produced no visible output. Provide the direct final answer to the user now, or call the required tool.',
+            isSelfCorrection: true,
+            createdAt: new Date().toISOString(),
+          });
+          continue;
+        }
+
+        // Synthesize fallback output from thinking or executed tool results so the user never sees a blank reply
+        finalContent = synthesizeFallbackOutput({
+          thinking: response.thinking || '',
+          toolResults: executedToolResults,
+        });
+        tracker.recordEmptyOutputRecovery('Synthesized direct output from thinking/tool results');
+        if (finalContent) {
+          onEvent?.({ type: 'text_delta', text: finalContent });
+        }
+      }
+
+      // Clean up temporary self-correction prompt from persisted history once resolved
+      session.messages = session.messages.filter((m) => !m.isSelfCorrection);
 
       const assistantEntry = {
         role: 'assistant',
-        content: response.content || '',
+        content: finalContent || response.content || '',
         thinking: response.thinking || '',
-        toolCalls: Array.isArray(response.toolCalls) && response.toolCalls.length > 0 ? response.toolCalls : undefined,
+        toolCalls: normalizedCalls.length > 0 ? normalizedCalls : undefined,
         createdAt: new Date().toISOString(),
       };
       session.messages.push(assistantEntry);
 
       if (!assistantEntry.toolCalls || assistantEntry.toolCalls.length === 0) {
+        if (tracker.hasStruggles()) {
+          const learned = await persistTurnLearnings({ tracker, userMessage, paths }).catch(() => ({
+            learnedCount: 0,
+            lessons: [],
+          }));
+          if (learned.lessons.length > 0) {
+            onEvent?.({ type: 'self_improved', lessons: learned.lessons });
+          }
+        }
         session.updatedAt = new Date().toISOString();
         if (persistSession) await saveSession(session, paths);
         onEvent?.({ type: 'done', status: 'completed', usage: response.usage || {} });
@@ -246,7 +335,8 @@ export async function runAgentTurn({
         }
 
         if (tc.parseError) {
-          const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid JSON arguments.`;
+          tracker.recordParseError(tc.name, tc.parseError);
+          const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid double-quoted JSON arguments.`;
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, content: errOut });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: errOut });
           continue;
@@ -254,6 +344,25 @@ export async function runAgentTurn({
 
         let effectiveArgs = { ...(tc.arguments || {}) };
         onEvent?.({ type: 'tool_call', toolCallId: tc.id, name: tc.name, arguments: effectiveArgs });
+
+        // Break infinite duplicate tool call loops within the same turn
+        const dupCheck = tracker.checkDuplicateCall(tc.name, effectiveArgs);
+        if (dupCheck.isDuplicate) {
+          session.messages.push({
+            role: 'tool',
+            toolCallId: tc.id,
+            toolName: tc.name,
+            content: dupCheck.message,
+          });
+          onEvent?.({
+            type: 'tool_result',
+            toolCallId: tc.id,
+            name: tc.name,
+            ok: false,
+            output: dupCheck.message,
+          });
+          continue;
+        }
 
         const gate = evaluateToolSafety(
           { name: tc.name, args: effectiveArgs },
@@ -322,11 +431,29 @@ export async function runAgentTurn({
           }
         );
 
+        const outcome = tracker.recordToolOutcome({
+          name: tc.name,
+          args: effectiveArgs,
+          ok: result.ok,
+          output: result.output,
+        });
+
+        const enrichedOutput =
+          outcome.failed && outcome.hint
+            ? `${result.output}\n\n[Self-Healing Hint] ${outcome.hint}`
+            : result.output;
+
+        executedToolResults.push({
+          name: tc.name,
+          ok: result.ok,
+          output: result.output,
+        });
+
         session.messages.push({
           role: 'tool',
           toolCallId: tc.id,
           toolName: tc.name,
-          content: result.output,
+          content: enrichedOutput,
           images: result.images,
           diff: result.diff,
         });
@@ -336,7 +463,7 @@ export async function runAgentTurn({
           toolCallId: tc.id,
           name: tc.name,
           ok: result.ok,
-          output: result.output,
+          output: enrichedOutput,
           diff: result.diff,
           images: result.images,
         });
@@ -344,6 +471,16 @@ export async function runAgentTurn({
 
       session.updatedAt = new Date().toISOString();
       if (persistSession) await saveSession(session, paths);
+    }
+
+    if (tracker.hasStruggles()) {
+      const learned = await persistTurnLearnings({ tracker, userMessage, paths }).catch(() => ({
+        learnedCount: 0,
+        lessons: [],
+      }));
+      if (learned.lessons.length > 0) {
+        onEvent?.({ type: 'self_improved', lessons: learned.lessons });
+      }
     }
 
     const maxStepsMsg = `Reached maximum step limit (${maxSteps}) for this turn.`;
@@ -359,6 +496,12 @@ export async function runAgentTurn({
       onEvent?.({ type: 'done', status: 'cancelled' });
       return { session, status: 'cancelled' };
     }
+    tracker.struggles.push({
+      type: 'turn_error',
+      toolName: 'agent_turn',
+      lesson: `Runtime error "${err.message}": verify model availability and tool arguments before execution.`,
+    });
+    await persistTurnLearnings({ tracker, userMessage, paths }).catch(() => {});
     session.messages.push({
       role: 'assistant',
       content: `> Error: ${err.message}`,

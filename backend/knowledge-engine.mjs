@@ -22,6 +22,14 @@ Record stable preferences, machine conventions, preferred editing styles, and pe
 - Default file deletion policy: Move files to Trash instead of permanently deleting unless asked.
 `;
 
+const DEFAULT_LEARNED_FIXES_BODY = `# Autonomous Self-Learned Mistake Prevention Rules
+
+Automatically programmed from past tool errors, command recoveries, and output struggles so LocalGravity improves on every run:
+
+- Always verify target file paths and exact snippet lines before running edit_file, or use whitespace-tolerant matching.
+- Always include /opt/homebrew/bin and /usr/local/bin in PATH when invoking ffmpeg, magick, or ollama on Apple Silicon.
+`;
+
 export async function ensureKnowledgeSeeded(paths = getRuntimePaths()) {
   await fs.mkdir(paths.knowledgeDir, { recursive: true });
   const memoryPath = path.join(paths.knowledgeDir, 'MEMORY.md');
@@ -36,6 +44,20 @@ export async function ensureKnowledgeSeeded(paths = getRuntimePaths()) {
       DEFAULT_MEMORY_BODY
     );
     await fs.writeFile(memoryPath, seeded, 'utf8');
+  }
+
+  const fixesPath = path.join(paths.knowledgeDir, 'LEARNED_FIXES.md');
+  try {
+    await fs.access(fixesPath);
+  } catch {
+    const seededFixes = formatFrontmatter(
+      {
+        title: 'Self-Learned Mistake Prevention & Recovery Rules',
+        tags: ['self-improvement', 'mistakes', 'auto-learned'],
+      },
+      DEFAULT_LEARNED_FIXES_BODY
+    );
+    await fs.writeFile(fixesPath, seededFixes, 'utf8');
   }
 }
 
@@ -62,9 +84,11 @@ export async function listKnowledge(paths = getRuntimePaths()) {
       // Ignore unreadable docs
     }
   }
+  const rank = (name) => (name === 'LEARNED_FIXES' ? 0 : name === 'MEMORY' ? 1 : 2);
   docs.sort((a, b) => {
-    if (a.name === 'MEMORY') return -1;
-    if (b.name === 'MEMORY') return 1;
+    const ra = rank(a.name);
+    const rb = rank(b.name);
+    if (ra !== rb) return ra - rb;
     return a.name.localeCompare(b.name);
   });
   return docs;

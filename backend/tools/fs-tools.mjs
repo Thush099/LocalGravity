@@ -109,13 +109,74 @@ export async function writeFileTool({ path: filePath, content, overwrite = true 
   };
 }
 
+function tryWhitespaceNormalizedReplace(original, target, replacement) {
+  const origLines = original.split(/\r?\n/);
+  const targetLines = String(target || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l, idx, arr) => !(idx === 0 && !l) && !(idx === arr.length - 1 && !l));
+
+  if (targetLines.length === 0) return null;
+
+  for (let i = 0; i <= origLines.length - targetLines.length; i++) {
+    let matches = true;
+    for (let j = 0; j < targetLines.length; j++) {
+      if (origLines[i + j].trim() !== targetLines[j]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      const before = origLines.slice(0, i);
+      const after = origLines.slice(i + targetLines.length);
+      return [...before, String(replacement ?? ''), ...after].join('\n');
+    }
+  }
+  return null;
+}
+
 export async function editFileTool({ path: filePath, target, replacement }) {
   const resolved = expandUserPath(filePath);
   const original = await fs.readFile(resolved, 'utf8');
-  if (!target || !original.includes(target)) {
-    return { ok: false, output: `Target snippet not found in ${resolved}` };
+  const needle = String(target || '');
+
+  if (!needle) {
+    return { ok: false, output: `Target snippet cannot be empty when editing ${resolved}` };
   }
-  const updated = original.replaceAll(target, () => String(replacement ?? ''));
+
+  let updated = null;
+  if (original.includes(needle)) {
+    updated = original.replaceAll(needle, () => String(replacement ?? ''));
+  } else {
+    updated = tryWhitespaceNormalizedReplace(original, needle, replacement);
+  }
+
+  if (updated === null) {
+    // Provide nearby line preview so the model can immediately self-correct without an extra read_file round-trip
+    const firstNonEmpty = needle
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length >= 3);
+    const origLines = original.split(/\r?\n/);
+    let contextHint = '';
+    if (firstNonEmpty) {
+      const hitIdx = origLines.findIndex((l) => l.toLowerCase().includes(firstNonEmpty.slice(0, 24).toLowerCase()));
+      if (hitIdx !== -1) {
+        const start = Math.max(0, hitIdx - 2);
+        const end = Math.min(origLines.length, hitIdx + 6);
+        const preview = origLines
+          .slice(start, end)
+          .map((l, idx) => `${start + idx + 1}: ${l}`)
+          .join('\n');
+        contextHint = `\nClosest lines in ${resolved}:\n${preview}`;
+      }
+    }
+    return {
+      ok: false,
+      output: `Target snippet not found in ${resolved}.${contextHint}`,
+    };
+  }
+
   await fs.writeFile(resolved, updated, 'utf8');
   return {
     ok: true,

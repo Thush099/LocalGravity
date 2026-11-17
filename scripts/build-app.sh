@@ -3,14 +3,27 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="LocalGravity"
-APP_BUNDLE="/Applications/${APP_NAME}.app"
+DEFAULT_BUNDLE="/Applications/${APP_NAME}.app"
+FALLBACK_BUNDLE="${REPO_ROOT}/build/${APP_NAME}.app"
+
+if [ -n "${APP_BUNDLE_OVERRIDE:-}" ]; then
+  APP_BUNDLE="${APP_BUNDLE_OVERRIDE}"
+elif mkdir -p "/Applications/.lg_write_test_$$" 2>/dev/null; then
+  rmdir "/Applications/.lg_write_test_$$" 2>/dev/null || true
+  APP_BUNDLE="${DEFAULT_BUNDLE}"
+else
+  APP_BUNDLE="${FALLBACK_BUNDLE}"
+fi
+
 CONTENTS="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
 
-echo "Building ${APP_NAME}.app from ${REPO_ROOT}..."
+echo "Building ${APP_NAME}.app from ${REPO_ROOT} -> ${APP_BUNDLE}..."
 mkdir -p "${REPO_ROOT}/build"
-node "${REPO_ROOT}/scripts/generate-icon.mjs" "${REPO_ROOT}/build/AppIcon.icns"
+if [ ! -f "${REPO_ROOT}/build/AppIcon.icns" ]; then
+  node "${REPO_ROOT}/scripts/generate-icon.mjs" "${REPO_ROOT}/build/AppIcon.icns"
+fi
 
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
@@ -70,11 +83,11 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
 PLIST
 
 echo -n "APPL????" > "${CONTENTS}/PkgInfo"
-codesign --force --deep --sign - "${APP_BUNDLE}"
+codesign --force --deep --sign - "${APP_BUNDLE}" || true
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [ -x "${LSREGISTER}" ]; then
-  "${LSREGISTER}" -f "${APP_BUNDLE}" || true
+  "${LSREGISTER}" -f "${APP_BUNDLE}" 2>/dev/null || true
 fi
 
 echo "Installed: ${APP_BUNDLE}"

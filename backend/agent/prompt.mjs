@@ -5,8 +5,10 @@ import os from 'node:os';
  */
 export function buildSystemPrompt({
   skills = [],
+  suggestedSkills = [],
   knowledgeDocs = [],
   memoryContent = '',
+  learnedFixesContent = '',
   repoPath = '',
   safetyMode = 'ask',
   isHeadless = false,
@@ -15,8 +17,18 @@ export function buildSystemPrompt({
 }) {
   const skillLines =
     skills.length > 0
-      ? skills.map((s) => `- ${s.slug || s.name}: ${s.description}`).join('\n')
+      ? skills
+          .map((s) => {
+            const triggers = Array.isArray(s.triggers) ? s.triggers.slice(0, 6).join(', ') : '';
+            return `- ${s.slug || s.name}: ${s.description}${triggers ? ` (triggers: ${triggers})` : ''}`;
+          })
+          .join('\n')
       : '- (none installed)';
+
+  const suggestedLines =
+    suggestedSkills.length > 0
+      ? suggestedSkills.map((s) => `- ${s.slug || s.name}: ${s.description}`).join('\n')
+      : '';
 
   const knowledgeLines =
     knowledgeDocs.length > 0
@@ -24,6 +36,7 @@ export function buildSystemPrompt({
       : '- (no knowledge documents yet)';
 
   const trimmedMemory = String(memoryContent || '').trim().slice(0, 1200);
+  const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, 1000);
   const modeLine = isHeadless
     ? allowAutoRun
       ? 'Mode: Scheduled background Auto-Run (catastrophic commands permanently blocked).'
@@ -43,15 +56,21 @@ export function buildSystemPrompt({
     repoPath
       ? `3. **Self-reprogramming your own codebase:** When asked to reprogram or upgrade LocalGravity itself (new UI, tools, providers, or behaviors), read \`read_skill("self-upgrade")\` and edit your source repo at \`${repoPath}\`. Always write/update tests, verify \`npm test\` passes, and rebuild \`npm run build:app\` before asking the user to relaunch.`
       : '',
-    '4. **Engineering & Verification:** Read files before editing (`read_file`/`search_files`). After editing code or running scripts, execute real tests/checks (`run_command`) and report only directly observed results.',
-    '5. **Visual Media Inspection:** When editing photos or videos, call `inspect_media` before and after edits to visually verify framing, lighting, and text.',
-    '6. **Be crisp and direct:** Skip throat-clearing, apologies, and AI clichés. State exact actions, file paths, and results.',
+    '4. **Autonomous Self-Healing & Mistake Learning:** If a command, edit, or tool call fails, never repeat the identical failing call. Diagnose the root cause from the `[Self-Healing Hint]`, pivot immediately, and call `self_improve` (or `save_skill`) to program the verified fix and helper script so you never repeat that mistake.',
+    '5. **Engineering & Verification:** Read files before editing (`read_file`/`search_files`). After editing code or running scripts, execute real tests/checks (`run_command`) and report only directly observed results.',
+    '6. **Visual Media Inspection:** When editing photos or videos, call `inspect_media` before and after edits to visually verify framing, lighting, and text.',
+    '7. **Always provide a direct final response:** Never end a turn with an empty reply. Skip throat-clearing and state exact actions, file paths, and results.',
     '',
     '## Installed Skills (call read_skill(name) when relevant)',
     skillLines,
     '',
+    suggestedLines
+      ? `## Most Relevant Skills For This Turn (read one with read_skill before acting when it matches)\n${suggestedLines}`
+      : '',
+    '',
     '## Knowledge Base Docs (call search_knowledge / read_knowledge when relevant)',
     knowledgeLines,
+    trimmedFixes ? `\n## Self-Learned Mistake Prevention Rules (LEARNED_FIXES.md)\n${trimmedFixes}` : '',
     trimmedMemory ? `\n## Persistent User Memory (MEMORY.md)\n${trimmedMemory}` : '',
   ]
     .filter((line) => line !== undefined)

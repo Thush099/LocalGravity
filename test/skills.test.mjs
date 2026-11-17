@@ -12,6 +12,8 @@ import {
   saveSkill,
   deleteSkill,
   importExternalSkills,
+  importSkillFromUrl,
+  normalizeSkillUrl,
 } from '../backend/skills-engine.mjs';
 
 test('skills engine syncs starters without clobbering edits, rejects path traversal, and imports skills', async () => {
@@ -71,6 +73,37 @@ test('skills engine syncs starters without clobbering edits, rejects path traver
   assert.equal(await deleteSkill('humanizer', paths), true);
   await syncStarterSkills(paths);
   assert.equal(await readSkill('humanizer', paths), null);
+
+  // Remote SKILL.md import: GitHub blob URLs normalize, frontmatter is parsed, slug is derived
+  assert.equal(
+    normalizeSkillUrl('https://github.com/owner/repo/blob/main/skills/remote/SKILL.md'),
+    'https://raw.githubusercontent.com/owner/repo/main/skills/remote/SKILL.md'
+  );
+  const remoteMarkdown =
+    '---\nname: Remote Skill\ndescription: Imported from a URL\ntriggers: ["remote", "import"]\n---\n\n# Remote workflow\n\n1. Do the thing.';
+  const remote = await importSkillFromUrl('https://github.com/owner/repo/blob/main/skills/remote/SKILL.md', {
+    fetchFn: async () => new Response(remoteMarkdown),
+    paths,
+  });
+  assert.equal(remote.slug, 'remote-skill');
+  assert.equal(remote.description, 'Imported from a URL');
+  const remoteReloaded = await readSkill('remote-skill', paths);
+  assert.match(remoteReloaded.content, /Remote workflow/);
+  assert.equal(await deleteSkill('remote-skill', paths), true);
+
+  // Unsafe or non-http URLs are rejected before any network call
+  let fetched = false;
+  const noFetch = async () => {
+    fetched = true;
+    return new Response('nope');
+  };
+  await assert.rejects(() =>
+    importSkillFromUrl('file:///etc/passwd', { fetchFn: noFetch, paths })
+  );
+  await assert.rejects(() =>
+    importSkillFromUrl('http://127.0.0.1:8787/SKILL.md', { fetchFn: noFetch, paths })
+  );
+  assert.equal(fetched, false);
 
   await fs.rm(tmpHome, { recursive: true, force: true });
 });

@@ -18,8 +18,9 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
   - **Safety Policies:** Interactive **Ask** mode pauses mutating commands and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
 - **Self-Teaching Skills & Knowledge Base:**
   - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
-  - Includes **9 Starter Skills**: `coding-engineer`, `systematic-debugger`, `frontend-architect`, `self-upgrade`, `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
-  - One-click **Teach as skill**, **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+  - Includes **16 Starter Skills**: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `data-analyst`, `self-upgrade`, `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
+  - One-click **Teach as skill**, **Import from GitHub** (paste any raw `SKILL.md` or `github.com/.../blob/...` link), **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+  - **Turn-aware skill hints:** each message is scored against skill triggers, and the two best matches are surfaced in the system prompt so small local models load the right playbook.
 - **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, and follow-up message queueing / instant interrupt while a turn is running.
 - **Scheduled Background Automations (`launchd`):**
   - Save any workflow as a one-click Automation card or attach an hourly/daily `launchd` schedule (`~/Library/LaunchAgents/com.localgravity.<id>.plist`).

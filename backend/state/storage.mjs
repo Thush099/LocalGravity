@@ -5,6 +5,7 @@ import { getRuntimePaths } from './paths.mjs';
 
 const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$/;
 const writeQueues = new Map();
+const sessionSummariesCache = new Map();
 
 export const DEFAULT_CONFIG = {
   provider: 'ollama',
@@ -23,6 +24,18 @@ function sanitizeId(id, label = 'id') {
     throw new Error(`Invalid ${label}: must match ${SAFE_ID_RE}`);
   }
   return id;
+}
+
+function toSessionSummary(data) {
+  return {
+    id: data.id,
+    title: data.title || 'Untitled Task',
+    source: data.source || 'interactive',
+    provider: data.provider || 'ollama',
+    model: data.model || 'qwen3.5:9b',
+    updatedAt: data.updatedAt || '',
+    messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
+  };
 }
 
 /**
@@ -95,6 +108,10 @@ export async function saveSession(session, paths = getRuntimePaths()) {
     messages: Array.isArray(session.messages) ? session.messages : [],
   };
   await atomicWriteJson(path.join(paths.sessionsDir, `${id}.json`), normalized, 0o600);
+  let dirCache = sessionSummariesCache.get(paths.sessionsDir);
+  if (dirCache) {
+    dirCache.set(id, toSessionSummary(normalized));
+  }
   return normalized;
 }
 
@@ -106,21 +123,33 @@ export async function loadSession(id, paths = getRuntimePaths()) {
 export async function listSessions(paths = getRuntimePaths()) {
   try {
     const entries = await fs.readdir(paths.sessionsDir, { withFileTypes: true });
+    const jsonFiles = entries.filter((e) => e.isFile() && e.name.endsWith('.json'));
+    let dirCache = sessionSummariesCache.get(paths.sessionsDir);
+    if (!dirCache) {
+      dirCache = new Map();
+      sessionSummariesCache.set(paths.sessionsDir, dirCache);
+    }
+
+    const activeIds = new Set();
     const summaries = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    for (const entry of jsonFiles) {
+      const idFromFile = entry.name.slice(0, -5);
+      activeIds.add(idFromFile);
+      if (dirCache.has(idFromFile)) {
+        summaries.push(dirCache.get(idFromFile));
+        continue;
+      }
       const data = await readJsonSafe(path.join(paths.sessionsDir, entry.name), null);
       if (!data?.id) continue;
-      summaries.push({
-        id: data.id,
-        title: data.title || 'Untitled Task',
-        source: data.source || 'interactive',
-        provider: data.provider || 'ollama',
-        model: data.model || 'qwen3.5:9b',
-        updatedAt: data.updatedAt || '',
-        messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
-      });
+      const sum = toSessionSummary(data);
+      dirCache.set(data.id, sum);
+      summaries.push(sum);
     }
+
+    for (const cachedId of dirCache.keys()) {
+      if (!activeIds.has(cachedId)) dirCache.delete(cachedId);
+    }
+
     summaries.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     return summaries;
   } catch {
@@ -132,6 +161,7 @@ export async function deleteSession(id, paths = getRuntimePaths()) {
   const safeId = sanitizeId(id, 'session id');
   try {
     await fs.unlink(path.join(paths.sessionsDir, `${safeId}.json`));
+    sessionSummariesCache.get(paths.sessionsDir)?.delete(safeId);
     return true;
   } catch {
     return false;

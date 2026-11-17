@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { extractFallbackToolCalls, readResponseLines, safeParseArguments } from './tool-parser.mjs';
+import {
+  extractFallbackToolCalls,
+  extractInlineThinking,
+  readResponseLines,
+  safeParseArguments,
+} from './tool-parser.mjs';
 
 export const CLOUD_PRESETS = {
   openrouter: {
@@ -29,8 +34,14 @@ export const CLOUD_PRESETS = {
     id: 'gemini',
     label: 'Google Gemini (API Key)',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    defaultModel: 'gemini-2.5-flash',
-    suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    defaultModel: 'gemini-4-argon',
+    suggestedModels: [
+      'gemini-4-argon',
+      'gemini-4-hydrogen',
+      'gemini-4-carbon',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ],
   },
   openai: {
     id: 'openai',
@@ -191,6 +202,14 @@ export async function streamOpenAIChat({
       }
     }
   });
+
+  if (/<think>/i.test(content)) {
+    const inline = extractInlineThinking(content);
+    content = inline.cleanedText;
+    if (inline.thinkingText) {
+      thinkingText = thinkingText ? `${thinkingText}\n${inline.thinkingText}` : inline.thinkingText;
+    }
+  }
 
   if (toolAcc.size > 0) {
     const toolCalls = [...toolAcc.entries()]

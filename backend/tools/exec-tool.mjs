@@ -1,6 +1,18 @@
 import { spawn } from 'node:child_process';
 import { expandUserPath } from './safety.mjs';
 
+function buildShellEnv(baseEnv = process.env) {
+  const curPath = baseEnv.PATH || '/usr/bin:/bin:/usr/sbin:/sbin';
+  const fullPath = curPath.includes('/opt/homebrew/bin')
+    ? curPath
+    : `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:${curPath}`;
+  return {
+    ...baseEnv,
+    PATH: fullPath,
+    TERM: 'dumb',
+  };
+}
+
 /**
  * Execute a zsh command with streaming callbacks, timeout protection, and clean process-group teardown.
  */
@@ -10,7 +22,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
     const child = spawn('/bin/zsh', ['-lc', command], {
       cwd: resolvedCwd,
       detached: true,
-      env: { ...process.env, TERM: 'dumb' },
+      env: buildShellEnv(process.env),
     });
 
     let stdout = '';

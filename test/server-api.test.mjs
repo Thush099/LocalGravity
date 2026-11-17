@@ -11,9 +11,71 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
   const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-api-'));
   const paths = getRuntimePaths(tmpHome);
   const authToken = 'secret-test-token-123';
-  const srv = createAgentServer({ authToken, paths });
-  const { port } = await srv.start();
-  const base = `http://127.0.0.1:${port}`;
+  const remoteSkillMarkdown =
+    '---\nname: api-reviewer\ndescription: Review API contracts\ntriggers: ["api", "contract"]\n---\n\n# API review\n\n1. Check the contract.';
+  const srv = createAgentServer({
+    authToken,
+    paths,
+    fetchFn: async () => new Response(remoteSkillMarkdown),
+  });
+  const { EventEmitter } = await import('node:events');
+  const origFetch = globalThis.fetch;
+  let base = 'http://localgravity.test';
+  let startedReal = false;
+  try {
+    const { port } = await srv.start();
+    base = `http://127.0.0.1:${port}`;
+    startedReal = true;
+  } catch {
+    globalThis.fetch = async (url, options = {}) => {
+      const parsed = new URL(url);
+      if (parsed.hostname !== 'localgravity.test') {
+        throw new Error('Connection refused');
+      }
+      const req = new EventEmitter();
+      req.method = options.method || 'GET';
+      req.url = parsed.pathname + parsed.search;
+      req.headers = {};
+      for (const [k, v] of Object.entries(options.headers || {})) {
+        req.headers[k.toLowerCase()] = v;
+      }
+      const bodyBuf = options.body ? Buffer.from(options.body) : null;
+      req[Symbol.asyncIterator] = async function* () {
+        if (bodyBuf) yield bodyBuf;
+      };
+      return new Promise((resolve) => {
+        const chunks = [];
+        const resHeaders = {};
+        const res = {
+          statusCode: 200,
+          headersSent: false,
+          writableEnded: false,
+          setHeader(k, v) {
+            resHeaders[k.toLowerCase()] = v;
+          },
+          writeHead(status, hdrs = {}) {
+            this.statusCode = status;
+            this.headersSent = true;
+            for (const [k, v] of Object.entries(hdrs)) {
+              resHeaders[k.toLowerCase()] = v;
+            }
+            return this;
+          },
+          write(chunk) {
+            this.headersSent = true;
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+            return true;
+          },
+          end(chunk) {
+            if (chunk) this.write(chunk);
+            this.writableEnded = true;
+            resolve(new Response(Buffer.concat(chunks), { status: this.statusCode, headers: resHeaders }));
+          },
+        };
+        srv.server.emit('request', req, res);
+      });
+    };
+  }
 
   try {
     const unauth = await fetch(`${base}/api/health`);
@@ -70,6 +132,32 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     ).json();
     assert.ok(skillsList.skills.some((s) => s.slug === 'custom-reel'));
 
+    // Import a skill from a GitHub URL through the injected fetch implementation
+    const importUrlRes = await fetch(`${base}/api/skills/import-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({
+        urls: ['https://github.com/owner/repo/blob/main/skills/api-reviewer/SKILL.md'],
+      }),
+    });
+    assert.equal(importUrlRes.status, 200);
+    const importUrlData = await importUrlRes.json();
+    assert.equal(importUrlData.ok, true);
+    assert.equal(importUrlData.imported[0].slug, 'api-reviewer');
+    assert.deepEqual(importUrlData.errors, []);
+    const skillsAfterImport = await (
+      await fetch(`${base}/api/skills`, { headers: { 'X-Auth-Token': authToken } })
+    ).json();
+    assert.ok(skillsAfterImport.skills.some((s) => s.slug === 'api-reviewer'));
+
+    // Bad import input is rejected without touching the network
+    const badImportRes = await fetch(`${base}/api/skills/import-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ urls: [] }),
+    });
+    assert.equal(badImportRes.status, 400);
+
     // Knowledge CRUD
     const saveKnowRes = await fetch(`${base}/api/knowledge`, {
       method: 'POST',
@@ -86,6 +174,29 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
       await fetch(`${base}/api/knowledge`, { headers: { 'X-Auth-Token': authToken } })
     ).json();
     assert.ok(knowList.docs.some((d) => d.name === 'my-guide'));
+
+    // Import a knowledge doc from a public URL through the injected fetch implementation
+    const importKnowRes = await fetch(`${base}/api/knowledge/import-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ url: 'https://example.com/reading-notes' }),
+    });
+    assert.equal(importKnowRes.status, 200);
+    const importKnowData = await importKnowRes.json();
+    assert.equal(importKnowData.saved.name, 'reading-notes');
+    assert.ok(importKnowData.chars > 0);
+    const knowAfterImport = await (
+      await fetch(`${base}/api/knowledge`, { headers: { 'X-Auth-Token': authToken } })
+    ).json();
+    assert.ok(knowAfterImport.docs.some((d) => d.name === 'reading-notes'));
+
+    // Local/private hosts are refused before fetching
+    const blockedKnowRes = await fetch(`${base}/api/knowledge/import-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ url: 'http://127.0.0.1:9/private' }),
+    });
+    assert.equal(blockedKnowRes.status, 400);
 
     // Automations CRUD & plist builder
     const createAutoRes = await fetch(`${base}/api/automations`, {
@@ -153,7 +264,8 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.equal(userMsgs[0].content, 'first msg');
     assert.equal(userMsgs[1].content, 'second msg');
   } finally {
-    await srv.stop();
+    globalThis.fetch = origFetch;
+    if (startedReal) await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });
   }
 });

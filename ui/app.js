@@ -18,8 +18,10 @@ const state = {
   runAbort: null,
   runStartedAt: 0,
   timerHandle: null,
+  rafPending: false,
   queuedMessage: null,
   liveAssistantMsg: null,
+  displayedItems: [],
   pendingApprovals: new Map(),
 };
 
@@ -203,7 +205,7 @@ function groupMessagesForDisplay(messages = []) {
       }
     } else if (msg.role === 'assistant') {
       if (!currentAssistant) {
-        currentAssistant = { type: 'assistant', thinking: [], tools: [], content: '' };
+        currentAssistant = { type: 'assistant', thinking: [], tools: [], content: '', selfImprovedLessons: [] };
         items.push(currentAssistant);
       }
       if (msg.thinking) currentAssistant.thinking.push(msg.thinking);
@@ -235,6 +237,7 @@ function groupMessagesForDisplay(messages = []) {
           out.startsWith('Blocked') ||
           out.startsWith('User denied') ||
           out.startsWith('Tool ') ||
+          out.startsWith('[Self-Healing Loop Breaker]') ||
           out.includes('failed') ||
           exitNonZero;
         toolEntry.status = failed ? 'fail' : 'ok';
@@ -244,173 +247,198 @@ function groupMessagesForDisplay(messages = []) {
   return items;
 }
 
-function renderMessages() {
+function buildDisplayItemHtml(item, idx) {
+  if (item.type === 'compaction') {
+    return `<div class="thinking-box"><details><summary>Compacted earlier context</summary><div class="thinking-content">${escapeHtml(item.content)}</div></details></div>`;
+  }
+  if (item.type === 'user') {
+    const attachTag =
+      Array.isArray(item.msg.attachments) && item.msg.attachments.length > 0
+        ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
+        : '';
+    const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
+    return `<div class="msg-row"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div></div>`;
+  }
+
+  const thinkingCombined = (item.thinking || []).join('').trim();
+  const thinkingHtml = thinkingCombined
+    ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
+    : '';
+
+  const toolsHtml = (item.tools || [])
+    .map((t) => {
+      const badgeCls = t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'fail' : t.status === 'wait' ? 'wait' : '';
+      const badgeLabel =
+        t.status === 'ok'
+          ? 'Done'
+          : t.status === 'fail'
+            ? 'Self-Healed / Error'
+            : t.status === 'wait'
+              ? 'Needs approval'
+              : 'Running';
+      const bodyText = t.diff || t.output || JSON.stringify(t.arguments || {}, null, 2);
+      const thumbs =
+        Array.isArray(t.images) && t.images.length > 0
+          ? `<div class="media-thumbs">${t.images
+              .map((b64) => `<img class="media-thumb" src="${b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`}" alt="Media preview" />`)
+              .join('')}</div>`
+          : '';
+
+      let approvalHtml = '';
+      if (t.approval) {
+        approvalHtml = `
+          <div class="approval-panel" data-tool-id="${escapeHtml(t.id)}">
+            <div class="approval-reason">${escapeHtml(t.approval.reason || 'Approval required')}</div>
+            ${
+              t.name === 'run_command'
+                ? `<input type="text" class="approval-cmd-edit" data-tool-id="${escapeHtml(t.id)}" value="${escapeHtml(t.approval.editedValue ?? t.approval.preview ?? t.arguments?.command ?? '')}" />`
+                : `<pre class="tool-body" style="margin:0;">${escapeHtml(t.approval.preview || '')}</pre>`
+            }
+            <div class="approval-actions">
+              <button type="button" class="primary-btn approve-btn" data-tool-id="${escapeHtml(t.id)}">Approve & Run</button>
+              <button type="button" class="danger-btn deny-btn" data-tool-id="${escapeHtml(t.id)}">Deny</button>
+            </div>
+          </div>`;
+      }
+
+      return `
+        <div class="tool-card" data-card-tool-id="${escapeHtml(t.id)}">
+          <div class="tool-head">
+            <span class="tool-name">${escapeHtml(t.name)}</span>
+            <span class="tool-badge ${badgeCls}">${badgeLabel}</span>
+          </div>
+          <div class="tool-body">${escapeHtml(bodyText)}</div>
+          ${thumbs}
+          ${approvalHtml}
+        </div>`;
+    })
+    .join('');
+
+  const selfImprovedHtml =
+    Array.isArray(item.selfImprovedLessons) && item.selfImprovedLessons.length > 0
+      ? `<div class="self-improved-card">
+          <div class="self-improved-head">Self-Programmed Lesson (Saved to LEARNED_FIXES.md)</div>
+          <ul class="self-improved-list">
+            ${item.selfImprovedLessons.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}
+          </ul>
+        </div>`
+      : '';
+
+  const actionsHtml =
+    !item.isStreaming && item.content
+      ? `<div class="msg-actions">
+          <button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
+          <button type="button" class="msg-action-btn teach-skill-btn" data-idx="${idx}">Teach as skill</button>
+          <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>
+        </div>`
+      : '';
+
+  const phaseLabel =
+    item.thinking?.length > 0 && !item.content && item.tools?.length === 0
+      ? 'Deep thinking'
+      : item.tools?.some((t) => t.status === 'wait')
+        ? 'Waiting for your approval'
+        : item.tools?.some((t) => t.status === 'running')
+          ? 'Running tools'
+          : !item.content
+            ? `Running ${escapeHtml(state.config?.model || 'model')}`
+            : 'Streaming reply';
+
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000));
+  const liveStatusHtml = item.isStreaming
+    ? `<div class="live-status-line"><span class="pulse-dot"></span><span id="live-status-phase">${phaseLabel}</span> (<span id="live-elapsed-seconds">${elapsedSec}</span>s)...</div>`
+    : '';
+
+  return `
+    <div class="msg-row" ${item.isStreaming ? 'id="live-assistant-row"' : ''}>
+      <div class="msg-assistant">
+        ${liveStatusHtml}
+        ${thinkingHtml}
+        ${toolsHtml}
+        ${selfImprovedHtml}
+        ${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}
+        ${actionsHtml}
+      </div>
+    </div>`;
+}
+
+function scrollToBottomIfPinned(force = false) {
+  const scrollBox = $('#chat-scroll');
+  if (!scrollBox) return;
+  const distanceFromBottom = scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight;
+  if (force || distanceFromBottom < 140) {
+    scrollBox.scrollTop = scrollBox.scrollHeight;
+  }
+}
+
+/**
+ * Full render of historical conversation messages + optional live row mount.
+ */
+function renderMessages(forceScroll = false) {
   const messages = state.activeSession?.messages || [];
   const hasAny = messages.length > 0 || Boolean(state.liveAssistantMsg);
   $('#welcome-state').classList.toggle('hidden', hasAny);
   const container = $('#chat-messages');
 
   if (!hasAny) {
+    state.displayedItems = [];
     container.innerHTML = '';
     return;
   }
 
-  const displayItems = groupMessagesForDisplay(messages);
-  if (state.liveAssistantMsg) {
-    displayItems.push(state.liveAssistantMsg);
-  }
+  const historyItems = groupMessagesForDisplay(messages);
+  state.displayedItems = state.liveAssistantMsg ? [...historyItems, state.liveAssistantMsg] : historyItems;
 
-  container.innerHTML = displayItems
-    .map((item, idx) => {
-      if (item.type === 'compaction') {
-        return `<div class="thinking-box"><details><summary>Compacted earlier context</summary><div class="thinking-content">${escapeHtml(item.content)}</div></details></div>`;
+  const historyHtml = historyItems.map((item, idx) => buildDisplayItemHtml(item, idx)).join('');
+  const liveHtml = state.liveAssistantMsg ? buildDisplayItemHtml(state.liveAssistantMsg, historyItems.length) : '';
+
+  container.innerHTML = `<div id="chat-history-items">${historyHtml}</div><div id="chat-live-slot">${liveHtml}</div>`;
+  scrollToBottomIfPinned(forceScroll);
+}
+
+/**
+ * Coalesced 60fps partial DOM update for the active streaming assistant bubble only,
+ * preserving any in-progress command approval input so clicks and edits never lag or drop.
+ */
+function scheduleLiveUpdate() {
+  if (state.rafPending) return;
+  state.rafPending = true;
+  requestAnimationFrame(() => {
+    state.rafPending = false;
+    if (!state.liveAssistantMsg) return;
+    const slot = $('#chat-live-slot');
+    if (!slot) {
+      renderMessages();
+      return;
+    }
+
+    // Preserve any user-edited command text and focus before updating the live slot
+    const activeEdit = slot.querySelector('.approval-cmd-edit');
+    const focusedToolId =
+      document.activeElement && document.activeElement.classList.contains('approval-cmd-edit')
+        ? document.activeElement.dataset.toolId
+        : null;
+    if (activeEdit && activeEdit.dataset.toolId) {
+      const targetTool = state.liveAssistantMsg.tools.find((t) => t.id === activeEdit.dataset.toolId);
+      if (targetTool?.approval) {
+        targetTool.approval.editedValue = activeEdit.value;
       }
-      if (item.type === 'user') {
-        const attachTag =
-          Array.isArray(item.msg.attachments) && item.msg.attachments.length > 0
-            ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
-            : '';
-        const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
-        return `<div class="msg-row"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div></div>`;
+    }
+
+    const idx = Math.max(0, state.displayedItems.length - 1);
+    slot.innerHTML = buildDisplayItemHtml(state.liveAssistantMsg, idx);
+
+    if (focusedToolId) {
+      const restoredInput = slot.querySelector(`.approval-cmd-edit[data-tool-id="${CSS.escape(focusedToolId)}"]`);
+      if (restoredInput) {
+        restoredInput.focus();
+        const len = restoredInput.value.length;
+        restoredInput.setSelectionRange(len, len);
       }
+    }
 
-      const thinkingCombined = item.thinking.join('\n').trim();
-      const thinkingHtml = thinkingCombined
-        ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
-        : '';
-
-      const toolsHtml = item.tools
-        .map((t) => {
-          const badgeCls = t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'fail' : t.status === 'wait' ? 'wait' : '';
-          const badgeLabel =
-            t.status === 'ok'
-              ? 'Done'
-              : t.status === 'fail'
-                ? 'Blocked / Error'
-                : t.status === 'wait'
-                  ? 'Needs approval'
-                  : 'Running';
-          const bodyText = t.diff || t.output || JSON.stringify(t.arguments || {}, null, 2);
-          const thumbs =
-            Array.isArray(t.images) && t.images.length > 0
-              ? `<div class="media-thumbs">${t.images
-                  .map((b64) => `<img class="media-thumb" src="${b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`}" alt="Media preview" />`)
-                  .join('')}</div>`
-              : '';
-
-          let approvalHtml = '';
-          if (t.approval) {
-            approvalHtml = `
-              <div class="approval-panel" data-tool-id="${escapeHtml(t.id)}">
-                <div class="approval-reason">${escapeHtml(t.approval.reason || 'Approval required')}</div>
-                ${
-                  t.name === 'run_command'
-                    ? `<input type="text" class="approval-cmd-edit" value="${escapeHtml(t.approval.preview || t.arguments?.command || '')}" />`
-                    : `<pre class="tool-body" style="margin:0;">${escapeHtml(t.approval.preview || '')}</pre>`
-                }
-                <div class="approval-actions">
-                  <button type="button" class="primary-btn approve-btn" data-tool-id="${escapeHtml(t.id)}">Approve & Run</button>
-                  <button type="button" class="danger-btn deny-btn" data-tool-id="${escapeHtml(t.id)}">Deny</button>
-                </div>
-              </div>`;
-          }
-
-          return `
-            <div class="tool-card">
-              <div class="tool-head">
-                <span class="tool-name">${escapeHtml(t.name)}</span>
-                <span class="tool-badge ${badgeCls}">${badgeLabel}</span>
-              </div>
-              <div class="tool-body">${escapeHtml(bodyText)}</div>
-              ${thumbs}
-              ${approvalHtml}
-            </div>`;
-        })
-        .join('');
-
-      const actionsHtml =
-        !item.isStreaming && item.content
-          ? `<div class="msg-actions">
-              <button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
-              <button type="button" class="msg-action-btn teach-skill-btn" data-idx="${idx}">Teach as skill</button>
-              <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>
-            </div>`
-          : '';
-
-      const liveStatusHtml = item.isStreaming
-        ? `<div class="live-status-line"><span class="pulse-dot"></span><span>${
-            item.thinking.length > 0 && !item.content && item.tools.length === 0
-              ? 'Deep thinking'
-              : item.tools.some((t) => t.status === 'running')
-                ? 'Running tools'
-                : !item.content
-                  ? `Running ${escapeHtml(state.config?.model || 'model')}`
-                  : 'Streaming reply'
-          } (${Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000))}s)...</span></div>`
-        : '';
-
-      return `
-        <div class="msg-row">
-          <div class="msg-assistant">
-            ${liveStatusHtml}
-            ${thinkingHtml}
-            ${toolsHtml}
-            ${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}
-            ${actionsHtml}
-          </div>
-        </div>`;
-    })
-    .join('');
-
-  // Wire interactive events on rendered cards
-  container.querySelectorAll('.copy-code-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      navigator.clipboard.writeText(btn.dataset.code || '');
-      showToast('Code copied');
-    });
+    scrollToBottomIfPinned(false);
   });
-
-  container.querySelectorAll('.copy-reply-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const target = displayItems[Number(btn.dataset.idx)];
-      navigator.clipboard.writeText(target?.content || '');
-      showToast('Reply copied');
-    });
-  });
-
-  container.querySelectorAll('.teach-skill-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      $('#prompt-input').value =
-        'Distill the exact working workflow we just completed into a reusable SKILL.md using save_skill.';
-      sendPrompt();
-    });
-  });
-
-  container.querySelectorAll('.save-auto-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const lastUser = [...(state.activeSession?.messages || [])].reverse().find((m) => m.role === 'user');
-      openAutomationModal({ name: state.activeSession?.title || '', prompt: lastUser?.content || '' });
-    });
-  });
-
-  container.querySelectorAll('.approve-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const toolCallId = btn.dataset.toolId;
-      const panel = btn.closest('.approval-panel');
-      const editedInput = panel?.querySelector('.approval-cmd-edit');
-      const editedCommand = editedInput ? editedInput.value : undefined;
-      await resolveApproval(toolCallId, true, editedCommand);
-    });
-  });
-
-  container.querySelectorAll('.deny-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await resolveApproval(btn.dataset.toolId, false);
-    });
-  });
-
-  const scrollBox = $('#chat-scroll');
-  scrollBox.scrollTop = scrollBox.scrollHeight;
 }
 
 async function resolveApproval(toolCallId, approved, editedCommand) {
@@ -419,7 +447,7 @@ async function resolveApproval(toolCallId, approved, editedCommand) {
   if (tool) {
     tool.approval = null;
     tool.status = approved ? 'running' : 'fail';
-    renderMessages();
+    scheduleLiveUpdate();
   }
   await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/approve`, {
     method: 'POST',
@@ -438,7 +466,7 @@ async function openSession(id) {
   state.activeSession = res.session;
   switchView('agent');
   renderSessionsList();
-  renderMessages();
+  renderMessages(true);
 }
 
 async function createNewTask() {
@@ -450,7 +478,7 @@ async function createNewTask() {
   state.liveAssistantMsg = null;
   await loadSessions();
   switchView('agent');
-  renderMessages();
+  renderMessages(true);
   $('#prompt-input').focus();
 }
 
@@ -511,18 +539,24 @@ async function sendPrompt(overridePayload = null) {
     thinking: [],
     tools: [],
     content: '',
+    selfImprovedLessons: [],
   };
   state.isRunning = true;
   state.runStartedAt = Date.now();
   state.runAbort = new AbortController();
   clearInterval(state.timerHandle);
+
+  // Update ONLY the elapsed seconds span every 1s so we never destroy DOM or interrupt button clicks!
   state.timerHandle = setInterval(() => {
-    if (state.isRunning && state.liveAssistantMsg) renderMessages();
+    const elapsedEl = $('#live-elapsed-seconds');
+    if (elapsedEl && state.isRunning) {
+      elapsedEl.textContent = String(Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000)));
+    }
   }, 1000);
 
   $('#send-btn').textContent = 'Queue';
   $('#stop-btn').classList.remove('hidden');
-  renderMessages();
+  renderMessages(true);
 
   try {
     await streamSse(
@@ -569,15 +603,28 @@ async function sendPrompt(overridePayload = null) {
             t.diff = evt.diff || '';
             t.images = evt.images || [];
           }
+        } else if (evt.type === 'self_improved') {
+          if (evt.resolvedModel && state.config) {
+            state.config.model = evt.resolvedModel;
+            updateHeaderControls();
+          }
+          if (Array.isArray(evt.lessons)) {
+            for (const lesson of evt.lessons) {
+              if (!state.liveAssistantMsg.selfImprovedLessons.includes(lesson)) {
+                state.liveAssistantMsg.selfImprovedLessons.push(lesson);
+              }
+            }
+          }
         } else if (evt.type === 'context_stats') {
           $('#context-label').textContent = `${(evt.tokens / 1000).toFixed(1)}k / ${Math.round(evt.numCtx / 1000)}k`;
+          return;
         } else if (evt.type === 'compacted') {
           showToast('Context compacted automatically');
         } else if (evt.type === 'error') {
           showToast(evt.message || 'Model error');
           state.liveAssistantMsg.content += `\n\n> Error: ${evt.message}`;
         }
-        renderMessages();
+        scheduleLiveUpdate();
       },
       state.runAbort.signal
     );
@@ -601,7 +648,7 @@ async function sendPrompt(overridePayload = null) {
         // Keep current messages if reload fails
       }
     }
-    renderMessages();
+    renderMessages(false);
 
     if (state.queuedMessage) {
       const nextPayload = state.queuedMessage;
@@ -723,6 +770,42 @@ async function loadKnowledge() {
   const res = await apiRequest('/api/knowledge');
   state.knowledge = res.docs || [];
   renderKnowledgeGrid();
+  await refreshLearnedFixesBanner();
+}
+
+async function refreshLearnedFixesBanner() {
+  const countEl = $('#learned-fixes-count');
+  const previewEl = $('#learned-fixes-preview');
+  if (!countEl || !previewEl) return;
+  try {
+    const res = await apiRequest('/api/knowledge/LEARNED_FIXES');
+    const content = String(res.doc?.content || '');
+    const rules = content
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('- '));
+    countEl.textContent = `${rules.length} active rule${rules.length === 1 ? '' : 's'} · ${res.doc?.sizeBytes ?? content.length} B`;
+    previewEl.textContent =
+      rules.length > 0
+        ? rules.slice(-2).join('\n')
+        : 'No custom mistake rules recorded yet. Rules are added automatically whenever LocalGravity recovers from a tool or output error.';
+  } catch {
+    countEl.textContent = 'Ready';
+  }
+}
+
+async function openLearnedFixesEditor() {
+  try {
+    const res = await apiRequest('/api/knowledge/LEARNED_FIXES');
+    openKnowledgeModal(res.doc);
+  } catch {
+    openKnowledgeModal({
+      name: 'LEARNED_FIXES',
+      title: 'Self-Learned Mistake Prevention & Recovery Rules',
+      tags: ['self-improvement', 'mistakes', 'auto-learned'],
+      content: '# Autonomous Self-Learned Mistake Prevention Rules\n\n- ',
+    });
+  }
 }
 
 function renderKnowledgeGrid() {
@@ -741,12 +824,12 @@ function renderKnowledgeGrid() {
       <div class="card">
         <div class="card-top">
           <div class="card-title">${escapeHtml(d.title)}</div>
-          <span class="card-tag">${d.name === 'MEMORY' ? 'Pinned Memory' : `${d.sizeBytes} B`}</span>
+          <span class="card-tag">${d.name === 'MEMORY' ? 'Pinned Memory' : d.name === 'LEARNED_FIXES' ? 'Auto-Learned' : `${d.sizeBytes} B`}</span>
         </div>
         <div class="card-desc">ID: <code>${escapeHtml(d.name)}</code>${d.tags?.length ? ` · Tags: ${escapeHtml(d.tags.join(', '))}` : ''}</div>
         <div class="card-actions">
           <button type="button" class="secondary-btn edit-know-btn" data-name="${escapeHtml(d.name)}">Open / Edit</button>
-          ${d.name !== 'MEMORY' ? `<button type="button" class="danger-btn del-know-btn" data-name="${escapeHtml(d.name)}">Delete</button>` : ''}
+          ${d.name !== 'MEMORY' && d.name !== 'LEARNED_FIXES' ? `<button type="button" class="danger-btn del-know-btn" data-name="${escapeHtml(d.name)}">Delete</button>` : ''}
         </div>
       </div>`
       )
@@ -1001,6 +1084,95 @@ function openSkillModal(existing) {
   };
 }
 
+function openKnowledgeUrlModal() {
+  openModal(
+    'Import Knowledge from URL',
+    `
+    <p class="section-hint">Fetches a public page or raw text file and saves its readable text as a Knowledge Base document.</p>
+    <div class="form-field">
+      <label>URL</label>
+      <input id="m-know-url" class="text-input" placeholder="https://example.com/article" />
+    </div>
+    <div class="form-field">
+      <label>Title (optional)</label>
+      <input id="m-know-url-title" class="text-input" placeholder="Defaults to the site hostname" />
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="secondary-btn" id="m-cancel">Cancel</button>
+      <button type="button" class="primary-btn" id="m-do-import-know-url">Import</button>
+    </div>`
+  );
+  $('#m-cancel').onclick = closeModal;
+  $('#m-do-import-know-url').onclick = async () => {
+    const url = $('#m-know-url').value.trim();
+    if (!url) {
+      showToast('Paste a URL first');
+      return;
+    }
+    const btn = $('#m-do-import-know-url');
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+    try {
+      const res = await apiRequest('/api/knowledge/import-url', {
+        method: 'POST',
+        body: JSON.stringify({ url, title: $('#m-know-url-title').value.trim() || undefined }),
+      });
+      closeModal();
+      await loadKnowledge();
+      showToast(`Saved ${res.saved.name} (${Math.round(res.chars / 1000)}k chars)`);
+    } catch (err) {
+      showToast(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Import';
+    }
+  };
+}
+
+function exportActiveConversation() {
+  const session = state.activeSession;
+  const messages = session?.messages || [];
+  if (messages.length === 0) {
+    showToast('No conversation to export');
+    return;
+  }
+  const lines = [
+    `# ${session.title || 'LocalGravity conversation'}`,
+    '',
+    `Exported: ${new Date().toISOString()}`,
+    `Model: ${session.model || state.config?.model || 'unknown'}`,
+    '',
+  ];
+  for (const msg of messages) {
+    if (msg.role === 'system') continue;
+    if (msg.isCompactionSummary) {
+      lines.push('> Compacted earlier context', '');
+      continue;
+    }
+    if (msg.role === 'user') {
+      lines.push('## You', '', String(msg.content || '').trim(), '');
+    } else if (msg.role === 'assistant') {
+      const text = String(msg.content || '').trim();
+      if (text) lines.push('## LocalGravity', '', text, '');
+      const tools = (msg.toolCalls || []).map((t) => t.name).filter(Boolean);
+      if (tools.length > 0) lines.push(`*Tools used: ${tools.join(', ')}*`, '');
+    }
+  }
+  const blob = new Blob([`${lines.join('\n').trimEnd()}\n`], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${String(session.title || 'conversation')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48) || 'conversation'}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast('Conversation exported as Markdown');
+}
+
 function openKnowledgeModal(existing) {
   const isNew = !existing;
   openModal(
@@ -1139,6 +1311,57 @@ function openScheduleModal(auto) {
   };
 }
 
+function openImportUrlModal() {
+  openModal(
+    'Import Skills from GitHub',
+    `
+    <p class="section-hint">
+      Paste a raw <code>SKILL.md</code> URL or a GitHub file link
+      (<code>github.com/owner/repo/blob/main/skills/name/SKILL.md</code>), one per line.
+      The skill is validated and saved into <code>~/.localgravity/skills/</code>.
+    </p>
+    <div class="form-field">
+      <label>Skill URLs</label>
+      <textarea id="m-skill-urls" placeholder="https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="secondary-btn" id="m-cancel">Cancel</button>
+      <button type="button" class="primary-btn" id="m-do-import-url">Import skills</button>
+    </div>`
+  );
+  $('#m-cancel').onclick = closeModal;
+  $('#m-do-import-url').onclick = async () => {
+    const urls = $('#m-skill-urls')
+      .value.split(/\n+/)
+      .map((u) => u.trim())
+      .filter(Boolean);
+    if (urls.length === 0) {
+      showToast('Paste at least one skill URL');
+      return;
+    }
+    const btn = $('#m-do-import-url');
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+    try {
+      const res = await apiRequest('/api/skills/import-url', {
+        method: 'POST',
+        body: JSON.stringify({ urls }),
+      });
+      await loadSkills();
+      if (res.errors?.length) {
+        showToast(`Imported ${res.imported.length} skill(s); ${res.errors.length} failed: ${res.errors[0].error}`);
+      } else {
+        closeModal();
+        showToast(`Imported ${res.imported.length} skill(s)`);
+      }
+    } catch (err) {
+      showToast(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Import skills';
+    }
+  };
+}
+
 async function openImportAntigravityModal() {
   const res = await apiRequest('/api/skills/external');
   const items = res.skills || [];
@@ -1204,6 +1427,54 @@ function wireEvents() {
       $$('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
       $$('.subtab').forEach((t) => t.classList.toggle('active', t.id === `subtab-${state.subtab}`));
     });
+  });
+
+  // Single delegated event listener on #chat-messages so buttons work smoothly even while streaming
+  $('#chat-messages').addEventListener('click', async (e) => {
+    const copyCodeBtn = e.target.closest('.copy-code-btn');
+    if (copyCodeBtn) {
+      navigator.clipboard.writeText(copyCodeBtn.dataset.code || '');
+      showToast('Code copied');
+      return;
+    }
+
+    const copyReplyBtn = e.target.closest('.copy-reply-btn');
+    if (copyReplyBtn) {
+      const target = state.displayedItems[Number(copyReplyBtn.dataset.idx)];
+      navigator.clipboard.writeText(target?.content || '');
+      showToast('Reply copied');
+      return;
+    }
+
+    const teachBtn = e.target.closest('.teach-skill-btn');
+    if (teachBtn) {
+      $('#prompt-input').value =
+        'Distill the exact working workflow we just completed into a reusable SKILL.md using save_skill.';
+      sendPrompt();
+      return;
+    }
+
+    const saveAutoBtn = e.target.closest('.save-auto-btn');
+    if (saveAutoBtn) {
+      const lastUser = [...(state.activeSession?.messages || [])].reverse().find((m) => m.role === 'user');
+      openAutomationModal({ name: state.activeSession?.title || '', prompt: lastUser?.content || '' });
+      return;
+    }
+
+    const approveBtn = e.target.closest('.approve-btn');
+    if (approveBtn) {
+      const toolCallId = approveBtn.dataset.toolId;
+      const panel = approveBtn.closest('.approval-panel');
+      const editedInput = panel?.querySelector('.approval-cmd-edit');
+      const editedCommand = editedInput ? editedInput.value : undefined;
+      await resolveApproval(toolCallId, true, editedCommand);
+      return;
+    }
+
+    const denyBtn = e.target.closest('.deny-btn');
+    if (denyBtn) {
+      await resolveApproval(denyBtn.dataset.toolId, false);
+    }
   });
 
   $('#new-task-btn').addEventListener('click', createNewTask);
@@ -1326,9 +1597,13 @@ function wireEvents() {
   });
 
   $('#new-skill-btn').addEventListener('click', () => openSkillModal(null));
+  $('#import-url-btn').addEventListener('click', openImportUrlModal);
   $('#import-ag-skills-btn').addEventListener('click', openImportAntigravityModal);
+  $('#open-learned-fixes-btn')?.addEventListener('click', openLearnedFixesEditor);
   $('#new-knowledge-btn').addEventListener('click', () => openKnowledgeModal(null));
   $('#upload-knowledge-btn').addEventListener('click', () => $('#knowledge-file-input').click());
+  $('#import-know-url-btn').addEventListener('click', openKnowledgeUrlModal);
+  $('#export-chat-btn').addEventListener('click', exportActiveConversation);
   $('#knowledge-file-input').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files || []);
     for (const file of files) {
@@ -1418,7 +1693,7 @@ function wireEvents() {
 async function init() {
   wireEvents();
   await Promise.all([refreshHealth(), loadSessions()]);
-  renderMessages();
+  renderMessages(true);
 }
 
 init().catch((err) => showToast(err.message));

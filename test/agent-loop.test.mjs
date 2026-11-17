@@ -6,19 +6,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
-import { syncStarterSkills } from '../backend/skills-engine.mjs';
-import { ensureKnowledgeSeeded } from '../backend/knowledge-engine.mjs';
+import { syncStarterSkills, readSkill } from '../backend/skills-engine.mjs';
+import { ensureKnowledgeSeeded, readKnowledge } from '../backend/knowledge-engine.mjs';
 import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { compactConversation, estimateMessagesTokens } from '../backend/agent/compactor.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
+import { AUTO_LEARNED_SKILL, LEARNED_FIXES_DOC, normalizeToolCall } from '../backend/agent/self-improver.mjs';
 
 const execFileAsync = promisify(execFile);
 
-test('buildSystemPrompt includes skills, knowledge index, and MEMORY excerpt cleanly', () => {
+test('buildSystemPrompt includes skills, knowledge index, learned fixes, and MEMORY excerpt cleanly', () => {
   const prompt = buildSystemPrompt({
     skills: [{ slug: 'video-editor', description: 'Edit video with ffmpeg.' }],
     knowledgeDocs: [{ name: 'brand', title: 'Brand Guide' }],
     memoryContent: 'Always export 9:16 60fps.',
+    learnedFixesContent: '- Avoid broken flag -foo; use -bar.',
     repoPath: '/tmp/my-localgravity-repo',
     safetyMode: 'ask',
     isHeadless: false,
@@ -27,12 +29,36 @@ test('buildSystemPrompt includes skills, knowledge index, and MEMORY excerpt cle
   assert.match(prompt, /video-editor/);
   assert.match(prompt, /Brand Guide/);
   assert.match(prompt, /Always export 9:16 60fps/);
+  assert.match(prompt, /Avoid broken flag -foo/);
   assert.match(prompt, /read_skill/);
   assert.match(prompt, /search_knowledge/);
   assert.match(prompt, /save_skill/i);
   assert.match(prompt, /Do NOT call `list_skills`/i);
   assert.match(prompt, /\/tmp\/my-localgravity-repo/);
   assert.match(prompt, /npm test/i);
+});
+
+test('normalizeToolCall repairs tool name and parameter aliases automatically', () => {
+  const norm1 = normalizeToolCall({
+    id: 'c1',
+    name: 'bash',
+    arguments: { cmd: 'ls -la', dir: '/tmp' },
+  });
+  assert.equal(norm1.name, 'run_command');
+  assert.equal(norm1.arguments.command, 'ls -la');
+  assert.equal(norm1.arguments.cwd, '/tmp');
+  assert.equal(norm1.repaired, true);
+
+  const norm2 = normalizeToolCall({
+    id: 'c2',
+    name: 'replace_in_file',
+    arguments: { file_path: 'a.js', old_text: 'foo', new_text: 'bar' },
+  });
+  assert.equal(norm2.name, 'edit_file');
+  assert.equal(norm2.arguments.path, 'a.js');
+  assert.equal(norm2.arguments.target, 'foo');
+  assert.equal(norm2.arguments.replacement, 'bar');
+  assert.equal(norm2.repaired, true);
 });
 
 test('compactConversation summarizes older turns when exceeding 70% of numCtx', async () => {
@@ -239,6 +265,61 @@ test('runAgentTurn executes tools, injects inspect_media images, enforces approv
   });
   assert.equal(sysPrompts.length, 2);
   assert.equal(sysPrompts[0], sysPrompts[1]);
+
+  // Self-improvement engine: recovers from failed tool + empty output, breaks duplicate loops, and persists learned fixes & skill
+  let healStep = 0;
+  const healEvents = [];
+  const healSession = { id: 'loop-heal', title: 'Heal', messages: [] };
+  await runAgentTurn({
+    session: healSession,
+    userMessage: 'Read file and recover from mistakes',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:9b', safetyMode: 'auto', numCtx: 8192 },
+    chatFn: async () => {
+      healStep++;
+      if (healStep === 1) {
+        // Fails with missing file
+        return {
+          thinking: 'Try reading nonexistent file',
+          content: '',
+          toolCalls: [{ id: 'h1', name: 'read_file', arguments: { file_path: path.join(tmpRoot, 'does-not-exist.txt') } }],
+        };
+      }
+      if (healStep === 2) {
+        // Succeeds on existing file, triggering Broken -> Working recovery learning
+        return {
+          thinking: 'Now read real file',
+          content: '',
+          toolCalls: [{ id: 'h2', name: 'read_file', arguments: { path: path.join(tmpRoot, 'created.txt') } }],
+        };
+      }
+      if (healStep === 3) {
+        // Duplicate call loop attempt
+        return {
+          thinking: 'Repeat exact same read_file',
+          content: '',
+          toolCalls: [{ id: 'h3', name: 'read_file', arguments: { path: path.join(tmpRoot, 'created.txt') } }],
+        };
+      }
+      // Returns empty content with thinking only -> must synthesize output instead of leaving blank!
+      return {
+        thinking: 'The file created.txt exists and was verified cleanly.',
+        content: '',
+        toolCalls: [],
+      };
+    },
+    onEvent: (e) => healEvents.push(e),
+  });
+
+  const lastMsg = healSession.messages.at(-1);
+  assert.equal(lastMsg.role, 'assistant');
+  assert.ok(lastMsg.content.length > 0, 'Must never leave empty assistant output');
+  assert.ok(healEvents.some((e) => e.type === 'self_improved' && e.lessons.length > 0));
+
+  const learnedDoc = await readKnowledge(LEARNED_FIXES_DOC, paths);
+  assert.ok(learnedDoc && learnedDoc.content.includes('read_file'));
+  const learnedSkill = await readSkill(AUTO_LEARNED_SKILL, paths);
+  assert.ok(learnedSkill && learnedSkill.content.includes('read_file'));
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

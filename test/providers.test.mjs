@@ -1,13 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import { extractFallbackToolCalls } from '../backend/providers/tool-parser.mjs';
-import { streamOllamaChat } from '../backend/providers/ollama.mjs';
+import { extractFallbackToolCalls, extractInlineThinking } from '../backend/providers/tool-parser.mjs';
+import { selectBestInstalledOllamaModel, streamOllamaChat } from '../backend/providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../backend/providers/openai-compat.mjs';
 import { streamAnthropicChat } from '../backend/providers/anthropic.mjs';
 
-test('tool-parser extracts valid fallback tool calls and converts malformed JSON into parseError', () => {
-  const mixed = `Let me check.\n<tool_call>{"name":"list_dir","arguments":{"path":"~"}}</tool_call>\nDone.`;
+function makeStreamResponse(chunks, status = 200, headers = {}) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, { status, headers });
+}
+
+test('tool-parser extracts valid fallback tool calls, repairs loose JSON, and extracts inline thinking', () => {
+  const mixed = `Let me check.\n<tool_call>{"name":"list_dir","arguments":{"path":"~",}}</tool_call>\nDone.`;
   const res1 = extractFallbackToolCalls(mixed);
   assert.equal(res1.toolCalls.length, 1);
   assert.equal(res1.toolCalls[0].name, 'list_dir');
@@ -30,6 +42,21 @@ test('tool-parser extracts valid fallback tool calls and converts malformed JSON
   const res4 = extractFallbackToolCalls(standaloneFence);
   assert.equal(res4.toolCalls.length, 1);
   assert.equal(res4.toolCalls[0].name, 'list_skills');
+
+  const jsonFenceTool = `I will run this:\n\`\`\`json\n{"tool":"run_command","args":{"command":"df -h"}}\n\`\`\``;
+  const res5 = extractFallbackToolCalls(jsonFenceTool);
+  assert.equal(res5.toolCalls.length, 1);
+  assert.equal(res5.toolCalls[0].name, 'run_command');
+  assert.deepEqual(res5.toolCalls[0].arguments, { command: 'df -h' });
+
+  const inlineThink = extractInlineThinking('<think>Step 1: analyze</think>Final clean output.');
+  assert.equal(inlineThink.thinkingText, 'Step 1: analyze');
+  assert.equal(inlineThink.cleanedText, 'Final clean output.');
+
+  assert.equal(
+    selectBestInstalledOllamaModel([{ name: 'qwen3.5:9b' }, { name: 'gemma4:12b' }], 'qwen3.5:4b'),
+    'qwen3.5:9b'
+  );
 });
 
 test('ensureOllamaRunning handles missing ollama binary without crashing process', async () => {
@@ -44,15 +71,17 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
   assert.ok(CLOUD_PRESETS.openrouter);
   assert.ok(CLOUD_PRESETS.groq);
   assert.ok(CLOUD_PRESETS.gemini);
+  assert.ok(CLOUD_PRESETS.gemini.suggestedModels.includes('gemini-4-argon'));
   assert.ok(CLOUD_PRESETS.openai);
   assert.ok(CLOUD_PRESETS.anthropic);
 
-  const server = http.createServer((req, res) => {
-    if (req.url === '/api/chat') {
-      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-      res.write(JSON.stringify({ message: { role: 'assistant', thinking: 'Let me ' }, done: false }) + '\n');
-      res.write(JSON.stringify({ message: { role: 'assistant', content: 'Hi ' }, done: false }) + '\n');
-      res.write(
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/api/chat')) {
+      return makeStreamResponse([
+        JSON.stringify({ message: { role: 'assistant', thinking: 'Let me ' }, done: false }) + '\n',
+        JSON.stringify({ message: { role: 'assistant', content: 'Hi ' }, done: false }) + '\n',
         JSON.stringify({
           message: {
             role: 'assistant',
@@ -61,17 +90,13 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
           },
           done: true,
           eval_count: 42,
-        }) + '\n'
-      );
-      res.end();
-      return;
+        }) + '\n',
+      ]);
     }
-
-    if (req.url === '/v1/chat/completions') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.write('data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: 'Plan ' } }] }) + '\n\n');
-      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'Answer ' } }] }) + '\n\n');
-      res.write(
+    if (u.endsWith('/v1/chat/completions')) {
+      return makeStreamResponse([
+        'data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: 'Plan ' } }] }) + '\n\n',
+        'data: ' + JSON.stringify({ choices: [{ delta: { content: 'Answer ' } }] }) + '\n\n',
         'data: ' +
           JSON.stringify({
             choices: [
@@ -82,37 +107,28 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
               },
             ],
           }) +
-          '\n\n'
-      );
-      res.write('data: [DONE]\n\n');
-      res.end();
-      return;
+          '\n\n',
+        'data: [DONE]\n\n',
+      ]);
     }
-
-    if (req.url === '/v1/messages') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.write('event: content_block_start\ndata: ' + JSON.stringify({ index: 0, content_block: { type: 'thinking', thinking: '' } }) + '\n\n');
-      res.write('event: content_block_delta\ndata: ' + JSON.stringify({ index: 0, delta: { type: 'thinking_delta', thinking: 'Check ' } }) + '\n\n');
-      res.write('event: content_block_start\ndata: ' + JSON.stringify({ index: 1, content_block: { type: 'text', text: '' } }) + '\n\n');
-      res.write('event: content_block_delta\ndata: ' + JSON.stringify({ index: 1, delta: { type: 'text_delta', text: 'Claude ok' } }) + '\n\n');
-      res.write('event: content_block_start\ndata: ' + JSON.stringify({ index: 2, content_block: { type: 'tool_use', id: 'toolu_1', name: 'list_skills', input: {} } }) + '\n\n');
-      res.write('event: content_block_delta\ndata: ' + JSON.stringify({ index: 2, delta: { type: 'input_json_delta', partial_json: '{}' } }) + '\n\n');
-      res.write('event: message_stop\ndata: {}\n\n');
-      res.end();
-      return;
+    if (u.endsWith('/v1/messages')) {
+      return makeStreamResponse([
+        'event: content_block_start\ndata: ' + JSON.stringify({ index: 0, content_block: { type: 'thinking', thinking: '' } }) + '\n\n',
+        'event: content_block_delta\ndata: ' + JSON.stringify({ index: 0, delta: { type: 'thinking_delta', thinking: 'Check ' } }) + '\n\n',
+        'event: content_block_start\ndata: ' + JSON.stringify({ index: 1, content_block: { type: 'text', text: '' } }) + '\n\n',
+        'event: content_block_delta\ndata: ' + JSON.stringify({ index: 1, delta: { type: 'text_delta', text: 'Claude ok' } }) + '\n\n',
+        'event: content_block_start\ndata: ' + JSON.stringify({ index: 2, content_block: { type: 'tool_use', id: 'toolu_1', name: 'list_skills', input: {} } }) + '\n\n',
+        'event: content_block_delta\ndata: ' + JSON.stringify({ index: 2, delta: { type: 'input_json_delta', partial_json: '{}' } }) + '\n\n',
+        'event: message_stop\ndata: {}\n\n',
+      ]);
     }
-
-    res.writeHead(404).end();
-  });
-
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  const base = `http://127.0.0.1:${port}`;
+    return new Response('Not found', { status: 404 });
+  };
 
   try {
     const events = [];
     const ollamaRes = await streamOllamaChat({
-      baseUrl: base,
+      baseUrl: 'http://mock-ollama.local',
       model: 'qwen3.5:9b',
       messages: [{ role: 'user', content: 'hi' }],
       thinking: true,
@@ -125,9 +141,9 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
     assert.deepEqual(ollamaRes.toolCalls[0].arguments, { path: '~/Downloads' });
 
     const oaiRes = await streamOpenAIChat({
-      baseUrl: `${base}/v1`,
+      baseUrl: 'http://mock-oai.local/v1',
       apiKey: 'test-key',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-4-argon',
       messages: [{ role: 'user', content: 'hi' }],
     });
     assert.equal(oaiRes.thinking, 'Plan ');
@@ -136,7 +152,7 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
     assert.deepEqual(oaiRes.toolCalls[0].arguments, { path: 'a.txt' });
 
     const claudeRes = await streamAnthropicChat({
-      baseUrl: base,
+      baseUrl: 'http://mock-claude.local',
       apiKey: 'sk-ant-test',
       model: 'claude-3-5-sonnet-latest',
       messages: [{ role: 'user', content: 'hi' }],
@@ -145,39 +161,45 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
     assert.equal(claudeRes.content, 'Claude ok');
     assert.equal(claudeRes.toolCalls[0].name, 'list_skills');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    globalThis.fetch = origFetch;
   }
 });
 
-test('streamOllamaChat retries cleanly without think parameter when model rejects think option', async () => {
+test('streamOllamaChat auto-recovers missing model tag and retries cleanly when model rejects think option', async () => {
   let sawThink = false;
   let attempts = 0;
-  const server = http.createServer(async (req, res) => {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.endsWith('/api/tags')) {
+      return new Response(JSON.stringify({ models: [{ name: 'qwen3.5:9b', size: 1000 }] }), { status: 200 });
+    }
+    const body = JSON.parse(init.body);
     attempts++;
+    if (body.model === 'qwen3.5:4b') {
+      return new Response(JSON.stringify({ error: "model 'qwen3.5:4b' not found" }), { status: 404 });
+    }
     if ('think' in body) {
       sawThink = true;
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'registry.ollama.ai/library/moondream does not support thinking' }));
-      return;
+      return new Response(JSON.stringify({ error: 'registry.ollama.ai/library/moondream does not support thinking' }), {
+        status: 400,
+      });
     }
-    res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-    res.end(JSON.stringify({ message: { role: 'assistant', content: 'Retried ok!' }, done: true }) + '\n');
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return makeStreamResponse([JSON.stringify({ message: { role: 'assistant', content: 'Retried ok!' }, done: true }) + '\n']);
+  };
+
   try {
     const res = await streamOllamaChat({
-      baseUrl: `http://127.0.0.1:${server.address().port}`,
-      model: 'moondream:latest',
+      baseUrl: 'http://mock-ollama.local',
+      model: 'qwen3.5:4b',
       messages: [{ role: 'user', content: 'hi' }],
       thinking: false,
     });
     assert.equal(sawThink, true);
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 3);
+    assert.equal(res.resolvedModel, 'qwen3.5:9b');
     assert.equal(res.content, 'Retried ok!');
   } finally {
-    await new Promise((r) => server.close(r));
+    globalThis.fetch = origFetch;
   }
 });

@@ -72,22 +72,46 @@ test('registry tools perform fs ops, shell execution, skill/knowledge management
   const helperBody = await fs.readFile(path.join(runtimeHome, 'skills/sample-skill/scripts/helper.py'), 'utf8');
   assert.match(helperBody, /skill-script-ok/);
 
-  const http = await import('node:http');
-  const docSrv = http.createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<html><body><h1>Docs Title</h1><p>Use concise scripts.</p></body></html>');
-  });
-  await new Promise((r) => docSrv.listen(0, '127.0.0.1', r));
+  // Whitespace-tolerant fuzzy edit_file recovery
+  const fuzzyEdited = await executeToolCall(
+    { name: 'edit_file', args: { file_path: path.join(workDir, 'hello.txt'), old_text: '  line3', new_text: 'line3-updated' } },
+    ctx
+  );
+  assert.equal(fuzzyEdited.ok, true);
+
+  // self_improve tool records mistake prevention rule and optional skill
+  const selfImp = await executeToolCall(
+    {
+      name: 'self_improve',
+      args: {
+        mistake: 'Used wrong ffmpeg flag -vf scale=0:0',
+        fix: 'Use -vf scale=1080:-2 for even height encoding',
+        skill_name: 'ffmpeg-safe-scale',
+        skill_content: '# Safe Scale\nAlways use -2 for aspect ratio.',
+      },
+    },
+    ctx
+  );
+  assert.equal(selfImp.ok, true);
+  assert.match(selfImp.output, /LEARNED_FIXES/);
+  assert.match(selfImp.output, /ffmpeg-safe-scale/);
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response('<html><body><h1>Docs Title</h1><p>Use concise scripts.</p></body></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    });
   try {
     const fetched = await executeToolCall(
-      { name: 'fetch_url', args: { url: `http://127.0.0.1:${docSrv.address().port}/` } },
+      { name: 'fetch_url', args: { url: 'https://example.com/docs' } },
       ctx
     );
     assert.equal(fetched.ok, true);
     assert.match(fetched.output, /Docs Title/);
     assert.match(fetched.output, /Use concise scripts/);
   } finally {
-    await new Promise((r) => docSrv.close(r));
+    globalThis.fetch = origFetch;
   }
 
   await executeToolCall(

@@ -83,6 +83,9 @@
               <button id="compact-btn" class="pill-btn" type="button" title="Summarize older messages to free context">
                 Compact
               </button>
+              <button id="export-chat-btn" class="pill-btn" type="button" title="Download this conversation as Markdown">
+                Export
+              </button>
             </div>
           </header>
 
@@ -147,7 +150,7 @@
           <header class="view-header">
             <div>
               <h2>Skills & Knowledge</h2>
-              <p class="view-sub">Teach repeatable workflows (SKILL.md) and store personal context, brand specs, or preferences.</p>
+              <p class="view-sub">Teach repeatable workflows (SKILL.md), inspect self-learned mistake rules, and store personal context.</p>
             </div>
             <div class="segmented-tabs">
               <button type="button" class="seg-btn active" data-subtab="skills">Skills</button>
@@ -155,10 +158,28 @@
             </div>
           </header>
 
+          <!-- Pinned Self-Learned Fixes Viewer Card -->
+          <div id="learned-fixes-viewer" class="learned-fixes-banner">
+            <div class="learned-fixes-info">
+              <div class="learned-fixes-title-row">
+                <span class="learned-fixes-badge">Auto-Learning Active</span>
+                <strong>Self-Learned Fixes (<code>LEARNED_FIXES.md</code>)</strong>
+                <span id="learned-fixes-count" class="status-sub">Loading rules...</span>
+              </div>
+              <div id="learned-fixes-preview" class="learned-fixes-preview">
+                Inspecting rules learned from past tool errors, command recoveries, and output struggles...
+              </div>
+            </div>
+            <div class="learned-fixes-actions">
+              <button id="open-learned-fixes-btn" class="primary-btn" type="button">Inspect &amp; Edit LEARNED_FIXES.md</button>
+            </div>
+          </div>
+
           <div id="subtab-skills" class="subtab active">
             <div class="toolbar">
               <input id="skills-search" class="text-input" type="search" placeholder="Search skills..." />
               <div class="toolbar-actions">
+                <button id="import-url-btn" class="secondary-btn" type="button">Import from GitHub</button>
                 <button id="import-ag-skills-btn" class="secondary-btn" type="button">Import from Antigravity</button>
                 <button id="new-skill-btn" class="primary-btn" type="button">+ New skill</button>
               </div>
@@ -172,6 +193,7 @@
               <div class="toolbar-actions">
                 <input id="knowledge-file-input" type="file" accept=".md,.txt,.json,.csv,.yaml,.yml" multiple class="hidden" />
                 <button id="upload-knowledge-btn" class="secondary-btn" type="button">Upload .md / .txt</button>
+                <button id="import-know-url-btn" class="secondary-btn" type="button">From URL</button>
                 <button id="new-knowledge-btn" class="primary-btn" type="button">+ New knowledge doc</button>
               </div>
             </div>
