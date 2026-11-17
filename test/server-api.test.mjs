@@ -86,6 +86,21 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     });
     assert.equal(wrongAuth.status, 401);
 
+    // A foreign Origin cannot ride the auth cookie for mutations
+    const crossOriginRes = await fetch(`${base}/api/models/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken, Origin: 'https://evil.example' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(crossOriginRes.status, 403);
+
+    const sameOriginRes = await fetch(`${base}/api/models/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken, Origin: base },
+      body: JSON.stringify({}),
+    });
+    assert.equal(sameOriginRes.status, 200);
+
     const healthRes = await fetch(`${base}/api/health`, {
       headers: { 'X-Auth-Token': authToken },
     });
@@ -149,6 +164,15 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
       await fetch(`${base}/api/skills`, { headers: { 'X-Auth-Token': authToken } })
     ).json();
     assert.ok(skillsAfterImport.skills.some((s) => s.slug === 'api-reviewer'));
+
+    // Refresh re-downloads the skill from its stored source URL
+    const refreshRes = await fetch(`${base}/api/skills/api-reviewer/refresh`, {
+      method: 'POST',
+      headers: { 'X-Auth-Token': authToken },
+    });
+    assert.equal(refreshRes.status, 200);
+    const refreshData = await refreshRes.json();
+    assert.equal(refreshData.refreshed.slug, 'api-reviewer');
 
     // Bad import input is rejected without touching the network
     const badImportRes = await fetch(`${base}/api/skills/import-url`, {
@@ -263,6 +287,15 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.equal(userMsgs.length, 2);
     assert.equal(userMsgs[0].content, 'first msg');
     assert.equal(userMsgs[1].content, 'second msg');
+
+    // Full-text session search finds stored user messages
+    const searchRes = await fetch(`${base}/api/sessions/search?q=second`, {
+      headers: { 'X-Auth-Token': authToken },
+    });
+    assert.equal(searchRes.status, 200);
+    const searchData = await searchRes.json();
+    assert.ok(searchData.results.some((r) => r.id === 'multi-msg-1'));
+    assert.ok(searchData.results[0].snippet.length > 0);
   } finally {
     globalThis.fetch = origFetch;
     if (startedReal) await srv.stop();

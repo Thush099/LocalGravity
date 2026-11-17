@@ -19,9 +19,10 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
 - **Self-Teaching Skills & Knowledge Base:**
   - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
   - Includes **17 Starter Skills**: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `data-analyst`, `self-upgrade`, `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
-  - One-click **Teach as skill**, **Import from GitHub** (paste any raw `SKILL.md` or `github.com/.../blob/...` link), **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+  - One-click **Teach as skill**, **Import from GitHub** (paste any raw `SKILL.md` or `github.com/.../blob/...` link, with a **Refresh** button that re-downloads from the stored source URL), **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
   - **Turn-aware skill hints:** each message is scored against skill triggers, and the two best matches are surfaced in the system prompt so small local models load the right playbook.
-- **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, and follow-up message queueing / instant interrupt while a turn is running.
+- **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, follow-up message queueing / instant interrupt while a turn is running, full-text search across past conversations with matched-message snippets, and one-click **Markdown export** of the current session.
+- **Local API Hardening:** Every `/api/*` route requires the per-launch token, and mutating requests from a foreign `Origin` are rejected so a browser page cannot ride the app's cookie.
 - **Scheduled Background Automations (`launchd`):**
   - Save any workflow as a one-click Automation card or attach an hourly/daily `launchd` schedule (`~/Library/LaunchAgents/com.localgravity.<id>.plist`).
   - Headless background runs execute via `backend/cli-run.mjs`, write isolated session logs, default to **Read-Only Audit mode** (`allowAutoRun: false` unless explicitly opted in), and post macOS notifications when done.

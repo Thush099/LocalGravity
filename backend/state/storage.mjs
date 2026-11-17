@@ -168,6 +168,70 @@ export async function deleteSession(id, paths = getRuntimePaths()) {
   }
 }
 
+/**
+ * Full-text search across stored conversations, returning a matching snippet per session.
+ */
+export async function searchSessions(query, paths = getRuntimePaths(), { limit = 30 } = {}) {
+  const terms = String(query || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 2);
+  if (terms.length === 0) return [];
+
+  const summaries = await listSessions(paths);
+  const results = [];
+
+  for (const summary of summaries) {
+    const data = await readJsonSafe(path.join(paths.sessionsDir, `${summary.id}.json`), null);
+    if (!data) continue;
+
+    const title = String(data.title || '').toLowerCase();
+    const titleScore = terms.reduce((n, term) => n + (title.includes(term) ? 1 : 0), 0);
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+
+    let bestMessage = null;
+    let bestScore = 0;
+    let bestIndex = 0;
+    for (const message of messages) {
+      if (message.role === 'system' || typeof message.content !== 'string') continue;
+      const text = message.content.toLowerCase();
+      let score = 0;
+      let firstIndex = -1;
+      for (const term of terms) {
+        const found = text.indexOf(term);
+        if (found !== -1) {
+          score += 1;
+          if (firstIndex === -1) firstIndex = found;
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestMessage = message;
+        bestIndex = Math.max(0, firstIndex);
+      }
+    }
+
+    if (!bestMessage && titleScore === 0) continue;
+
+    const snippetSource = bestMessage
+      ? String(bestMessage.content).slice(Math.max(0, bestIndex - 60), Math.max(0, bestIndex - 60) + 220)
+      : '';
+    results.push({
+      ...summary,
+      score: titleScore * 2 + bestScore,
+      matchRole: bestMessage?.role || 'title',
+      snippet: snippetSource.replace(/\s+/g, ' ').trim(),
+    });
+  }
+
+  results.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  });
+
+  return results.slice(0, Math.max(1, limit)).map(({ score, ...rest }) => rest);
+}
+
 export async function loadAutomations(paths = getRuntimePaths()) {
   const data = await readJsonSafe(paths.automationsFile, []);
   return Array.isArray(data) ? data : [];

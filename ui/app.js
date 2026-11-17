@@ -9,6 +9,7 @@ const state = {
   configuredKeys: {},
   presets: {},
   sessions: [],
+  sessionSearchQuery: '',
   activeSession: null,
   skills: [],
   knowledge: [],
@@ -126,10 +127,15 @@ function renderSidebarStatus() {
 function renderSessionsList() {
   const q = ($('#session-search').value || '').toLowerCase().trim();
   const listEl = $('#sessions-list');
-  const filtered = state.sessions.filter((s) => !q || (s.title || '').toLowerCase().includes(q));
+  const searchMode = Boolean(state.sessionSearchQuery);
+  const filtered = searchMode
+    ? state.sessions
+    : state.sessions.filter((s) => !q || (s.title || '').toLowerCase().includes(q));
 
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="status-sub" style="padding: 8px;">No tasks yet</div>`;
+    listEl.innerHTML = `<div class="status-sub" style="padding: 8px;">${
+      searchMode ? 'No matching conversations' : 'No tasks yet'
+    }</div>`;
     return;
   }
 
@@ -137,7 +143,10 @@ function renderSessionsList() {
     .map(
       (s) => `
       <div class="session-item ${state.activeSession?.id === s.id ? 'active' : ''}" data-id="${escapeHtml(s.id)}">
-        <span class="session-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
+        <span class="session-title-wrap">
+          <span class="session-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
+          ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
+        </span>
         ${s.source === 'scheduled' ? '<span class="session-badge">Auto</span>' : ''}
         <button type="button" class="session-del-btn" data-del="${escapeHtml(s.id)}" title="Delete session">×</button>
       </div>`
@@ -458,14 +467,27 @@ async function resolveApproval(toolCallId, approved, editedCommand) {
 async function loadSessions() {
   const res = await apiRequest('/api/sessions');
   state.sessions = res.sessions || [];
+  state.sessionSearchQuery = '';
+  const searchInput = $('#session-search');
+  if (searchInput && document.activeElement !== searchInput) searchInput.value = '';
+  renderSessionsList();
+}
+
+async function runSessionSearch(query) {
+  const res = await apiRequest(`/api/sessions/search?q=${encodeURIComponent(query)}`);
+  state.sessionSearchQuery = query;
+  state.sessions = res.results || [];
   renderSessionsList();
 }
 
 async function openSession(id) {
   const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`);
+  state.sessionSearchQuery = '';
+  const searchInput = $('#session-search');
+  if (searchInput) searchInput.value = '';
   state.activeSession = res.session;
   switchView('agent');
-  renderSessionsList();
+  await loadSessions();
   renderMessages(true);
 }
 
@@ -740,11 +762,12 @@ function renderSkillsGrid() {
       <div class="card">
         <div class="card-top">
           <div class="card-title">${escapeHtml(s.slug)}</div>
-          <span class="card-tag">${s.isStarter ? 'Starter' : 'Learned'}</span>
+          <span class="card-tag">${s.source ? 'Imported' : s.isStarter ? 'Starter' : 'Learned'}</span>
         </div>
         <div class="card-desc">${escapeHtml(s.description)}</div>
         <div class="card-actions">
           <button type="button" class="secondary-btn edit-skill-btn" data-slug="${escapeHtml(s.slug)}">Edit</button>
+          ${s.source ? `<button type="button" class="secondary-btn refresh-skill-btn" data-slug="${escapeHtml(s.slug)}">Refresh</button>` : ''}
           <button type="button" class="danger-btn del-skill-btn" data-slug="${escapeHtml(s.slug)}">Delete</button>
         </div>
       </div>`
@@ -755,6 +778,21 @@ function renderSkillsGrid() {
     b.addEventListener('click', async () => {
       const res = await apiRequest(`/api/skills/${encodeURIComponent(b.dataset.slug)}`);
       openSkillModal(res.skill);
+    });
+  });
+  $('#skills-grid').querySelectorAll('.refresh-skill-btn').forEach((b) => {
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      b.textContent = 'Refreshing...';
+      try {
+        await apiRequest(`/api/skills/${encodeURIComponent(b.dataset.slug)}/refresh`, { method: 'POST' });
+        await loadSkills();
+        showToast(`Refreshed skill ${b.dataset.slug}`);
+      } catch (err) {
+        showToast(err.message);
+        b.disabled = false;
+        b.textContent = 'Refresh';
+      }
     });
   });
   $('#skills-grid').querySelectorAll('.del-skill-btn').forEach((b) => {
@@ -1478,7 +1516,22 @@ function wireEvents() {
   });
 
   $('#new-task-btn').addEventListener('click', createNewTask);
-  $('#session-search').addEventListener('input', renderSessionsList);
+  let sessionSearchTimer = null;
+  $('#session-search').addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    clearTimeout(sessionSearchTimer);
+    sessionSearchTimer = setTimeout(async () => {
+      if (query.length < 2) {
+        await loadSessions();
+        return;
+      }
+      try {
+        await runSessionSearch(query);
+      } catch (err) {
+        showToast(err.message);
+      }
+    }, 220);
+  });
   $('#skills-search').addEventListener('input', renderSkillsGrid);
   $('#knowledge-search').addEventListener('input', renderKnowledgeGrid);
 

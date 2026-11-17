@@ -30,6 +30,7 @@ import {
   importExternalSkills,
   importSkillFromUrl,
   listExternalSkills,
+  refreshSkillFromUrl,
   listSkills,
   readSkill,
   saveSkill,
@@ -39,6 +40,7 @@ import { getRuntimePaths } from './state/paths.mjs';
 import {
   deleteSession,
   listSessions,
+  searchSessions,
   loadAutomations,
   loadConfig,
   loadSession,
@@ -76,6 +78,20 @@ function sendJson(res, status, data) {
 }
 
 const PRIVATE_FETCH_HOST_RE = /^(?:localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
+
+function isSameOriginRequest(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  const host = req.headers.host;
+  if (!host) return true;
+  return parsed.host === host;
+}
 
 function htmlToText(raw) {
   return String(raw || '')
@@ -227,6 +243,12 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
         return;
       }
 
+      // Mutations must come from the app's own origin, never a foreign page riding the cookie
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !isSameOriginRequest(req)) {
+        sendJson(res, 403, { ok: false, error: 'Cross-origin request blocked' });
+        return;
+      }
+
       // Health & System
       if (req.method === 'GET' && pathname === '/api/health') {
         const [system, ollama, loadedCfg] = await Promise.all([
@@ -281,6 +303,12 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
         );
         sendJson(res, 200, { ok: true, session });
         return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/sessions/search') {
+        const q = url.searchParams.get('q') || '';
+        const results = await searchSessions(q, paths);
+        return sendJson(res, 200, { ok: true, results });
       }
 
       const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(run|approve|cancel|compact))?$/);
@@ -475,6 +503,17 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
         const body = await readJsonBody(req);
         const saved = await saveSkill(body, paths);
         return sendJson(res, 200, { ok: true, saved });
+      }
+
+      const skillRefreshMatch = pathname.match(/^\/api\/skills\/([^/]+)\/refresh$/);
+      if (skillRefreshMatch && req.method === 'POST') {
+        const name = decodeURIComponent(skillRefreshMatch[1]);
+        try {
+          const refreshed = await refreshSkillFromUrl(name, { fetchFn, paths });
+          return sendJson(res, 200, { ok: true, refreshed });
+        } catch (err) {
+          return sendJson(res, 400, { ok: false, error: err.message });
+        }
       }
 
       const skillMatch = pathname.match(/^\/api\/skills\/([^/]+)$/);

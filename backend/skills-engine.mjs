@@ -52,11 +52,11 @@ export function parseFrontmatter(markdown) {
   const text = String(markdown || '');
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) {
-    return { name: '', title: '', description: '', triggers: [], tags: [], body: text.trim() };
+    return { name: '', title: '', description: '', triggers: [], tags: [], source: '', body: text.trim() };
   }
 
   const [, rawHeader, body] = match;
-  const meta = { name: '', title: '', description: '', triggers: [], tags: [] };
+  const meta = { name: '', title: '', description: '', triggers: [], tags: [], source: '' };
 
   for (const line of rawHeader.split(/\r?\n/)) {
     const colon = line.indexOf(':');
@@ -68,6 +68,7 @@ export function parseFrontmatter(markdown) {
     else if (key === 'description') meta.description = stripQuotes(val);
     else if (key === 'triggers') meta.triggers = parseTriggersValue(val);
     else if (key === 'tags') meta.tags = parseTriggersValue(val);
+    else if (key === 'source') meta.source = stripQuotes(val);
   }
 
   return { ...meta, body: body.trim() };
@@ -84,6 +85,7 @@ export function formatFrontmatter(meta, body) {
   if (Array.isArray(meta.tags) && meta.tags.length > 0) {
     lines.push(`tags: ${JSON.stringify(meta.tags)}`);
   }
+  if (meta.source) lines.push(`source: ${JSON.stringify(meta.source)}`);
   lines.push('---', '');
   return lines.join('\n') + String(body || '').trim() + '\n';
 }
@@ -197,6 +199,7 @@ export async function listSkills(paths = getRuntimePaths()) {
         slug: entry.name,
         description: parsed.description || 'No description provided.',
         triggers: parsed.triggers,
+        source: parsed.source || '',
         sourcePath: skillMdPath,
         isStarter: starterNames.has(entry.name),
       });
@@ -222,6 +225,7 @@ export async function readSkill(name, paths = getRuntimePaths()) {
         slug,
         description: parsed.description,
         triggers: parsed.triggers,
+        source: parsed.source || '',
       },
       content: parsed.body,
       raw,
@@ -248,11 +252,19 @@ export async function saveSkill(input, paths = getRuntimePaths()) {
   }
 
   await fs.mkdir(resolvedSkillDir, { recursive: true });
+  let existingSource = '';
+  try {
+    const existingRaw = await fs.readFile(path.join(resolvedSkillDir, 'SKILL.md'), 'utf8');
+    existingSource = parseFrontmatter(existingRaw).source || '';
+  } catch {
+    existingSource = '';
+  }
   const md = formatFrontmatter(
     {
       name: slug,
       description: input.description || '',
       triggers: Array.isArray(input.triggers) ? input.triggers : [],
+      source: input.source || existingSource,
     },
     input.content || ''
   );
@@ -409,9 +421,23 @@ export async function importSkillFromUrl(rawUrl, { fetchFn = globalThis.fetch, p
       description,
       triggers: parsed.triggers,
       content: parsed.body,
+      source: url,
     },
     paths
   );
 
   return { slug: saved.slug, description, triggers: parsed.triggers, sourceUrl: url };
+}
+
+/**
+ * Re-download an imported skill from the source URL stored in its frontmatter.
+ */
+export async function refreshSkillFromUrl(name, { fetchFn = globalThis.fetch, paths = getRuntimePaths() } = {}) {
+  const slug = sanitizeSkillSlug(name);
+  const existing = await readSkill(slug, paths);
+  if (!existing) throw new Error(`Skill "${slug}" not found.`);
+  if (!existing.meta.source) {
+    throw new Error(`Skill "${slug}" has no stored source URL to refresh from.`);
+  }
+  return importSkillFromUrl(existing.meta.source, { fetchFn, paths });
 }
