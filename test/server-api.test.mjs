@@ -113,6 +113,8 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.match(plist, /<key>Label<\/key>\s*<string>com\.localgravity\.audit-1<\/string>/);
     assert.match(plist, /--automation/);
     assert.match(plist, /<key>Hour<\/key>\s*<integer>9<\/integer>/);
+    assert.match(plist, /<key>EnvironmentVariables<\/key>/);
+    assert.match(plist, /\/opt\/homebrew\/bin/);
   } finally {
     await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });

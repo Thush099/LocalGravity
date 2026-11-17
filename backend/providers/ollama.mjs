@@ -31,7 +31,11 @@ export async function ensureOllamaRunning(baseUrl = DEFAULT_OLLAMA_URL) {
   const child = spawn('ollama', ['serve'], {
     stdio: 'ignore',
     detached: true,
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      OLLAMA_FLASH_ATTENTION: process.env.OLLAMA_FLASH_ATTENTION || '1',
+      OLLAMA_KV_CACHE_TYPE: process.env.OLLAMA_KV_CACHE_TYPE || 'q8_0',
+    },
   });
 
   for (let i = 0; i < 30; i++) {

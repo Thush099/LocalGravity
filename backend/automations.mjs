@@ -65,6 +65,15 @@ export function buildLaunchAgentPlist({
     <string>--automation</string>
     <string>${escapeXml(id)}</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>OLLAMA_FLASH_ATTENTION</key>
+    <string>1</string>
+    <key>OLLAMA_KV_CACHE_TYPE</key>
+    <string>q8_0</string>
+  </dict>
 ${scheduleBlock}
   <key>StandardOutPath</key>
   <string>${escapeXml(path.join(logDir, `${id}.out.log`))}</string>
