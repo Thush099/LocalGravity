@@ -1,43 +1,60 @@
 import crypto from 'node:crypto';
 
+function parseToolBlock(inner) {
+  const id = `fallback_${crypto.randomUUID().slice(0, 8)}`;
+  const stripped = String(inner || '')
+    .trim()
+    .replace(/^```(?:json|tool_call)?\s*\r?\n?/i, '')
+    .replace(/\r?\n?```\s*$/, '')
+    .trim();
+  try {
+    const parsed = JSON.parse(stripped);
+    const name = parsed?.name || parsed?.function?.name;
+    const rawArgs = parsed?.arguments ?? parsed?.function?.arguments ?? {};
+    const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+    if (!name || typeof name !== 'string') {
+      return {
+        id,
+        name: 'unknown',
+        arguments: {},
+        parseError: 'Missing tool "name" inside tool_call block.',
+      };
+    }
+    return {
+      id,
+      name,
+      arguments: args && typeof args === 'object' && !Array.isArray(args) ? args : {},
+    };
+  } catch (err) {
+    return {
+      id,
+      name: 'invalid_tool_call',
+      arguments: {},
+      parseError: `Malformed tool call JSON: ${err.message}`,
+    };
+  }
+}
+
 /**
- * Parse fallback tool calls emitted inside <tool_call>...</tool_call> tags.
+ * Parse fallback tool calls emitted inside <tool_call>...</tool_call> tags or ```tool_call fences.
  */
 export function extractFallbackToolCalls(text) {
   const input = String(text || '');
   const toolCalls = [];
   const tagRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
+  const fenceRe = /```tool_call\s*\r?\n([\s\S]*?)\r?\n```/gi;
 
-  const cleanedText = input
-    .replace(tagRe, (_full, inner) => {
-      const id = `fallback_${crypto.randomUUID().slice(0, 8)}`;
-      try {
-        const parsed = JSON.parse(inner.trim());
-        const name = parsed?.name || parsed?.function?.name;
-        const rawArgs = parsed?.arguments ?? parsed?.function?.arguments ?? {};
-        const args = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
-        if (!name || typeof name !== 'string') {
-          toolCalls.push({
-            id,
-            name: 'unknown',
-            arguments: {},
-            parseError: 'Missing tool "name" inside <tool_call> block.',
-          });
-        } else {
-          toolCalls.push({ id, name, arguments: args && typeof args === 'object' ? args : {} });
-        }
-      } catch (err) {
-        toolCalls.push({
-          id,
-          name: 'invalid_tool_call',
-          arguments: {},
-          parseError: `Malformed tool call JSON: ${err.message}`,
-        });
-      }
-      return '';
-    })
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  let cleanedText = input.replace(tagRe, (_full, inner) => {
+    toolCalls.push(parseToolBlock(inner));
+    return '';
+  });
+
+  cleanedText = cleanedText.replace(fenceRe, (_full, inner) => {
+    toolCalls.push(parseToolBlock(inner));
+    return '';
+  });
+
+  cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n').trim();
 
   return { cleanedText, toolCalls };
 }

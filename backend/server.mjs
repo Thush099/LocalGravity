@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { compactConversation } from './agent/compactor.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
@@ -83,7 +83,11 @@ function parseCookies(req) {
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    try {
+      out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    } catch {
+      // Ignore malformed percent-encoding
+    }
   }
   return out;
 }
@@ -146,6 +150,13 @@ function maskConfigForClient(cfg) {
 export function createAgentServer({ authToken, paths = getRuntimePaths() } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
+  const resolveRunApprovals = (runState, reason) => {
+    if (!runState?.approvals) return;
+    for (const resolver of runState.approvals.values()) {
+      resolver({ approved: false, reason });
+    }
+    runState.approvals.clear();
+  };
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -261,9 +272,7 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
           const runState = activeRuns.get(sessionId);
           if (runState) {
             runState.abortController.abort();
-            for (const resolver of runState.approvals.values()) {
-              resolver({ approved: false, reason: 'Run cancelled by user.' });
-            }
+            resolveRunApprovals(runState, 'Run cancelled by user.');
           }
           return sendJson(res, 200, { ok: true });
         }
@@ -322,6 +331,7 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
           req.on('close', () => {
             if (!res.writableEnded) {
               abortController.abort();
+              resolveRunApprovals(activeRuns.get(sessionId), 'Client disconnected.');
             }
           });
 
@@ -589,14 +599,16 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
     async stop() {
       for (const runState of activeRuns.values()) {
         runState.abortController.abort();
+        resolveRunApprovals(runState, 'Server shutting down.');
       }
       activeRuns.clear();
+      server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
     },
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const instance = createAgentServer();
   instance.start(Number(process.env.PORT) || 0).then(({ port }) => {
     process.stdout.write(`READY:${port}\n`);

@@ -39,7 +39,17 @@ fi
 
 if [[ "${DO_PURGE}" =~ ^[Yy]$ ]]; then
   if command -v ollama >/dev/null 2>&1; then
+    STARTED_TEMP_OLLAMA=0
+    if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+      ollama serve >/dev/null 2>&1 &
+      TEMP_OLLAMA_PID=$!
+      STARTED_TEMP_OLLAMA=1
+      sleep 2
+    fi
     ollama rm qwen3.5:9b 2>/dev/null || true
+    if [ "${STARTED_TEMP_OLLAMA}" = "1" ] && [ -n "${TEMP_OLLAMA_PID:-}" ]; then
+      kill "${TEMP_OLLAMA_PID}" 2>/dev/null || true
+    fi
     brew uninstall ollama 2>/dev/null || true
   fi
   if command -v magick >/dev/null 2>&1; then

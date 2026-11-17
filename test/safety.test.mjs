@@ -23,6 +23,21 @@ test('safety classifier blocks catastrophic commands and rejects shell-chaining 
   assert.equal(classifyCommand('df -h ~').level, 'readonly');
   assert.equal(classifyCommand('ffprobe "clip name.mp4"').level, 'readonly');
   assert.equal(classifyCommand('git status').level, 'readonly');
+  assert.equal(classifyCommand('git branch --show-current').level, 'readonly');
+
+  // Zsh process substitution, sips 4+ token mutations, git branch mutations, quoted/prefixed rm
+  assert.equal(classifyCommand('cat =(mv ~/a ~/b)').level, 'risky');
+  assert.equal(classifyCommand('ls =(touch /tmp/pwned)').level, 'risky');
+  assert.equal(classifyCommand('sips -g pixelWidth -Z 100 photo.jpg').level, 'risky');
+  assert.equal(classifyCommand('sips -g pixelWidth a.png b.png -o out.png').level, 'risky');
+  assert.equal(classifyCommand('sips -g pixelWidth -g pixelHeight photo.jpg').level, 'readonly');
+  assert.equal(classifyCommand('git branch -D main').level, 'risky');
+  assert.equal(classifyCommand('git branch feature-new').level, 'risky');
+  assert.equal(classifyCommand('rm -rf "/"').level, 'catastrophic');
+  assert.equal(classifyCommand('rm -rf "$HOME"').level, 'catastrophic');
+  assert.equal(classifyCommand('rm -rf ~/*').level, 'catastrophic');
+  assert.equal(classifyCommand('/bin/rm -rf /').level, 'catastrophic');
+  assert.equal(classifyCommand('find ~ -delete').level, 'catastrophic');
 });
 
 test('evaluateToolSafety enforces ask, auto, and headless allowAutoRun policies', () => {

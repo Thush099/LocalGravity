@@ -49,6 +49,27 @@ test('compactConversation summarizes older turns when exceeding 70% of numCtx', 
   assert.equal(compacted.compacted, true);
   assert.ok(compacted.messages.some((m) => m.content.includes('Summary of earlier Mac & media discussion')));
   assert.equal(compacted.messages.at(-1).content, 'recent answer');
+
+  // Must not orphan a role:'tool' message after summary
+  const toolHeavy = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: longText },
+    { role: 'assistant', content: longText },
+    { role: 'user', content: 'turn 2' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 't1', name: 'read_file', arguments: {} }] },
+    { role: 'tool', toolCallId: 't1', toolName: 'read_file', content: longText },
+    { role: 'assistant', content: 'done 2' },
+    { role: 'user', content: 'latest ask' },
+    { role: 'assistant', content: 'latest reply' },
+  ];
+  const toolCompacted = await compactConversation(toolHeavy, {
+    numCtx: 2500,
+    summarizeFn: async () => 'Short summary.',
+  });
+  assert.equal(toolCompacted.compacted, true);
+  const afterSummary = toolCompacted.messages.findIndex((m) => m.isCompactionSummary);
+  assert.equal(toolCompacted.messages[afterSummary + 1].role, 'user');
+  assert.ok(!toolCompacted.messages.some((m, i) => m.role === 'tool' && toolCompacted.messages[i - 1]?.isCompactionSummary));
 });
 
 test('runAgentTurn executes tools, injects inspect_media images, enforces approvals, and respects headless audit', async () => {
@@ -141,6 +162,54 @@ test('runAgentTurn executes tools, injects inspect_media images, enforces approv
 
   const hcRes = headlessEvents.find((e) => e.type === 'tool_result' && e.toolCallId === 'hc1');
   assert.match(hcRes.output, /Blocked/i);
+
+  // Multi-tool step with inspect_media must place visual user message AFTER all tool responses and never persist synthetic msg
+  let multiStep = 0;
+  let multiMessagesSent = null;
+  const multiSession = { id: 'loop-multi', title: 'Multi', messages: [] };
+  await runAgentTurn({
+    session: multiSession,
+    userMessage: 'Check photo and skills',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:9b', safetyMode: 'ask', numCtx: 16384 },
+    chatFn: async ({ messages }) => {
+      multiStep++;
+      if (multiStep === 1) {
+        return {
+          thinking: '',
+          content: '',
+          toolCalls: [
+            { id: 'm1', name: 'inspect_media', arguments: { path: imgPath } },
+            { id: 'm2', name: 'list_skills', arguments: {} },
+          ],
+        };
+      }
+      multiMessagesSent = messages;
+      return { thinking: '', content: 'Inspected both.', toolCalls: [] };
+    },
+  });
+  const m1Idx = multiMessagesSent.findIndex((m) => m.toolCallId === 'm1');
+  const m2Idx = multiMessagesSent.findIndex((m) => m.toolCallId === 'm2');
+  const visIdx = multiMessagesSent.findIndex((m) => Array.isArray(m.images) && m.images.length > 0 && m.role === 'user');
+  assert.equal(m2Idx, m1Idx + 1);
+  assert.equal(visIdx, m2Idx + 1);
+  assert.equal(multiSession.messages.some((m) => String(m.content).includes('[Visual media attachment')), false);
+
+  // Step-0 failure must still persist user turn and error on disk
+  const errSession = { id: 'loop-err', title: 'Err', messages: [] };
+  const { loadSession } = await import('../backend/state/storage.mjs');
+  await runAgentTurn({
+    session: errSession,
+    userMessage: 'Persist on fail',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:9b' },
+    chatFn: async () => {
+      throw new Error('Ollama unreachable');
+    },
+  });
+  const savedErrSession = await loadSession('loop-err', paths);
+  assert.ok(savedErrSession.messages.some((m) => m.role === 'user' && m.content === 'Persist on fail'));
+  assert.ok(savedErrSession.messages.some((m) => m.role === 'assistant' && m.content.includes('Ollama unreachable')));
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

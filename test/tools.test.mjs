@@ -28,23 +28,23 @@ test('registry tools perform fs ops, shell execution, skill/knowledge management
   assert.equal(written.ok, true);
 
   const edited = await executeToolCall(
-    { name: 'edit_file', args: { path: path.join(workDir, 'hello.txt'), target: 'line2', replacement: 'line-two' } },
+    { name: 'edit_file', args: { path: path.join(workDir, 'hello.txt'), target: 'line2', replacement: 'line-$&-two-$$-$1' } },
     ctx
   );
   assert.equal(edited.ok, true);
   assert.match(edited.diff, /-line2/);
-  assert.match(edited.diff, /\+line-two/);
+  assert.match(edited.diff, /\+line-\$&-two-\$\$-\$1/);
 
   const readRes = await executeToolCall(
     { name: 'read_file', args: { path: path.join(workDir, 'hello.txt'), start_line: 2, end_line: 3 } },
     ctx
   );
-  assert.match(readRes.output, /2: line-two/);
+  assert.match(readRes.output, /2: line-\$&-two-\$\$-\$1/);
 
   const listed = await executeToolCall({ name: 'list_dir', args: { path: workDir } }, ctx);
   assert.match(listed.output, /hello\.txt/);
 
-  const searched = await executeToolCall({ name: 'search_files', args: { root: workDir, query: 'line-two' } }, ctx);
+  const searched = await executeToolCall({ name: 'search_files', args: { root: workDir, query: 'line-$&-two' } }, ctx);
   assert.match(searched.output, /hello\.txt:2:/);
 
   const cmdRes = await executeToolCall(

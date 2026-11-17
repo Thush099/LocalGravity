@@ -292,7 +292,7 @@ export async function generateToolPreview({ name, args = {} }) {
     const resolved = expandUserPath(args.path || '');
     try {
       const oldContent = await fs.readFile(resolved, 'utf8');
-      const nextContent = oldContent.replaceAll(String(args.target || ''), String(args.replacement ?? ''));
+      const nextContent = oldContent.replaceAll(String(args.target || ''), () => String(args.replacement ?? ''));
       return buildCompactDiff(oldContent, nextContent, resolved);
     } catch {
       return `Edit ${resolved}`;

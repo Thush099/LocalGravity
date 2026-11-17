@@ -83,19 +83,34 @@ async function prepareAttachmentContext(attachments = [], paths) {
   return { images, notes };
 }
 
-function buildModelMessages(systemPrompt, sessionMessages) {
+function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') {
   const out = [{ role: 'system', content: systemPrompt }];
-  for (const msg of sessionMessages) {
-    if (msg.role === 'system') continue;
-    out.push(msg);
-    if (msg.role === 'tool' && Array.isArray(msg.images) && msg.images.length > 0) {
+  let pendingToolImages = [];
+
+  const flushImages = () => {
+    if (provider !== 'anthropic' && pendingToolImages.length > 0) {
       out.push({
         role: 'user',
-        content: `[Visual media attachment from ${msg.toolName || 'inspect_media'}]`,
-        images: msg.images,
+        content: '[Visual media inspection frames attached from inspect_media]',
+        images: pendingToolImages,
       });
     }
+    pendingToolImages = [];
+  };
+
+  for (const msg of sessionMessages) {
+    if (msg.role === 'system') continue;
+    if (msg.role !== 'tool') {
+      flushImages();
+      out.push(msg);
+    } else {
+      out.push(msg);
+      if (Array.isArray(msg.images) && msg.images.length > 0) {
+        pendingToolImages.push(...msg.images);
+      }
+    }
   }
+  flushImages();
   return out;
 }
 
@@ -136,11 +151,14 @@ export async function runAgentTurn({
       images: attached.images.length > 0 ? attached.images : undefined,
       createdAt: new Date().toISOString(),
     });
+    session.updatedAt = new Date().toISOString();
+    if (persistSession) await saveSession(session, paths);
   }
 
   const activeChatFn = chatFn || resolveProviderChatFn(providerConfig);
   const safetyMode = providerConfig.safetyMode || 'ask';
   const numCtx = Number(providerConfig.numCtx) || 16384;
+  const provider = providerConfig.provider || 'ollama';
 
   try {
     for (let step = 0; step < maxSteps; step++) {
@@ -165,8 +183,7 @@ export async function runAgentTurn({
         cwd,
       });
 
-      let modelMessages = buildModelMessages(systemPrompt, session.messages);
-      const compacted = await compactConversation(modelMessages, {
+      const compacted = await compactConversation(session.messages, {
         numCtx,
         summarizeFn: async (transcript) => {
           const sumRes = await activeChatFn({
@@ -182,7 +199,6 @@ export async function runAgentTurn({
       });
 
       if (compacted.compacted) {
-        modelMessages = compacted.messages;
         session.messages = compacted.messages.filter((m) => m.role !== 'system');
         onEvent?.({
           type: 'compacted',
@@ -190,6 +206,8 @@ export async function runAgentTurn({
           tokensAfter: compacted.tokensAfter,
         });
       }
+
+      const modelMessages = buildModelMessages(systemPrompt, session.messages, provider);
 
       onEvent?.({
         type: 'context_stats',
@@ -335,9 +353,19 @@ export async function runAgentTurn({
     return { session, status: 'completed' };
   } catch (err) {
     if (abortSignal?.aborted || err.name === 'AbortError') {
+      session.updatedAt = new Date().toISOString();
+      if (persistSession) await saveSession(session, paths).catch(() => {});
       onEvent?.({ type: 'done', status: 'cancelled' });
       return { session, status: 'cancelled' };
     }
+    session.messages.push({
+      role: 'assistant',
+      content: `> Error: ${err.message}`,
+      isError: true,
+      createdAt: new Date().toISOString(),
+    });
+    session.updatedAt = new Date().toISOString();
+    if (persistSession) await saveSession(session, paths).catch(() => {});
     onEvent?.({ type: 'error', message: err.message });
     return { session, status: 'error', error: err.message };
   }

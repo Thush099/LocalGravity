@@ -115,7 +115,7 @@ export async function editFileTool({ path: filePath, target, replacement }) {
   if (!target || !original.includes(target)) {
     return { ok: false, output: `Target snippet not found in ${resolved}` };
   }
-  const updated = original.replaceAll(target, String(replacement ?? ''));
+  const updated = original.replaceAll(target, () => String(replacement ?? ''));
   await fs.writeFile(resolved, updated, 'utf8');
   return {
     ok: true,

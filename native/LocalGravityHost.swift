@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var authToken: String = ""
     private var serverPort: Int = 0
     private var stdoutBuffer = ""
+    private var stderrBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -183,12 +184,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             }
         }
 
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.stderrBuffer += chunk
+                if self.stderrBuffer.count > 8192 {
+                    self.stderrBuffer = String(self.stderrBuffer.suffix(8192))
+                }
+            }
+        }
+
         proc.terminationHandler = { [weak self] process in
-            if process.terminationStatus != 0 && self?.serverPort == 0 {
-                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let errText = String(data: errData, encoding: .utf8) ?? "Unknown backend error"
-                DispatchQueue.main.async {
-                    self?.showStartupError("Agent backend failed to start:\n\(errText)")
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if process.terminationStatus != 0 && self.serverPort == 0 {
+                    let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
+                    self.showStartupError("Agent backend failed to start:\n\(msg)")
                 }
             }
         }

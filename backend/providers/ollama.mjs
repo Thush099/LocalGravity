@@ -22,13 +22,14 @@ export async function checkOllamaHealth(baseUrl = DEFAULT_OLLAMA_URL) {
   }
 }
 
-export async function ensureOllamaRunning(baseUrl = DEFAULT_OLLAMA_URL) {
+export async function ensureOllamaRunning(baseUrl = DEFAULT_OLLAMA_URL, options = {}) {
   const initial = await checkOllamaHealth(baseUrl);
   if (initial.running) {
     return { startedByUs: false, stop: async () => {} };
   }
 
-  const child = spawn('ollama', ['serve'], {
+  const binary = options.binary || 'ollama';
+  const child = spawn(binary, ['serve'], {
     stdio: 'ignore',
     detached: true,
     env: {
@@ -38,8 +39,19 @@ export async function ensureOllamaRunning(baseUrl = DEFAULT_OLLAMA_URL) {
     },
   });
 
+  let spawnError = null;
+  child.on('error', (err) => {
+    spawnError = err;
+  });
+
   for (let i = 0; i < 30; i++) {
+    if (spawnError) {
+      throw new Error(`Failed to start Ollama (${binary}): ${spawnError.message}`);
+    }
     await new Promise((r) => setTimeout(r, 400));
+    if (spawnError) {
+      throw new Error(`Failed to start Ollama (${binary}): ${spawnError.message}`);
+    }
     const status = await checkOllamaHealth(baseUrl);
     if (status.running) {
       return {

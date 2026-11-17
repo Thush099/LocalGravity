@@ -27,6 +27,8 @@ cp "${REPO_ROOT}/build/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 cp -R "${REPO_ROOT}/backend" "${RESOURCES_DIR}/backend"
 cp -R "${REPO_ROOT}/ui" "${RESOURCES_DIR}/ui"
 cp "${REPO_ROOT}/package.json" "${RESOURCES_DIR}/package.json"
+cp "${REPO_ROOT}/scripts/uninstall.sh" "${RESOURCES_DIR}/uninstall.sh"
+chmod +x "${RESOURCES_DIR}/uninstall.sh"
 
 cat > "${CONTENTS}/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

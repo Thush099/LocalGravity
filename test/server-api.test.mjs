@@ -115,6 +115,15 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.match(plist, /<key>Hour<\/key>\s*<integer>9<\/integer>/);
     assert.match(plist, /<key>EnvironmentVariables<\/key>/);
     assert.match(plist, /\/opt\/homebrew\/bin/);
+
+    // Spaced path CLI entry point must execute main() instead of silently exiting 0
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    await assert.rejects(
+      () => execFileAsync(process.execPath, [path.resolve('backend/cli-run.mjs')]),
+      (err) => err.code === 1 && /Usage:/.test(err.stderr)
+    );
   } finally {
     await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });

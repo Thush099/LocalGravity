@@ -1,9 +1,12 @@
 import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { runAgentTurn } from './agent/loop.mjs';
+import { updateAutomationRecord } from './automations.mjs';
 import { ensureOllamaRunning } from './providers/ollama.mjs';
 import { getRuntimePaths } from './state/paths.mjs';
-import { loadAutomations, loadConfig, saveAutomations, saveSession } from './state/storage.mjs';
+import { loadAutomations, loadConfig, saveSession } from './state/storage.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,17 +66,16 @@ async function main() {
     });
 
     await saveSession(session, paths);
-    const currentList = await loadAutomations(paths);
-    const targetIdx = currentList.findIndex((a) => a.id === automation.id);
-    if (targetIdx !== -1) {
-      currentList[targetIdx] = {
-        ...currentList[targetIdx],
+    await updateAutomationRecord(
+      automation.id,
+      (cur) => ({
+        ...cur,
         lastRunAt: new Date().toISOString(),
         lastRunStatus: result.status,
         lastSessionId: session.id,
-      };
-      await saveAutomations(currentList, paths);
-    }
+      }),
+      paths
+    );
 
     const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
     await notifyMac(
@@ -92,6 +94,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main();
 }

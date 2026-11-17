@@ -121,7 +121,7 @@ async function listRelativeFiles(dir, prefix = '') {
 }
 
 /**
- * Copy missing starter skills into the user's skills directory without overwriting customized ones.
+ * Copy missing starter skills into the user's skills directory once per starter slug so user deletions stay deleted.
  */
 export async function syncStarterSkills(paths = getRuntimePaths()) {
   const starterDir = getStarterSkillsDir();
@@ -134,9 +134,21 @@ export async function syncStarterSkills(paths = getRuntimePaths()) {
     return synced;
   }
 
+  const seededMarkerPath = path.join(paths.root, '.seeded-starters.json');
+  let seededSet = new Set();
+  try {
+    const raw = await fs.readFile(seededMarkerPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) seededSet = new Set(parsed);
+  } catch {
+    seededSet = new Set();
+  }
+
+  let markerDirty = false;
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const slug = sanitizeSkillSlug(entry.name);
+    if (seededSet.has(slug)) continue;
     const destSkillDir = path.join(paths.skillsDir, slug);
     const destMd = path.join(destSkillDir, 'SKILL.md');
     let exists = false;
@@ -150,6 +162,13 @@ export async function syncStarterSkills(paths = getRuntimePaths()) {
       await copyDirMissingOnly(path.join(starterDir, slug), destSkillDir);
       synced.push(slug);
     }
+    seededSet.add(slug);
+    markerDirty = true;
+  }
+
+  if (markerDirty) {
+    await fs.mkdir(paths.root, { recursive: true });
+    await fs.writeFile(seededMarkerPath, JSON.stringify([...seededSet], null, 2) + '\n', 'utf8');
   }
   return synced;
 }

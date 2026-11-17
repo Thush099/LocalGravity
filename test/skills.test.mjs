@@ -67,5 +67,10 @@ test('skills engine syncs starters without clobbering edits, rejects path traver
   assert.ok((await listSkills(paths)).some((s) => s.name === 'custom-ext'));
   assert.equal(await deleteSkill('custom-ext', paths), true);
 
+  // Deleting a starter skill must keep it deleted across future syncStarterSkills calls
+  assert.equal(await deleteSkill('humanizer', paths), true);
+  await syncStarterSkills(paths);
+  assert.equal(await readSkill('humanizer', paths), null);
+
   await fs.rm(tmpHome, { recursive: true, force: true });
 });

@@ -38,9 +38,16 @@ export async function compactConversation(messages, { numCtx = 16384, force = fa
     return { messages, compacted: false, tokensBefore: currentTokens, tokensAfter: currentTokens };
   }
 
-  const keepRecentCount = Math.min(4, nonSystem.length);
-  const older = nonSystem.slice(0, nonSystem.length - keepRecentCount);
-  const recent = nonSystem.slice(nonSystem.length - keepRecentCount);
+  let splitIdx = Math.max(0, nonSystem.length - 4);
+  while (splitIdx > 0 && (nonSystem[splitIdx].role !== 'user' || nonSystem[splitIdx].isCompactionSummary)) {
+    splitIdx--;
+  }
+  if (splitIdx === 0) {
+    return { messages, compacted: false, tokensBefore: currentTokens, tokensAfter: currentTokens };
+  }
+
+  const older = nonSystem.slice(0, splitIdx);
+  const recent = nonSystem.slice(splitIdx);
 
   const transcript = older
     .map((m) => `[${m.role}${m.toolName ? `:${m.toolName}` : ''}] ${String(m.content || '').slice(0, 600)}`)

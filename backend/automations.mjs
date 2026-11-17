@@ -96,10 +96,53 @@ async function launchctlLoad(plistPath) {
   await execFileAsync('launchctl', ['load', '-w', plistPath]);
 }
 
+async function withAutomationsLock(paths, fn) {
+  await fs.mkdir(paths.root, { recursive: true });
+  const lockPath = `${paths.automationsFile}.lock`;
+  let handle = null;
+
+  for (let i = 0; i < 40; i++) {
+    try {
+      handle = await fs.open(lockPath, 'wx');
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      try {
+        const st = await fs.stat(lockPath);
+        if (Date.now() - st.mtimeMs > 15000) {
+          await fs.rm(lockPath, { force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      await new Promise((r) => setTimeout(r, 75));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await handle?.close().catch(() => {});
+    await fs.rm(lockPath, { force: true }).catch(() => {});
+  }
+}
+
+export async function updateAutomationRecord(id, patchFn, paths = getRuntimePaths()) {
+  return withAutomationsLock(paths, async () => {
+    const list = await loadAutomations(paths);
+    const idx = list.findIndex((a) => a.id === id);
+    if (idx === -1) return null;
+    list[idx] = patchFn(list[idx]);
+    await saveAutomations(list, paths);
+    return list[idx];
+  });
+}
+
 export async function setAutomationSchedule(id, scheduleConfig, paths = getRuntimePaths()) {
-  const list = await loadAutomations(paths);
-  const idx = list.findIndex((a) => a.id === id);
-  if (idx === -1) {
+  const initialList = await loadAutomations(paths);
+  const existing = initialList.find((a) => a.id === id);
+  if (!existing) {
     throw new Error(`Automation "${id}" not found.`);
   }
 
@@ -111,13 +154,15 @@ export async function setAutomationSchedule(id, scheduleConfig, paths = getRunti
 
   if (!enabled) {
     await fs.rm(plistPath, { force: true }).catch(() => {});
-    list[idx] = {
-      ...list[idx],
-      schedule: { enabled: false },
-      allowAutoRun: Boolean(scheduleConfig?.allowAutoRun ?? list[idx].allowAutoRun),
-    };
-    await saveAutomations(list, paths);
-    return list[idx];
+    return updateAutomationRecord(
+      id,
+      (cur) => ({
+        ...cur,
+        schedule: { enabled: false },
+        allowAutoRun: Boolean(scheduleConfig?.allowAutoRun ?? cur.allowAutoRun),
+      }),
+      paths
+    );
   }
 
   const logDir = path.join(paths.root, 'logs');
@@ -127,8 +172,8 @@ export async function setAutomationSchedule(id, scheduleConfig, paths = getRunti
   const schedulePayload = {
     enabled: true,
     frequency: scheduleConfig.frequency || 'daily',
-    hour: Number(scheduleConfig.hour ?? 9),
-    minute: Number(scheduleConfig.minute ?? 0),
+    hour: Math.min(23, Math.max(0, Number(scheduleConfig.hour ?? 9) || 0)),
+    minute: Math.min(59, Math.max(0, Number(scheduleConfig.minute ?? 0) || 0)),
     intervalSeconds: scheduleConfig.intervalSeconds ? Number(scheduleConfig.intervalSeconds) : undefined,
   };
 
@@ -146,14 +191,16 @@ export async function setAutomationSchedule(id, scheduleConfig, paths = getRunti
   await fs.writeFile(plistPath, plist, 'utf8');
   await launchctlLoad(plistPath);
 
-  list[idx] = {
-    ...list[idx],
-    schedule: schedulePayload,
-    allowAutoRun: Boolean(scheduleConfig.allowAutoRun),
-    plistPath,
-  };
-  await saveAutomations(list, paths);
-  return list[idx];
+  return updateAutomationRecord(
+    id,
+    (cur) => ({
+      ...cur,
+      schedule: schedulePayload,
+      allowAutoRun: Boolean(scheduleConfig.allowAutoRun),
+      plistPath,
+    }),
+    paths
+  );
 }
 
 export async function removeAllLaunchAgents(paths = getRuntimePaths()) {

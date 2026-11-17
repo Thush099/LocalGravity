@@ -19,6 +19,25 @@ test('tool-parser extracts valid fallback tool calls and converts malformed JSON
   const res2 = extractFallbackToolCalls(broken);
   assert.equal(res2.toolCalls.length, 1);
   assert.ok(res2.toolCalls[0].parseError);
+
+  const fencedInside = `<tool_call>\n\`\`\`json\n{"name":"read_file","arguments":{"path":"README.md"}}\n\`\`\`\n</tool_call>`;
+  const res3 = extractFallbackToolCalls(fencedInside);
+  assert.equal(res3.toolCalls.length, 1);
+  assert.equal(res3.toolCalls[0].name, 'read_file');
+  assert.equal(res3.toolCalls[0].parseError, undefined);
+
+  const standaloneFence = `Checking:\n\`\`\`tool_call\n{"name":"list_skills","arguments":{}}\n\`\`\``;
+  const res4 = extractFallbackToolCalls(standaloneFence);
+  assert.equal(res4.toolCalls.length, 1);
+  assert.equal(res4.toolCalls[0].name, 'list_skills');
+});
+
+test('ensureOllamaRunning handles missing ollama binary without crashing process', async () => {
+  const { ensureOllamaRunning } = await import('../backend/providers/ollama.mjs');
+  await assert.rejects(
+    () => ensureOllamaRunning('http://127.0.0.1:19999', { binary: '/nonexistent/ollama-bin' }),
+    /ollama/i
+  );
 });
 
 test('ollama, openai-compatible, and anthropic adapters stream thinking, text, and tool_calls uniformly', async () => {
