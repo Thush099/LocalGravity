@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LocalGravity</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app-shell" class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+              <circle cx="12" cy="12" r="3.5" fill="currentColor" />
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="brand-meta">
+            <span class="brand-name">LocalGravity</span>
+            <span class="brand-sub" id="sidebar-chip-label">Apple Silicon</span>
+          </div>
+        </div>
+
+        <button id="new-task-btn" class="primary-action-btn" type="button">
+          <span>+ New task</span>
+        </button>
+
+        <nav class="main-nav" aria-label="Primary">
+          <button type="button" class="nav-btn active" data-view="agent">Agent</button>
+          <button type="button" class="nav-btn" data-view="skills">Skills & Knowledge</button>
+          <button type="button" class="nav-btn" data-view="automations">Automations</button>
+          <button type="button" class="nav-btn" data-view="settings">Models & Settings</button>
+        </nav>
+
+        <div class="sessions-section">
+          <div class="sessions-header">
+            <span>Recent tasks</span>
+          </div>
+          <input
+            id="session-search"
+            class="sidebar-search"
+            type="search"
+            placeholder="Filter history..."
+            aria-label="Filter task history"
+          />
+          <div id="sessions-list" class="sessions-list"></div>
+        </div>
+
+        <div class="sidebar-footer" id="sidebar-status">
+          <div class="status-row">
+            <span class="status-dot" id="ollama-dot"></span>
+            <span id="ollama-status-text">Checking Ollama...</span>
+          </div>
+          <div class="status-sub" id="disk-status-text">Disk: checking...</div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <!-- VIEW: AGENT -->
+        <section id="view-agent" class="view active">
+          <header class="workspace-header">
+            <div class="header-left">
+              <button id="model-picker-btn" class="pill-btn model-pill" type="button">
+                <span class="pill-dot"></span>
+                <span id="active-model-label">qwen3.5:9b (Local)</span>
+                <span class="chevron">▾</span>
+              </button>
+              <div id="model-popover" class="popover hidden" role="dialog" aria-label="Switch model"></div>
+            </div>
+
+            <div class="header-controls">
+              <button id="thinking-toggle" class="pill-btn toggle-pill active" type="button" title="Toggle step-by-step thinking">
+                Thinking: On
+              </button>
+              <button id="safety-toggle" class="pill-btn toggle-pill" type="button" title="Toggle command approval policy">
+                Safety: Ask
+              </button>
+              <div class="context-meter" title="Estimated context window usage">
+                <span id="context-label">0k / 16k</span>
+              </div>
+              <button id="compact-btn" class="pill-btn" type="button" title="Summarize older messages to free context">
+                Compact
+              </button>
+            </div>
+          </header>
+
+          <div id="chat-scroll" class="chat-scroll">
+            <div id="welcome-state" class="welcome-state">
+              <div class="welcome-inner">
+                <h1>What would you like done on your Mac?</h1>
+                <p class="welcome-lead">
+                  Running locally on your M4 with self-learning skills, visual media inspection, and full file/terminal tools.
+                </p>
+                <div class="quick-grid">
+                  <button type="button" class="quick-card" data-prompt="Audit my Mac storage and show me what's taking up space in Downloads, Desktop, and safe caches (read-only dry run first).">
+                    <strong>Organize Mac storage</strong>
+                    <span>Find large files, sort Downloads, clean safe caches</span>
+                  </button>
+                  <button type="button" class="quick-card" data-prompt="Help me inspect and edit a video or photo using ffmpeg/ImageMagick with visual before-and-after verification.">
+                    <strong>Edit video or photo</strong>
+                    <span>Trim, reframe 9:16, compress, color polish, FCPXML</span>
+                  </button>
+                  <button type="button" class="quick-card" data-prompt="Rewrite the following text so it sounds natural, direct, and genuinely human without any AI clichés: ">
+                    <strong>Humanize writing</strong>
+                    <span>Strip robotic phrasing while keeping your voice</span>
+                  </button>
+                  <button type="button" class="quick-card" data-prompt="Let's teach you a new reusable skill or save a personal preference to Knowledge & Memory.">
+                    <strong>Teach a new skill</strong>
+                    <span>Turn any repeatable workflow into a saved SKILL.md</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div id="chat-messages" class="chat-messages"></div>
+          </div>
+
+          <div id="composer-dropzone" class="composer-wrap">
+            <div id="drop-overlay" class="drop-overlay hidden">Drop photos, videos, folders, or documents to attach</div>
+            <div id="attachments-bar" class="attachments-bar hidden"></div>
+            <div class="composer-box">
+              <button id="attach-btn" class="icon-btn" type="button" title="Attach file, photo, video, or folder">
+                +
+              </button>
+              <input id="browser-file-input" type="file" multiple class="hidden" />
+              <textarea
+                id="prompt-input"
+                rows="1"
+                placeholder="Ask LocalGravity to organize files, edit media, humanize text, or automate a task..."
+              ></textarea>
+              <button id="send-btn" class="send-btn" type="button">Run</button>
+              <button id="stop-btn" class="stop-btn hidden" type="button">Stop</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW: SKILLS & KNOWLEDGE -->
+        <section id="view-skills" class="view">
+          <header class="view-header">
+            <div>
+              <h2>Skills & Knowledge</h2>
+              <p class="view-sub">Teach repeatable workflows (SKILL.md) and store personal context, brand specs, or preferences.</p>
+            </div>
+            <div class="segmented-tabs">
+              <button type="button" class="seg-btn active" data-subtab="skills">Skills</button>
+              <button type="button" class="seg-btn" data-subtab="knowledge">Knowledge & Memory</button>
+            </div>
+          </header>
+
+          <div id="subtab-skills" class="subtab active">
+            <div class="toolbar">
+              <input id="skills-search" class="text-input" type="search" placeholder="Search skills..." />
+              <div class="toolbar-actions">
+                <button id="import-ag-skills-btn" class="secondary-btn" type="button">Import from Antigravity</button>
+                <button id="new-skill-btn" class="primary-btn" type="button">+ New skill</button>
+              </div>
+            </div>
+            <div id="skills-grid" class="card-grid"></div>
+          </div>
+
+          <div id="subtab-knowledge" class="subtab">
+            <div class="toolbar">
+              <input id="knowledge-search" class="text-input" type="search" placeholder="Search knowledge docs..." />
+              <div class="toolbar-actions">
+                <input id="knowledge-file-input" type="file" accept=".md,.txt,.json,.csv,.yaml,.yml" multiple class="hidden" />
+                <button id="upload-knowledge-btn" class="secondary-btn" type="button">Upload .md / .txt</button>
+                <button id="new-knowledge-btn" class="primary-btn" type="button">+ New knowledge doc</button>
+              </div>
+            </div>
+            <div id="knowledge-grid" class="card-grid"></div>
+          </div>
+        </section>
+
+        <!-- VIEW: AUTOMATIONS -->
+        <section id="view-automations" class="view">
+          <header class="view-header">
+            <div>
+              <h2>Automations</h2>
+              <p class="view-sub">Run saved workflows in one click or schedule background launchd jobs with silent Mac notifications.</p>
+            </div>
+            <button id="new-automation-btn" class="primary-btn" type="button">+ Create automation</button>
+          </header>
+          <div id="automations-grid" class="card-grid"></div>
+        </section>
+
+        <!-- VIEW: MODELS & SETTINGS -->
+        <section id="view-settings" class="view">
+          <header class="view-header">
+            <div>
+              <h2>Models & Settings</h2>
+              <p class="view-sub">Local Ollama models on your M4 plus optional Gemini, Claude, ChatGPT, Groq, and OpenRouter endpoints.</p>
+            </div>
+          </header>
+
+          <div class="settings-scroll">
+            <div class="settings-section">
+              <h3>Mac Resources & Runtime</h3>
+              <div id="system-stats-grid" class="stats-grid"></div>
+              <div class="runtime-controls">
+                <label class="field-inline">
+                  <span>Ollama context budget</span>
+                  <select id="num-ctx-select" class="select-input">
+                    <option value="8192">8,192 tokens (Fastest / Lowest RAM)</option>
+                    <option value="16384" selected>16,384 tokens (Recommended for 16 GB M4)</option>
+                    <option value="32768">32,768 tokens (Heavy tasks)</option>
+                  </select>
+                </label>
+                <button id="start-ollama-btn" class="secondary-btn" type="button">Start / Check Ollama</button>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Local Ollama Models</h3>
+              <div class="pull-row">
+                <input id="pull-model-input" class="text-input" type="text" placeholder="Model tag (e.g. qwen3.5:9b, gemma4:12b, qwen3:4b)" />
+                <button id="pull-model-btn" class="primary-btn" type="button">Pull model</button>
+              </div>
+              <div class="preset-chips">
+                <button type="button" class="chip-btn pull-preset" data-model="qwen3.5:9b">qwen3.5:9b (~7.6 GB · Best default)</button>
+                <button type="button" class="chip-btn pull-preset" data-model="gemma4:12b">gemma4:12b (~8 GB · Vision + Audio)</button>
+                <button type="button" class="chip-btn pull-preset" data-model="qwen3:4b">qwen3:4b (~3 GB · Ultra-light)</button>
+              </div>
+              <div id="pull-progress" class="pull-progress hidden"></div>
+              <div id="ollama-models-list" class="models-list"></div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Cloud & Frontier Providers (Optional)</h3>
+              <p class="section-hint">
+                API keys are stored locally in <code>~/.localgravity/config.json</code> (mode <code>0600</code>). Leave blank to keep LocalGravity 100% local.
+              </p>
+              <div id="providers-list" class="providers-grid"></div>
+            </div>
+
+            <div class="settings-section danger-zone">
+              <h3>Clean Uninstall</h3>
+              <p class="section-hint">
+                Everything lives inside <code>/Applications/LocalGravity.app</code>, <code>~/.localgravity/</code>, and the repository folder. To remove everything cleanly:
+              </p>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>zsh</span>
+                  <button type="button" class="copy-code-btn" data-code='bash "/Users/thushanthmahendran/Documents/Code & Projects/Software Repositories/LocalGravity/scripts/uninstall.sh"'>Copy</button>
+                </div>
+                <pre><code>bash "/Users/thushanthmahendran/Documents/Code &amp; Projects/Software Repositories/LocalGravity/scripts/uninstall.sh"</code></pre>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- MODAL DIALOG -->
+    <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="modal-title">Edit</h3>
+          <button id="modal-close-btn" class="icon-btn" type="button" aria-label="Close">×</button>
+        </div>
+        <div id="modal-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
