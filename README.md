@@ -10,16 +10,17 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
 
 - **Native macOS Launchpad App (`/Applications/LocalGravity.app`):** Compiled `arm64` Swift `WKWebView` host that manages an isolated, token-authenticated Node.js v26 agent server on `127.0.0.1` and shuts it down cleanly on quit.
 - **Hybrid Model Switcher:**
-  - **Local Ollama (Default: `qwen3.5:9b`):** Native vision, native tool calling, toggleable thinking mode, and M4-tuned context budgets (`8K` / `16K` / `32K` with automatic context compaction at 70% capacity).
+  - **Local Ollama (Default: `qwen3.5:4b` fast mode + `qwen3.5:9b`):** Native vision, native tool calling, toggleable **Deep Think** mode, and M4-tuned context budgets (`8K` / `16K` / `32K` with automatic context compaction at 70% capacity).
   - **Multi-Provider Support:** Connect **OpenRouter (`:free` & Pro)**, **Groq**, **Google Gemini**, **Anthropic Claude**, **OpenAI / ChatGPT**, or any **Custom OpenAI-Compatible Endpoint**. Keys stay strictly local in `~/.localgravity/config.json` (`0600`).
 - **Antigravity-Style Tool Loop & Safety Gate:**
-  - Built-in tools: `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `run_command`, `inspect_media`, `list_skills`/`read_skill`/`save_skill`, and `list_knowledge`/`search_knowledge`/`read_knowledge`/`save_knowledge`.
+  - Built-in tools: `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `run_command`, `inspect_media`, `fetch_url`, `list_skills`/`read_skill`/`save_skill` (with `extra_files` scripts), and `list_knowledge`/`search_knowledge`/`read_knowledge`/`save_knowledge`.
   - **Visual Media Inspection (`inspect_media`):** Extracts video keyframes via `ffmpeg` or scales photos via `sips` and passes them directly to the vision model so the agent can visually verify edits before and after running commands.
   - **Safety Policies:** Interactive **Ask** mode pauses mutating commands and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
 - **Self-Teaching Skills & Knowledge Base:**
-  - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so small local models stay sharp.
-  - Includes **5 Starter Skills**: `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
+  - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
+  - Includes **9 Starter Skills**: `coding-engineer`, `systematic-debugger`, `frontend-architect`, `self-upgrade`, `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
   - One-click **Teach as skill**, **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+- **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, and follow-up message queueing / instant interrupt while a turn is running.
 - **Scheduled Background Automations (`launchd`):**
   - Save any workflow as a one-click Automation card or attach an hourly/daily `launchd` schedule (`~/Library/LaunchAgents/com.localgravity.<id>.plist`).
   - Headless background runs execute via `backend/cli-run.mjs`, write isolated session logs, default to **Read-Only Audit mode** (`allowAutoRun: false` unless explicitly opted in), and post macOS notifications when done.

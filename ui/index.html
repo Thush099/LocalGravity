@@ -71,14 +71,14 @@
             </div>
 
             <div class="header-controls">
-              <button id="thinking-toggle" class="pill-btn toggle-pill active" type="button" title="Toggle step-by-step thinking">
-                Thinking: On
+              <button id="thinking-toggle" class="pill-btn toggle-pill" type="button" title="Toggle deep thinking (slower, best for hard debugging)">
+                Deep Think: Off
               </button>
               <button id="safety-toggle" class="pill-btn toggle-pill" type="button" title="Toggle command approval policy">
                 Safety: Ask
               </button>
               <div class="context-meter" title="Estimated context window usage">
-                <span id="context-label">0k / 16k</span>
+                <span id="context-label">0k / 8k</span>
               </div>
               <button id="compact-btn" class="pill-btn" type="button" title="Summarize older messages to free context">
                 Compact
@@ -118,6 +118,13 @@
 
           <div id="composer-dropzone" class="composer-wrap">
             <div id="drop-overlay" class="drop-overlay hidden">Drop photos, videos, folders, or documents to attach</div>
+            <div id="queued-bar" class="queued-bar hidden">
+              <span id="queued-text" class="queued-text"></span>
+              <div class="queued-actions">
+                <button id="queued-now-btn" class="secondary-btn" type="button">Send now</button>
+                <button id="queued-cancel-btn" class="danger-btn" type="button">Cancel</button>
+              </div>
+            </div>
             <div id="attachments-bar" class="attachments-bar hidden"></div>
             <div class="composer-box">
               <button id="attach-btn" class="icon-btn" type="button" title="Attach file, photo, video, or folder">
@@ -127,7 +134,7 @@
               <textarea
                 id="prompt-input"
                 rows="1"
-                placeholder="Ask LocalGravity to organize files, edit media, humanize text, or automate a task..."
+                placeholder="Ask LocalGravity to organize files, edit media, code, humanize text, or install skills..."
               ></textarea>
               <button id="send-btn" class="send-btn" type="button">Run</button>
               <button id="stop-btn" class="stop-btn hidden" type="button">Stop</button>
@@ -201,8 +208,8 @@
                 <label class="field-inline">
                   <span>Ollama context budget</span>
                   <select id="num-ctx-select" class="select-input">
-                    <option value="8192">8,192 tokens (Fastest / Lowest RAM)</option>
-                    <option value="16384" selected>16,384 tokens (Recommended for 16 GB M4)</option>
+                    <option value="8192" selected>8,192 tokens (Recommended for 16 GB M4 · Fastest)</option>
+                    <option value="16384">16,384 tokens (Larger context · Uses more RAM)</option>
                     <option value="32768">32,768 tokens (Heavy tasks)</option>
                   </select>
                 </label>
@@ -213,13 +220,13 @@
             <div class="settings-section">
               <h3>Local Ollama Models</h3>
               <div class="pull-row">
-                <input id="pull-model-input" class="text-input" type="text" placeholder="Model tag (e.g. qwen3.5:9b, gemma4:12b, qwen3:4b)" />
+                <input id="pull-model-input" class="text-input" type="text" placeholder="Model tag (e.g. qwen3.5:4b, qwen3.5:9b, gemma4:12b)" />
                 <button id="pull-model-btn" class="primary-btn" type="button">Pull model</button>
               </div>
               <div class="preset-chips">
-                <button type="button" class="chip-btn pull-preset" data-model="qwen3.5:9b">qwen3.5:9b (~7.6 GB · Best default)</button>
+                <button type="button" class="chip-btn pull-preset" data-model="qwen3.5:4b">qwen3.5:4b (~4.0 GB · Fast Vision + Tools)</button>
+                <button type="button" class="chip-btn pull-preset" data-model="qwen3.5:9b">qwen3.5:9b (~7.6 GB · Higher IQ Vision + Tools)</button>
                 <button type="button" class="chip-btn pull-preset" data-model="gemma4:12b">gemma4:12b (~8 GB · Vision + Audio)</button>
-                <button type="button" class="chip-btn pull-preset" data-model="qwen3:4b">qwen3:4b (~3 GB · Ultra-light)</button>
               </div>
               <div id="pull-progress" class="pull-progress hidden"></div>
               <div id="ollama-models-list" class="models-list"></div>

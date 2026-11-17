@@ -294,6 +294,16 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
 
         if (action === 'run' && req.method === 'POST') {
           const body = await readJsonBody(req);
+          const existingRun = activeRuns.get(sessionId);
+          if (existingRun) {
+            existingRun.abortController.abort();
+            resolveRunApprovals(existingRun, 'Superseded by new user message.');
+            await Promise.race([
+              existingRun.donePromise?.catch(() => {}),
+              new Promise((r) => setTimeout(r, 2000)),
+            ]);
+          }
+
           const cfg = await loadConfig(paths);
           let session = await loadSession(sessionId, paths);
           if (!session) {
@@ -326,12 +336,17 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
 
           const abortController = new AbortController();
           const approvals = new Map();
-          activeRuns.set(sessionId, { abortController, approvals });
+          let resolveDone;
+          const donePromise = new Promise((resolve) => {
+            resolveDone = resolve;
+          });
+          const runEntry = { abortController, approvals, donePromise };
+          activeRuns.set(sessionId, runEntry);
 
           req.on('close', () => {
             if (!res.writableEnded) {
               abortController.abort();
-              resolveRunApprovals(activeRuns.get(sessionId), 'Client disconnected.');
+              resolveRunApprovals(runEntry, 'Client disconnected.');
             }
           });
 
@@ -358,7 +373,10 @@ export function createAgentServer({ authToken, paths = getRuntimePaths() } = {})
                 }),
             });
           } finally {
-            activeRuns.delete(sessionId);
+            if (activeRuns.get(sessionId) === runEntry) {
+              activeRuns.delete(sessionId);
+            }
+            resolveDone();
             if (!res.writableEnded) res.end();
           }
           return;

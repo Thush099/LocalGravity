@@ -8,9 +8,9 @@ const writeQueues = new Map();
 
 export const DEFAULT_CONFIG = {
   provider: 'ollama',
-  model: 'qwen3.5:9b',
-  numCtx: 16384,
-  thinking: true,
+  model: 'qwen3.5:4b',
+  numCtx: 8192,
+  thinking: false,
   safetyMode: 'ask',
   customBaseUrl: '',
   customModel: '',

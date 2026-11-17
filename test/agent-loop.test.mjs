@@ -19,6 +19,7 @@ test('buildSystemPrompt includes skills, knowledge index, and MEMORY excerpt cle
     skills: [{ slug: 'video-editor', description: 'Edit video with ffmpeg.' }],
     knowledgeDocs: [{ name: 'brand', title: 'Brand Guide' }],
     memoryContent: 'Always export 9:16 60fps.',
+    repoPath: '/tmp/my-localgravity-repo',
     safetyMode: 'ask',
     isHeadless: false,
     allowAutoRun: false,
@@ -28,6 +29,10 @@ test('buildSystemPrompt includes skills, knowledge index, and MEMORY excerpt cle
   assert.match(prompt, /Always export 9:16 60fps/);
   assert.match(prompt, /read_skill/);
   assert.match(prompt, /search_knowledge/);
+  assert.match(prompt, /save_skill/i);
+  assert.match(prompt, /Do NOT call `list_skills`/i);
+  assert.match(prompt, /\/tmp\/my-localgravity-repo/);
+  assert.match(prompt, /npm test/i);
 });
 
 test('compactConversation summarizes older turns when exceeding 70% of numCtx', async () => {
@@ -210,6 +215,30 @@ test('runAgentTurn executes tools, injects inspect_media images, enforces approv
   const savedErrSession = await loadSession('loop-err', paths);
   assert.ok(savedErrSession.messages.some((m) => m.role === 'user' && m.content === 'Persist on fail'));
   assert.ok(savedErrSession.messages.some((m) => m.role === 'assistant' && m.content.includes('Ollama unreachable')));
+
+  // KV-cache stability: systemPrompt must stay identical across steps in a turn even after save_skill runs
+  let kvStep = 0;
+  const sysPrompts = [];
+  await runAgentTurn({
+    session: { id: 'loop-kv', title: 'KV', messages: [] },
+    userMessage: 'Save a skill and reply',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:4b', safetyMode: 'ask', numCtx: 8192 },
+    chatFn: async ({ messages }) => {
+      sysPrompts.push(messages[0].content);
+      kvStep++;
+      if (kvStep === 1) {
+        return {
+          thinking: '',
+          content: '',
+          toolCalls: [{ id: 'kv1', name: 'save_skill', arguments: { name: 'kv-test', description: 'KV test', content: '# Hi' } }],
+        };
+      }
+      return { thinking: '', content: 'Done.', toolCalls: [] };
+    },
+  });
+  assert.equal(sysPrompts.length, 2);
+  assert.equal(sysPrompts[0], sysPrompts[1]);
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

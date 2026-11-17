@@ -124,6 +124,34 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
       () => execFileAsync(process.execPath, [path.resolve('backend/cli-run.mjs')]),
       (err) => err.code === 1 && /Usage:/.test(err.stderr)
     );
+
+    // Concurrent/back-to-back POST /run on same session must cleanly cancel/replace without leaving hanging sockets
+    await fetch(`${base}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ id: 'multi-msg-1', title: 'Multi turn' }),
+    });
+    const r1 = await fetch(`${base}/api/sessions/multi-msg-1/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ message: 'first msg', provider: 'custom', customBaseUrl: 'http://127.0.0.1:1/v1' }),
+    });
+    const t1 = await r1.text();
+    assert.match(t1, /error/i);
+    const r2 = await fetch(`${base}/api/sessions/multi-msg-1/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ message: 'second msg', provider: 'custom', customBaseUrl: 'http://127.0.0.1:1/v1' }),
+    });
+    const t2 = await r2.text();
+    assert.match(t2, /error/i);
+    const sessCheck = await (
+      await fetch(`${base}/api/sessions/multi-msg-1`, { headers: { 'X-Auth-Token': authToken } })
+    ).json();
+    const userMsgs = sessCheck.session.messages.filter((m) => m.role === 'user');
+    assert.equal(userMsgs.length, 2);
+    assert.equal(userMsgs[0].content, 'first msg');
+    assert.equal(userMsgs[1].content, 'second msg');
   } finally {
     await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });

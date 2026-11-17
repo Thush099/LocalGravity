@@ -5,7 +5,7 @@ import { streamAnthropicChat } from '../providers/anthropic.mjs';
 import { DEFAULT_OLLAMA_URL, streamOllamaChat } from '../providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../providers/openai-compat.mjs';
 import { listSkills, syncStarterSkills } from '../skills-engine.mjs';
-import { getRuntimePaths } from '../state/paths.mjs';
+import { getRepoPath, getRuntimePaths } from '../state/paths.mjs';
 import { saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
 import { compactConversation, estimateMessagesTokens } from './compactor.mjs';
@@ -157,8 +157,25 @@ export async function runAgentTurn({
 
   const activeChatFn = chatFn || resolveProviderChatFn(providerConfig);
   const safetyMode = providerConfig.safetyMode || 'ask';
-  const numCtx = Number(providerConfig.numCtx) || 16384;
+  const numCtx = Number(providerConfig.numCtx) || 8192;
   const provider = providerConfig.provider || 'ollama';
+
+  const [skills, knowledgeDocs, memoryDoc] = await Promise.all([
+    listSkills(paths),
+    listKnowledge(paths),
+    readKnowledge('MEMORY', paths),
+  ]);
+
+  const systemPrompt = buildSystemPrompt({
+    skills,
+    knowledgeDocs,
+    memoryContent: memoryDoc?.content || '',
+    repoPath: getRepoPath(),
+    safetyMode,
+    isHeadless,
+    allowAutoRun,
+    cwd,
+  });
 
   try {
     for (let step = 0; step < maxSteps; step++) {
@@ -166,22 +183,6 @@ export async function runAgentTurn({
         onEvent?.({ type: 'done', status: 'cancelled' });
         return { session, status: 'cancelled' };
       }
-
-      const [skills, knowledgeDocs, memoryDoc] = await Promise.all([
-        listSkills(paths),
-        listKnowledge(paths),
-        readKnowledge('MEMORY', paths),
-      ]);
-
-      const systemPrompt = buildSystemPrompt({
-        skills,
-        knowledgeDocs,
-        memoryContent: memoryDoc?.content || '',
-        safetyMode,
-        isHeadless,
-        allowAutoRun,
-        cwd,
-      });
 
       const compacted = await compactConversation(session.messages, {
         numCtx,

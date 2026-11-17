@@ -148,3 +148,36 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('streamOllamaChat retries cleanly without think parameter when model rejects think option', async () => {
+  let sawThink = false;
+  let attempts = 0;
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    attempts++;
+    if ('think' in body) {
+      sawThink = true;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'registry.ollama.ai/library/moondream does not support thinking' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+    res.end(JSON.stringify({ message: { role: 'assistant', content: 'Retried ok!' }, done: true }) + '\n');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const res = await streamOllamaChat({
+      baseUrl: `http://127.0.0.1:${server.address().port}`,
+      model: 'moondream:latest',
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: false,
+    });
+    assert.equal(sawThink, true);
+    assert.equal(attempts, 2);
+    assert.equal(res.content, 'Retried ok!');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

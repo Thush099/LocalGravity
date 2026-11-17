@@ -57,12 +57,38 @@ test('registry tools perform fs ops, shell execution, skill/knowledge management
   await executeToolCall(
     {
       name: 'save_skill',
-      args: { name: 'sample-skill', description: 'Sample workflow', triggers: ['sample'], content: '# Steps' },
+      args: {
+        name: 'sample-skill',
+        description: 'Sample workflow',
+        triggers: ['sample'],
+        content: '# Steps',
+        extra_files: { 'scripts/helper.py': 'print("skill-script-ok")' },
+      },
     },
     ctx
   );
   const skillRead = await executeToolCall({ name: 'read_skill', args: { name: 'sample-skill' } }, ctx);
   assert.match(skillRead.output, /# Steps/);
+  const helperBody = await fs.readFile(path.join(runtimeHome, 'skills/sample-skill/scripts/helper.py'), 'utf8');
+  assert.match(helperBody, /skill-script-ok/);
+
+  const http = await import('node:http');
+  const docSrv = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><body><h1>Docs Title</h1><p>Use concise scripts.</p></body></html>');
+  });
+  await new Promise((r) => docSrv.listen(0, '127.0.0.1', r));
+  try {
+    const fetched = await executeToolCall(
+      { name: 'fetch_url', args: { url: `http://127.0.0.1:${docSrv.address().port}/` } },
+      ctx
+    );
+    assert.equal(fetched.ok, true);
+    assert.match(fetched.output, /Docs Title/);
+    assert.match(fetched.output, /Use concise scripts/);
+  } finally {
+    await new Promise((r) => docSrv.close(r));
+  }
 
   await executeToolCall(
     {

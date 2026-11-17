@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,4 +30,25 @@ export function getRuntimePaths(homeOverride) {
  */
 export function getStarterSkillsDir() {
   return path.resolve(__dirname, '..', 'skills');
+}
+
+/**
+ * Resolve LocalGravity's source repository directory for self-reprogramming upgrades.
+ */
+export function getRepoPath() {
+  if (process.env.LOCALGRAVITY_REPO) {
+    return process.env.LOCALGRAVITY_REPO;
+  }
+  const directRepo = path.resolve(__dirname, '../..');
+  if (fs.existsSync(path.join(directRepo, 'native', 'LocalGravityHost.swift'))) {
+    return directRepo;
+  }
+  const repoTxt = path.resolve(__dirname, '../../repo-path.txt');
+  try {
+    const saved = fs.readFileSync(repoTxt, 'utf8').trim();
+    if (saved && fs.existsSync(saved)) return saved;
+  } catch {
+    // ignore
+  }
+  return '';
 }

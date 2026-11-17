@@ -131,35 +131,52 @@ function toOllamaMessages(messages) {
 
 export async function streamOllamaChat({
   baseUrl = DEFAULT_OLLAMA_URL,
-  model = 'qwen3.5:9b',
+  model = 'qwen3.5:4b',
   messages,
   tools,
-  thinking = true,
-  numCtx = 16384,
+  thinking = false,
+  numCtx = 8192,
   signal,
   onEvent,
 }) {
-  const body = {
-    model,
-    messages: toOllamaMessages(messages),
-    stream: true,
-    think: Boolean(thinking),
-    options: { num_ctx: Number(numCtx) || 16384 },
+  const buildBody = (includeThink) => {
+    const payload = {
+      model,
+      messages: toOllamaMessages(messages),
+      stream: true,
+      keep_alive: '10m',
+      options: { num_ctx: Number(numCtx) || 8192 },
+    };
+    if (includeThink) payload.think = Boolean(thinking);
+    if (Array.isArray(tools) && tools.length > 0) {
+      payload.tools = tools;
+    }
+    return payload;
   };
-  if (Array.isArray(tools) && tools.length > 0) {
-    body.tools = tools;
-  }
 
-  const res = await fetch(`${baseUrl}/api/chat`, {
+  let res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(buildBody(true)),
     signal,
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Ollama chat error (${res.status}): ${errText}`);
+    if (res.status === 400 && /does not support thinking/i.test(errText)) {
+      res = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildBody(false)),
+        signal,
+      });
+      if (!res.ok) {
+        const retryErr = await res.text();
+        throw new Error(`Ollama chat error (${res.status}): ${retryErr}`);
+      }
+    } else {
+      throw new Error(`Ollama chat error (${res.status}): ${errText}`);
+    }
   }
 
   let content = '';

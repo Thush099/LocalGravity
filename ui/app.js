@@ -16,6 +16,9 @@ const state = {
   attachments: [],
   isRunning: false,
   runAbort: null,
+  runStartedAt: 0,
+  timerHandle: null,
+  queuedMessage: null,
   liveAssistantMsg: null,
   pendingApprovals: new Map(),
 };
@@ -85,15 +88,19 @@ function updateHeaderControls() {
 
   const thinkBtn = $('#thinking-toggle');
   thinkBtn.classList.toggle('active', Boolean(state.config.thinking));
-  thinkBtn.textContent = `Thinking: ${state.config.thinking ? 'On' : 'Off'}`;
+  thinkBtn.textContent = `Deep Think: ${state.config.thinking ? 'On' : 'Off'}`;
 
   const safetyBtn = $('#safety-toggle');
   const isAuto = state.config.safetyMode === 'auto';
   safetyBtn.classList.toggle('warn', isAuto);
   safetyBtn.textContent = `Safety: ${isAuto ? 'Auto' : 'Ask'}`;
 
+  const ctxLimit = state.config.numCtx || 8192;
   const ctxSelect = $('#num-ctx-select');
-  if (ctxSelect) ctxSelect.value = String(state.config.numCtx || 16384);
+  if (ctxSelect) ctxSelect.value = String(ctxLimit);
+  if (!state.isRunning) {
+    $('#context-label').textContent = `0k / ${Math.round(ctxLimit / 1000)}k`;
+  }
 }
 
 function renderSidebarStatus() {
@@ -222,7 +229,15 @@ function groupMessagesForDisplay(messages = []) {
         toolEntry.output = msg.content || '';
         toolEntry.diff = msg.diff || '';
         toolEntry.images = msg.images || [];
-        toolEntry.status = String(msg.content || '').startsWith('Blocked') || String(msg.content || '').startsWith('Tool ') ? 'fail' : 'ok';
+        const out = String(msg.content || '');
+        const exitNonZero = /^Exit code:\s*(?!0\b)\d+/m.test(out);
+        const failed =
+          out.startsWith('Blocked') ||
+          out.startsWith('User denied') ||
+          out.startsWith('Tool ') ||
+          out.includes('failed') ||
+          exitNonZero;
+        toolEntry.status = failed ? 'fail' : 'ok';
       }
     }
   }
@@ -322,9 +337,22 @@ function renderMessages() {
             </div>`
           : '';
 
+      const liveStatusHtml = item.isStreaming
+        ? `<div class="live-status-line"><span class="pulse-dot"></span><span>${
+            item.thinking.length > 0 && !item.content && item.tools.length === 0
+              ? 'Deep thinking'
+              : item.tools.some((t) => t.status === 'running')
+                ? 'Running tools'
+                : !item.content
+                  ? `Running ${escapeHtml(state.config?.model || 'model')}`
+                  : 'Streaming reply'
+          } (${Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000))}s)...</span></div>`
+        : '';
+
       return `
         <div class="msg-row">
           <div class="msg-assistant">
+            ${liveStatusHtml}
             ${thinkingHtml}
             ${toolsHtml}
             ${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}
@@ -426,11 +454,35 @@ async function createNewTask() {
   $('#prompt-input').focus();
 }
 
-async function sendPrompt() {
-  if (state.isRunning) return;
+function renderQueuedBar() {
+  const bar = $('#queued-bar');
+  if (!state.queuedMessage) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+  $('#queued-text').textContent = `Queued next: ${state.queuedMessage.text || '(attached files)'}`;
+}
+
+async function sendPrompt(overridePayload = null) {
   const input = $('#prompt-input');
-  const text = input.value.trim();
-  if (!text && state.attachments.length === 0) return;
+  const text = overridePayload ? overridePayload.text : input.value.trim();
+  const attachPaths = overridePayload ? overridePayload.attachments : state.attachments.map((a) => a.path);
+
+  if (!text && attachPaths.length === 0) return;
+
+  if (state.isRunning) {
+    state.queuedMessage = { text, attachments: attachPaths };
+    if (!overridePayload) {
+      input.value = '';
+      input.style.height = 'auto';
+      state.attachments = [];
+      renderAttachments();
+    }
+    renderQueuedBar();
+    showToast('Follow-up queued (runs next, or click Send now)');
+    return;
+  }
 
   if (!state.activeSession) {
     const created = await apiRequest('/api/sessions', {
@@ -440,11 +492,12 @@ async function sendPrompt() {
     state.activeSession = created.session;
   }
 
-  const attachPaths = state.attachments.map((a) => a.path);
-  input.value = '';
-  input.style.height = 'auto';
-  state.attachments = [];
-  renderAttachments();
+  if (!overridePayload) {
+    input.value = '';
+    input.style.height = 'auto';
+    state.attachments = [];
+    renderAttachments();
+  }
 
   state.activeSession.messages.push({
     role: 'user',
@@ -460,8 +513,14 @@ async function sendPrompt() {
     content: '',
   };
   state.isRunning = true;
+  state.runStartedAt = Date.now();
   state.runAbort = new AbortController();
-  $('#send-btn').classList.add('hidden');
+  clearInterval(state.timerHandle);
+  state.timerHandle = setInterval(() => {
+    if (state.isRunning && state.liveAssistantMsg) renderMessages();
+  }, 1000);
+
+  $('#send-btn').textContent = 'Queue';
   $('#stop-btn').classList.remove('hidden');
   renderMessages();
 
@@ -522,19 +581,34 @@ async function sendPrompt() {
       },
       state.runAbort.signal
     );
-
-    const refreshed = await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}`);
-    state.activeSession = refreshed.session;
-    await loadSessions();
   } catch (err) {
     if (err.name !== 'AbortError') showToast(err.message);
   } finally {
+    clearInterval(state.timerHandle);
+    state.timerHandle = null;
     state.isRunning = false;
     state.runAbort = null;
     state.liveAssistantMsg = null;
-    $('#send-btn').classList.remove('hidden');
+    $('#send-btn').textContent = 'Run';
     $('#stop-btn').classList.add('hidden');
+
+    if (state.activeSession?.id) {
+      try {
+        const refreshed = await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}`);
+        state.activeSession = refreshed.session;
+        await loadSessions();
+      } catch {
+        // Keep current messages if reload fails
+      }
+    }
     renderMessages();
+
+    if (state.queuedMessage) {
+      const nextPayload = state.queuedMessage;
+      state.queuedMessage = null;
+      renderQueuedBar();
+      sendPrompt(nextPayload);
+    }
   }
 }
 
@@ -1195,12 +1269,23 @@ function wireEvents() {
     }
   });
 
-  $('#send-btn').addEventListener('click', sendPrompt);
+  $('#send-btn').addEventListener('click', () => sendPrompt());
   $('#stop-btn').addEventListener('click', async () => {
     state.runAbort?.abort();
     if (state.activeSession) {
-      await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/cancel`, { method: 'POST' });
+      await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/cancel`, { method: 'POST' }).catch(() => {});
     }
+  });
+  $('#queued-now-btn').addEventListener('click', async () => {
+    if (!state.queuedMessage) return;
+    state.runAbort?.abort();
+    if (state.activeSession) {
+      await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/cancel`, { method: 'POST' }).catch(() => {});
+    }
+  });
+  $('#queued-cancel-btn').addEventListener('click', () => {
+    state.queuedMessage = null;
+    renderQueuedBar();
   });
 
   $$('.quick-card').forEach((card) => {

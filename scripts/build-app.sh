@@ -28,6 +28,7 @@ cp -R "${REPO_ROOT}/backend" "${RESOURCES_DIR}/backend"
 cp -R "${REPO_ROOT}/ui" "${RESOURCES_DIR}/ui"
 cp "${REPO_ROOT}/package.json" "${RESOURCES_DIR}/package.json"
 cp "${REPO_ROOT}/scripts/uninstall.sh" "${RESOURCES_DIR}/uninstall.sh"
+printf '%s\n' "${REPO_ROOT}" > "${RESOURCES_DIR}/repo-path.txt"
 chmod +x "${RESOURCES_DIR}/uninstall.sh"
 
 cat > "${CONTENTS}/Info.plist" << 'PLIST'

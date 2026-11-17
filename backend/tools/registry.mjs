@@ -143,7 +143,7 @@ export const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'save_skill',
-      description: 'Teach yourself or update a reusable SKILL.md workflow.',
+      description: 'Install, create, or update a reusable SKILL.md workflow and optional helper scripts.',
       parameters: {
         type: 'object',
         properties: {
@@ -151,8 +151,27 @@ export const TOOL_DEFINITIONS = [
           description: { type: 'string' },
           triggers: { type: 'array', items: { type: 'string' } },
           content: { type: 'string', description: 'Markdown instructions without YAML frontmatter.' },
+          extra_files: {
+            type: 'object',
+            description: 'Optional relative paths to helper scripts inside the skill folder (e.g. {"scripts/run.py": "..."}).',
+            additionalProperties: { type: 'string' },
+          },
         },
         required: ['name', 'description', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_url',
+      description: 'Fetch plain text/markdown content from a public HTTP/HTTPS URL (docs, raw GitHub SKILL.md, guides).',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' },
+        },
+        required: ['url'],
       },
     },
   },
@@ -212,6 +231,7 @@ const ALWAYS_READONLY_TOOLS = new Set([
   'read_file',
   'search_files',
   'inspect_media',
+  'fetch_url',
   'list_skills',
   'read_skill',
   'list_knowledge',
@@ -339,8 +359,34 @@ export async function executeToolCall({ name, args = {} }, context = {}) {
           : { ok: false, output: `Skill "${args.name}" not found.` };
       }
       case 'save_skill': {
-        const saved = await saveSkill(args, paths);
+        const saved = await saveSkill(
+          {
+            ...args,
+            extraFiles: args.extra_files || args.extraFiles,
+          },
+          paths
+        );
         return { ok: true, output: `Saved skill "${saved.slug}" to ${saved.path}` };
+      }
+      case 'fetch_url': {
+        const parsedUrl = new URL(String(args.url || ''));
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          return { ok: false, output: 'Only http:// and https:// URLs are supported.' };
+        }
+        const res = await fetch(parsedUrl.toString(), { signal: AbortSignal.timeout(12000) });
+        if (!res.ok) {
+          return { ok: false, output: `HTTP ${res.status} fetching ${parsedUrl}` };
+        }
+        const raw = await res.text();
+        const cleaned = raw
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/[ \t]+/g, ' ')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim()
+          .slice(0, 12000);
+        return { ok: true, output: cleaned || '(empty response)' };
       }
       case 'list_knowledge': {
         const docs = await listKnowledge(paths);

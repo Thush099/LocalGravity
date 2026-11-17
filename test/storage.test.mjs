@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { getRuntimePaths } from '../backend/state/paths.mjs';
+import { getRepoPath, getRuntimePaths } from '../backend/state/paths.mjs';
 import {
   atomicWriteJson,
   readJsonSafe,
@@ -22,12 +22,13 @@ test('storage persists config with 0600 mode, isolates sessions, and handles con
   const paths = getRuntimePaths(tmpHome);
 
   assert.equal(paths.knowledgeDir, path.join(tmpHome, 'knowledge'));
+  assert.ok(getRepoPath());
 
   const cfg = await loadConfig(paths);
   assert.equal(cfg.provider, 'ollama');
-  assert.equal(cfg.model, 'qwen3.5:9b');
-  assert.equal(cfg.numCtx, 16384);
-  assert.equal(cfg.thinking, true);
+  assert.equal(cfg.model, 'qwen3.5:4b');
+  assert.equal(cfg.numCtx, 8192);
+  assert.equal(cfg.thinking, false);
   assert.equal(cfg.safetyMode, 'ask');
 
   const updated = await saveConfig(
