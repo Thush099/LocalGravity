@@ -1,0 +1,78 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { getRuntimePaths } from '../backend/state/paths.mjs';
+import {
+  atomicWriteJson,
+  readJsonSafe,
+  loadConfig,
+  saveConfig,
+  saveSession,
+  loadSession,
+  listSessions,
+  deleteSession,
+  saveAutomations,
+  loadAutomations,
+} from '../backend/state/storage.mjs';
+
+test('storage persists config with 0600 mode, isolates sessions, and handles concurrent atomic writes', async () => {
+  const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-store-'));
+  const paths = getRuntimePaths(tmpHome);
+
+  assert.equal(paths.knowledgeDir, path.join(tmpHome, 'knowledge'));
+
+  const cfg = await loadConfig(paths);
+  assert.equal(cfg.provider, 'ollama');
+  assert.equal(cfg.model, 'qwen3.5:9b');
+  assert.equal(cfg.numCtx, 16384);
+  assert.equal(cfg.thinking, true);
+  assert.equal(cfg.safetyMode, 'ask');
+
+  const updated = await saveConfig(
+    {
+      apiKeys: { openrouter: 'sk-test-123', gemini: 'gem-key' },
+      thinking: false,
+    },
+    paths
+  );
+  assert.equal(updated.apiKeys.openrouter, 'sk-test-123');
+  assert.equal(updated.apiKeys.gemini, 'gem-key');
+  const stat = await fs.stat(paths.configFile);
+  assert.equal(stat.mode & 0o777, 0o600);
+
+  await saveSession(
+    {
+      id: 'sess-1',
+      title: 'Test session',
+      updatedAt: '2026-11-17T10:00:00Z',
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+    paths
+  );
+  const loaded = await loadSession('sess-1', paths);
+  assert.equal(loaded.title, 'Test session');
+  assert.equal((await listSessions(paths)).length, 1);
+
+  await assert.rejects(() => saveSession({ id: '../bad', title: 'Bad', messages: [] }, paths));
+
+  await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      saveAutomations(
+        [{ id: `auto-${i}`, name: `Job ${i}`, prompt: 'audit', allowAutoRun: false }],
+        paths
+      )
+    )
+  );
+  const autos = await loadAutomations(paths);
+  assert.equal(autos.length, 1);
+  assert.match(autos[0].id, /^auto-\d+$/);
+
+  await fs.writeFile(paths.automationsFile, '{broken json');
+  assert.deepEqual(await readJsonSafe(paths.automationsFile, []), []);
+  assert.equal(await deleteSession('sess-1', paths), true);
+  assert.equal(await loadSession('sess-1', paths), null);
+
+  await fs.rm(tmpHome, { recursive: true, force: true });
+});
