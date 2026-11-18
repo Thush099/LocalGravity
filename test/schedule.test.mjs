@@ -32,6 +32,16 @@ test('normalizeScheduleEntry validates time, days, and duration', () => {
   assert.deepEqual(dedupe.entry.days, [1, 5]);
 });
 
+test('one-off entries carry a single date and skip weekday rules', () => {
+  const oneOff = normalizeScheduleEntry({ title: 'Dentist', time: '15:00', date: '2024-01-03', durationMin: 45 });
+  assert.equal(oneOff.ok, true);
+  assert.equal(oneOff.entry.date, '2024-01-03');
+  assert.deepEqual(oneOff.entry.days, []);
+
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '2024-13-99' }).ok, false);
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '03-01-2024' }).ok, false);
+});
+
 test('entriesForDate filters by weekday, sorts by time, and skips disabled entries', () => {
   // 2024-01-03 is a Wednesday (weekday 3).
   const wednesday = new Date(2024, 0, 3, 8, 0);
@@ -44,6 +54,17 @@ test('entriesForDate filters by weekday, sorts by time, and skips disabled entri
   const today = entriesForDate(entries, wednesday);
   assert.deepEqual(today.map((e) => e.id), ['early', 'late']);
   assert.equal(today[0].startMinutes, 8 * 60 + 15);
+});
+
+test('entriesForDate includes one-off entries on their date only', () => {
+  const wednesday = new Date(2024, 0, 3, 8, 0);
+  const entries = [
+    { id: 'once', title: 'Dentist', time: '15:00', days: [], date: '2024-01-03', durationMin: 45, enabled: true },
+    { id: 'other-day', title: 'Later once', time: '10:00', days: [], date: '2024-01-04', durationMin: 30, enabled: true },
+    { id: 'weekly', title: 'Gym', time: '07:00', days: [3], durationMin: 30, enabled: true },
+  ];
+  const today = entriesForDate(entries, wednesday);
+  assert.deepEqual(today.map((e) => e.id), ['weekly', 'once']);
 });
 
 test('activeEntryAt finds the entry covering the current moment', () => {

@@ -4,6 +4,7 @@ import { getRuntimePaths } from './state/paths.mjs';
 
 const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$/;
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validate and normalize a schedule entry from untrusted input.
@@ -18,12 +19,27 @@ export function normalizeScheduleEntry(raw, existing = null) {
   if (!TIME_RE.test(time)) return { ok: false, error: 'Time must be in HH:MM 24-hour format.' };
 
   let days = raw?.days;
-  if (days === undefined || days === null) days = [0, 1, 2, 3, 4, 5, 6];
-  if (!Array.isArray(days) || days.length === 0) {
+  let date = raw?.date;
+  date = date === undefined || date === null || date === '' ? null : String(date).trim();
+  if (date !== null && !DATE_RE.test(date)) {
+    return { ok: false, error: 'Date must be in YYYY-MM-DD format.' };
+  }
+  if (date !== null && Number.isNaN(new Date(`${date}T00:00:00`).getTime())) {
+    return { ok: false, error: 'Date must be a real calendar date.' };
+  }
+  if (date !== null) {
+    // One-off entries land on a single date instead of repeating weekdays.
+    days = [];
+  } else {
+    if (days === undefined || days === null) days = [0, 1, 2, 3, 4, 5, 6];
+  }
+  if (!Array.isArray(days)) {
     return { ok: false, error: 'Days must list at least one weekday (0=Sun..6=Sat).' };
   }
   const cleanDays = [...new Set(days.map((d) => Number(d)))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort((a, b) => a - b);
-  if (cleanDays.length === 0) return { ok: false, error: 'Days must list at least one weekday (0=Sun..6=Sat).' };
+  if (date === null && cleanDays.length === 0) {
+    return { ok: false, error: 'Days must list at least one weekday (0=Sun..6=Sat).' };
+  }
 
   const durationMin = Math.floor(Number(raw?.durationMin ?? 30));
   if (!Number.isFinite(durationMin) || durationMin < 5 || durationMin > 24 * 60) {
@@ -39,6 +55,7 @@ export function normalizeScheduleEntry(raw, existing = null) {
       notes: String(raw?.notes ?? '').trim().slice(0, 500),
       time,
       days: cleanDays,
+      date,
       durationMin,
       enabled: raw?.enabled === undefined ? (existing?.enabled ?? true) : Boolean(raw.enabled),
       createdAt: existing?.createdAt || now,
@@ -53,12 +70,19 @@ function minutesSinceMidnight(time) {
 }
 
 /**
- * Entries that repeat on the given date's weekday, sorted by start time.
+ * Entries that repeat on the given date's weekday or land on that exact date,
+ * sorted by start time.
  */
 export function entriesForDate(entries, date = new Date()) {
   const weekday = date.getDay();
+  const isoDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   return (Array.isArray(entries) ? entries : [])
-    .filter((e) => e && e.enabled !== false && Array.isArray(e.days) && e.days.includes(weekday))
+    .filter(
+      (e) =>
+        e &&
+        e.enabled !== false &&
+        (e.date === isoDate || (!e.date && Array.isArray(e.days) && e.days.includes(weekday)))
+    )
     .slice()
     .sort((a, b) => minutesSinceMidnight(a.time) - minutesSinceMidnight(b.time))
     .map((e) => ({ ...e, startMinutes: minutesSinceMidnight(e.time) }));

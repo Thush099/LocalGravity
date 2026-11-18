@@ -417,13 +417,14 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'add_schedule_item',
       description:
-        'Add a recurring timetable entry (class, meeting, workout, focus block). Times are local 24-hour HH:MM; days are 0=Sunday..6=Saturday, default every day.',
+        'Add a timetable entry. Recurring: supply days (0=Sunday..6=Saturday, default every day). One-off on a specific date: supply date as YYYY-MM-DD and omit days. Times are local 24-hour HH:MM.',
       parameters: {
         type: 'object',
         properties: {
           title: { type: 'string' },
           time: { type: 'string', description: 'Start time as HH:MM (24-hour).' },
-          days: { type: 'array', items: { type: 'number' }, description: 'Weekdays 0=Sun..6=Sat.' },
+          days: { type: 'array', items: { type: 'number' }, description: 'Weekdays 0=Sun..6=Sat for recurring entries.' },
+          date: { type: 'string', description: 'One-off date as YYYY-MM-DD (instead of days).' },
           duration_min: { type: 'number', description: 'Length in minutes (default 30).' },
           notes: { type: 'string' },
         },
@@ -688,6 +689,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
             title: args.title,
             time: args.time,
             days: args.days,
+            date: args.date,
             durationMin: args.duration_min,
             notes: args.notes,
           },
@@ -708,7 +710,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
           output: rows
             .map(
               (e) =>
-                `- ${e.time} ${e.title} (${e.durationMin} min, days [${e.days.join(',')}], id ${e.id})` +
+                `- ${e.time} ${e.title} (${e.durationMin} min, ${e.date ? `on ${e.date}` : `days [${e.days.join(',')}]`}, id ${e.id})` +
                 (e.notes ? ` — ${e.notes}` : '')
             )
             .join('\n'),

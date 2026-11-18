@@ -371,12 +371,6 @@ function updateMonitorAutoRefresh() {
   }
 }
 
-function scheduleDaysLabel(days) {
-  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  if (Array.isArray(days) && days.length === 7) return 'Every day';
-  return (days || []).map((d) => names[d] ?? '?').join(' ');
-}
-
 function renderScheduleWeek() {
   const host = $('#schedule-week');
   if (!host) return;
@@ -384,7 +378,26 @@ function renderScheduleWeek() {
   const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const today = new Date().getDay();
   const entries = state.schedule || [];
-  host.innerHTML = order
+  const oneOffs = entries
+    .filter((e) => e.date)
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  const oneOffHtml = oneOffs.length
+    ? `<div class="week-day week-oneoffs">
+        <div class="week-day-name">One-offs &amp; reminders</div>
+        <ul class="week-list">${oneOffs
+          .map(
+            (e) => `<li class="week-item${e.enabled === false ? ' disabled' : ''}">
+              <span class="agenda-time">${escapeHtml(e.time)}</span>
+              <span class="agenda-title">${escapeHtml(e.title)}</span>
+              <span class="agenda-meta">${escapeHtml(String(e.date))}</span>
+              <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+            </li>`
+          )
+          .join('')}</ul>
+      </div>`
+    : '';
+  host.innerHTML =
+    order
     .map((day) => {
       const dayEntries = entries
         .filter((e) => Array.isArray(e.days) && e.days.includes(day))
@@ -404,7 +417,7 @@ function renderScheduleWeek() {
         <ul class="week-list">${items}</ul>
       </div>`;
     })
-    .join('');
+    .join('') + oneOffHtml;
 }
 
 async function loadSchedule() {
@@ -2297,6 +2310,7 @@ function toggleCommandPalette() {
 function openShortcutsModal() {
   const rows = [
     ['Command palette', ['⌘', 'K']],
+    ['Dashboard / Agent / Monitor / Timetable', ['⌘', '1-4']],
     ['Toggle sidebar', ['⌘', '\\']],
     ['Send message', ['⌘', '↵']],
     ['Export conversation', ['⌘', '⇧', 'E']],
@@ -2724,6 +2738,12 @@ function wireEvents() {
     if (mod && key === '\\') {
       e.preventDefault();
       toggleSidebar();
+      return;
+    }
+    const viewShortcut = { '1': 'dashboard', '2': 'agent', '3': 'monitor', '4': 'schedule' }[e.key];
+    if (mod && viewShortcut) {
+      e.preventDefault();
+      switchView(viewShortcut);
       return;
     }
     if (mod && key === '/') {
