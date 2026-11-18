@@ -6,7 +6,8 @@ export const DEFAULT_LEAD_MINUTES = 5;
 const NOTIFIED_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
 
 function notifiedFile(paths) {
-  return path.join(paths.stateDir, 'agenda-notified.json');
+  // getRuntimePaths() calls the state root `root`; tolerate `stateDir` too.
+  return path.join(paths.root || paths.stateDir, 'agenda-notified.json');
 }
 
 function localDateKey(date) {
@@ -47,7 +48,7 @@ function saveNotified(paths, notified, now) {
     const t = Date.parse(at);
     if (Number.isFinite(t) && t >= cutoff) pruned[key] = at;
   }
-  fs.mkdirSync(paths.stateDir, { recursive: true });
+  fs.mkdirSync(paths.root || paths.stateDir, { recursive: true });
   fs.writeFileSync(notifiedFile(paths), JSON.stringify(pruned, null, 2));
 }
 

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { notificationsDue, runAgendaTick } from '../backend/agenda-notifier.mjs';
 import { saveSchedule } from '../backend/schedule.mjs';
+import { getRuntimePaths } from '../backend/state/paths.mjs';
 
 // Monday 2026-01-05, 08:56 local time.
 const mondayMorning = new Date(2026, 0, 5, 8, 56);
@@ -55,7 +56,10 @@ test('notificationsDue skips entries already announced and honors one-off dates'
 
 function tempPaths() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-agenda-'));
-  return { stateDir: dir, scheduleFile: path.join(dir, 'schedule.json') };
+  // Use the production paths shape (state root is `root`) so the notifier
+  // and the runtime layout can never drift apart unnoticed.
+  process.env.LOCALGRAVITY_HOME = dir;
+  return getRuntimePaths();
 }
 
 test('runAgendaTick announces once and dedupes across ticks', async () => {
