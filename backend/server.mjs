@@ -55,7 +55,8 @@ import {
   saveSession,
 } from './state/storage.mjs';
 import { inspectMediaTool } from './tools/media-tool.mjs';
-import { setReminderTool } from './tools/macos-tool.mjs';
+import { setReminderTool, showNotificationTool } from './tools/macos-tool.mjs';
+import { startAgendaNotifier } from './agenda-notifier.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
 
@@ -247,9 +248,11 @@ export function createAgentServer({
   paths = getRuntimePaths(),
   fetchFn = globalThis.fetch,
   skillHomeDir = os.homedir(),
+  agendaNotifications = false,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
+  let agendaStop = null;
   const resolveRunApprovals = (runState, reason) => {
     if (!runState?.approvals) return;
     for (const resolver of runState.approvals.values()) {
@@ -941,9 +944,14 @@ export function createAgentServer({
         });
       });
       const addr = server.address();
+      if (agendaNotifications && process.env.LOCALGRAVITY_DISABLE_AGENDA_NOTIFIER !== '1') {
+        agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
+      }
       return { port: addr.port, authToken: token };
     },
     async stop() {
+      agendaStop?.();
+      agendaStop = null;
       for (const runState of activeRuns.values()) {
         runState.abortController.abort();
         resolveRunApprovals(runState, 'Server shutting down.');
@@ -956,7 +964,7 @@ export function createAgentServer({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const instance = createAgentServer();
+  const instance = createAgentServer({ agendaNotifications: true });
   instance.start(Number(process.env.PORT) || 0).then(({ port }) => {
     process.stdout.write(`READY:${port}\n`);
   });

@@ -14,6 +14,7 @@ Use this skill when the user wants to plan their day, add or change timetable en
 - `add_schedule_item` to create recurring blocks. Times are 24-hour `HH:MM`; days are 0=Sunday..6=Saturday.
 - `remove_schedule_item` to clear an entry the user wants gone.
 - `set_reminder` for one-off reminders ("remind me in 20 minutes"), separate from the weekly timetable.
+- The app already sends a macOS notification 5 minutes before each timetable block starts — don't add a manual reminder on top of it.
 
 ## Planning principles
 
