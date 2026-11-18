@@ -27,5 +27,8 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install ffmpeg (used by the media inspection tool)
+        run: brew install ffmpeg
+
       - name: Run checks
         run: npm run check
