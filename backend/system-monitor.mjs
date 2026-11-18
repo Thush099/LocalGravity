@@ -319,7 +319,7 @@ export function summarizeSystemMetrics(metrics) {
   if (metrics.battery) {
     const b = metrics.battery;
     const estimate =
-      b.minutesRemaining === null
+      b.minutesRemaining === null || b.minutesRemaining === 0
         ? ''
         : b.state === 'discharging'
           ? ` (${Math.floor(b.minutesRemaining / 60)}h ${b.minutesRemaining % 60}m left)`

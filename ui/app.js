@@ -246,6 +246,11 @@ function renderDashboard() {
     if (metrics?.uptimeSeconds != null) parts.push(`Uptime ${formatUptime(metrics.uptimeSeconds)}`);
     if (metrics?.loadAvg) parts.push(`Load ${metrics.loadAvg.join(' / ')}`);
     if (metrics?.cpu?.cores) parts.push(`${metrics.cpu.cores} cores`);
+    if (metrics?.battery?.percent != null) {
+      parts.push(
+        `Battery ${metrics.battery.percent}%${metrics.battery.state ? ` ${metrics.battery.state}` : ''}`
+      );
+    }
     const top = metrics?.processes?.[0];
     if (top) parts.push(`Busiest: ${top.command} (${top.cpuPercent}%)`);
     snapshot.textContent = parts.join(' · ') || 'Snapshot unavailable.';
@@ -311,7 +316,7 @@ function renderMonitor() {
     if (metrics.battery) {
       const b = metrics.battery;
       const est =
-        b.minutesRemaining == null
+        b.minutesRemaining == null || b.minutesRemaining === 0
           ? ''
           : ` · ${Math.floor(b.minutesRemaining / 60)}h ${b.minutesRemaining % 60}m ${b.state === 'discharging' ? 'left' : 'to full'}`;
       rows.splice(3, 0, [
