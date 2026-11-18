@@ -16,7 +16,7 @@ concurrency:
 jobs:
   check:
     name: Tests & syntax
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
