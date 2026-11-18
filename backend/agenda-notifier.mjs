@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { entriesForDate, loadSchedule } from './schedule.mjs';
+import { loadConfig } from './state/storage.mjs';
 
 export const DEFAULT_LEAD_MINUTES = 5;
 const NOTIFIED_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -57,14 +58,24 @@ function announcementFor(entry, minutesUntil) {
   return `${entry.title} starts in ${minutesUntil} min`;
 }
 
+function clampLead(value) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n > 0 ? Math.min(30, n) : DEFAULT_LEAD_MINUTES;
+}
+
 /**
  * One notification pass: announce due entries, record them, persist the map.
  * `notify` receives ({ title, message }) and may be async.
+ * Settings resolve from the app config (agendaNotifications, agendaLeadMinutes)
+ * unless the caller passes leadMinutes explicitly.
  */
-export async function runAgendaTick({ paths, now = new Date(), leadMinutes = DEFAULT_LEAD_MINUTES, notify }) {
+export async function runAgendaTick({ paths, now = new Date(), leadMinutes, notify }) {
+  const config = await loadConfig(paths).catch(() => ({}));
+  if (config.agendaNotifications === false) return [];
+  const lead = clampLead(leadMinutes ?? config.agendaLeadMinutes);
   const entries = await loadSchedule(paths);
   const notified = loadNotified(paths);
-  const due = notificationsDue(entries, now, { leadMinutes, notified });
+  const due = notificationsDue(entries, now, { leadMinutes: lead, notified });
   const fired = [];
   for (const item of due) {
     try {
@@ -83,7 +94,7 @@ export async function runAgendaTick({ paths, now = new Date(), leadMinutes = DEF
  * Start the periodic notifier. Returns a stop function.
  * Main-app only: tests drive runAgendaTick directly.
  */
-export function startAgendaNotifier({ paths, notify, leadMinutes = DEFAULT_LEAD_MINUTES, intervalMs = 60 * 1000 }) {
+export function startAgendaNotifier({ paths, notify, leadMinutes, intervalMs = 60 * 1000 }) {
   const tick = () => runAgendaTick({ paths, leadMinutes, notify }).catch(() => {});
   tick();
   const timer = setInterval(tick, intervalMs);

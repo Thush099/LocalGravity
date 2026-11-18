@@ -18,6 +18,8 @@ export const DEFAULT_CONFIG = {
   customModel: '',
   apiKeys: {},
   allowedReadCommands: [],
+  agendaNotifications: true,
+  agendaLeadMinutes: 5,
 };
 
 function sanitizeId(id, label = 'id') {

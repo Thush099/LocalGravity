@@ -88,3 +88,33 @@ test('runAgendaTick announces once and dedupes across ticks', async () => {
   assert.equal((await runAgendaTick({ paths, now: retryNow, notify: flaky })).length, 1);
   assert.equal(calls, 2);
 });
+
+test('runAgendaTick honors agenda settings from the app config', async () => {
+  // Disabled: a due entry stays silent.
+  const off = tempPaths();
+  await saveSchedule([recurringEntry], off);
+  fs.writeFileSync(
+    off.configFile,
+    JSON.stringify({ agendaNotifications: false, agendaLeadMinutes: 5 })
+  );
+  const messages = [];
+  assert.equal(
+    (await runAgendaTick({ paths: off, now: mondayMorning, notify: async (n) => messages.push(n) })).length,
+    0
+  );
+  assert.equal(messages.length, 0);
+
+  // Longer lead: an entry 20 minutes out fires when the lead is 30.
+  const wide = tempPaths();
+  await saveSchedule([recurringEntry], wide);
+  fs.writeFileSync(
+    wide.configFile,
+    JSON.stringify({ agendaNotifications: true, agendaLeadMinutes: 30 })
+  );
+  const fired = await runAgendaTick({
+    paths: wide,
+    now: new Date(2026, 0, 5, 8, 40),
+    notify: async () => {},
+  });
+  assert.equal(fired.length, 1);
+});

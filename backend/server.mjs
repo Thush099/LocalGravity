@@ -843,6 +843,12 @@ export function createAgentServer({
           ...(body.safetyMode !== undefined ? { safetyMode: body.safetyMode } : {}),
           ...(body.customBaseUrl !== undefined ? { customBaseUrl: body.customBaseUrl } : {}),
           ...(body.customModel !== undefined ? { customModel: body.customModel } : {}),
+          ...(body.agendaNotifications !== undefined
+            ? { agendaNotifications: Boolean(body.agendaNotifications) }
+            : {}),
+          ...(body.agendaLeadMinutes !== undefined
+            ? { agendaLeadMinutes: Math.min(30, Math.max(1, Math.floor(Number(body.agendaLeadMinutes) || 5))) }
+            : {}),
           apiKeys: nextKeys,
         };
         const updated = await saveConfig(patch, paths);

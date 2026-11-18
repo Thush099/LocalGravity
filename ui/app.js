@@ -468,6 +468,10 @@ function updateHeaderControls() {
   const ctxLimit = state.config.numCtx || 8192;
   const ctxSelect = $('#num-ctx-select');
   if (ctxSelect) ctxSelect.value = String(ctxLimit);
+  const agendaOnEl = $('#agenda-notifications');
+  if (agendaOnEl) agendaOnEl.checked = state.config.agendaNotifications !== false;
+  const agendaLeadEl = $('#agenda-lead');
+  if (agendaLeadEl) agendaLeadEl.value = String(state.config.agendaLeadMinutes ?? 5);
   const estimatedTokens = state.contextTokens || estimateTokens(state.activeSession?.messages || []);
   updateContextMeter(estimatedTokens, ctxLimit);
 }
@@ -2404,6 +2408,22 @@ function wireEvents() {
     }
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
+
+  $('#agenda-save-btn')?.addEventListener('click', async () => {
+    try {
+      const res = await apiRequest('/api/models/config', {
+        method: 'POST',
+        body: JSON.stringify({
+          agendaNotifications: $('#agenda-notifications').checked,
+          agendaLeadMinutes: Number($('#agenda-lead').value) || 5,
+        }),
+      });
+      state.config = res.config;
+      showToast('Agenda nudges updated');
+    } catch (err) {
+      showToast(err.message || 'Could not save the agenda settings.');
+    }
+  });
 
   $('#schedule-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
