@@ -165,6 +165,21 @@ export async function deleteKnowledge(name, paths = getRuntimePaths()) {
   }
 }
 
+export async function resetLearnedFixes(paths = getRuntimePaths()) {
+  await fs.mkdir(paths.knowledgeDir, { recursive: true });
+  const fixesPath = path.join(paths.knowledgeDir, 'LEARNED_FIXES.md');
+  const seededFixes = formatFrontmatter(
+    {
+      title: 'Self-Learned Mistake Prevention & Recovery Rules',
+      tags: ['self-improvement', 'mistakes', 'auto-learned'],
+    },
+    DEFAULT_LEARNED_FIXES_BODY
+  );
+  await fs.writeFile(fixesPath, seededFixes, 'utf8');
+  knowledgeDirCache.delete(paths.knowledgeDir);
+  return readKnowledge('LEARNED_FIXES', paths);
+}
+
 export async function searchKnowledge(query, paths = getRuntimePaths()) {
   const terms = String(query || '')
     .toLowerCase()

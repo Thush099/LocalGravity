@@ -14,6 +14,7 @@ import {
   ensureKnowledgeSeeded,
   listKnowledge,
   readKnowledge,
+  resetLearnedFixes,
   saveKnowledge,
   searchKnowledge,
 } from './knowledge-engine.mjs';
@@ -684,6 +685,11 @@ export function createAgentServer({
           paths
         );
         return sendJson(res, 200, { ok: true, saved, chars: text.length });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/knowledge/LEARNED_FIXES/reset') {
+        const doc = await resetLearnedFixes(paths);
+        return sendJson(res, 200, { ok: true, doc });
       }
 
       const knowMatch = pathname.match(/^\/api\/knowledge\/([^/]+)$/);

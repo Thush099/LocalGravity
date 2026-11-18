@@ -328,12 +328,137 @@ export async function runAgentTurn({
         return { session, status: 'completed' };
       }
 
-      for (const tc of assistantEntry.toolCalls) {
+      const PARALLEL_SAFE_READ_TOOLS = new Set([
+        'read_file',
+        'list_dir',
+        'search_files',
+        'inspect_media',
+        'list_skills',
+        'read_skill',
+        'list_knowledge',
+        'read_knowledge',
+        'search_knowledge',
+      ]);
+
+      const canRunConcurrently = (call) => {
+        if (!call || call.parseError || !PARALLEL_SAFE_READ_TOOLS.has(call.name)) return false;
+        const gate = evaluateToolSafety(
+          { name: call.name, args: call.arguments || {} },
+          {
+            safetyMode,
+            isHeadless,
+            allowAutoRun,
+            skillsDir: paths.skillsDir,
+            knowledgeDir: paths.knowledgeDir,
+            allowedReadCommands: providerConfig.allowedReadCommands || [],
+          }
+        );
+        return gate.decision === 'allow';
+      };
+
+      const recordCompletedToolCall = (tc, effectiveArgs, result) => {
+        const outcome = tracker.recordToolOutcome({
+          name: tc.name,
+          args: effectiveArgs,
+          ok: result.ok,
+          output: result.output,
+        });
+
+        const enrichedOutput =
+          outcome.failed && outcome.hint
+            ? `${result.output}\n\n[Self-Healing Hint] ${outcome.hint}`
+            : result.output;
+
+        executedToolResults.push({
+          name: tc.name,
+          ok: result.ok,
+          output: result.output,
+        });
+
+        session.messages.push({
+          role: 'tool',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          content: enrichedOutput,
+          images: result.images,
+          diff: result.diff,
+        });
+
+        onEvent?.({
+          type: 'tool_result',
+          toolCallId: tc.id,
+          name: tc.name,
+          ok: result.ok,
+          output: enrichedOutput,
+          diff: result.diff,
+          images: result.images,
+        });
+      };
+
+      const calls = assistantEntry.toolCalls;
+      for (let callIdx = 0; callIdx < calls.length; callIdx++) {
         if (abortSignal?.aborted) {
           onEvent?.({ type: 'done', status: 'cancelled' });
           return { session, status: 'cancelled' };
         }
 
+        // Batch consecutive read-only, non-duplicate, allowed tool calls concurrently via Promise.all
+        if (canRunConcurrently(calls[callIdx]) && callIdx + 1 < calls.length && canRunConcurrently(calls[callIdx + 1])) {
+          const batch = [];
+          while (callIdx < calls.length && canRunConcurrently(calls[callIdx])) {
+            const candidate = calls[callIdx];
+            const candidateArgs = { ...(candidate.arguments || {}) };
+            onEvent?.({ type: 'tool_call', toolCallId: candidate.id, name: candidate.name, arguments: candidateArgs });
+            const dupCheck = tracker.checkDuplicateCall(candidate.name, candidateArgs);
+            batch.push({ tc: candidate, effectiveArgs: candidateArgs, dupCheck });
+            callIdx++;
+          }
+          callIdx--; // Adjust for outer loop increment
+
+          const batchOutputs = await Promise.all(
+            batch.map(async (entry) => {
+              if (entry.dupCheck.isDuplicate) {
+                return { isDuplicate: true, message: entry.dupCheck.message };
+              }
+              const result = await executeToolCall(
+                { name: entry.tc.name, args: entry.effectiveArgs },
+                {
+                  paths,
+                  cwd,
+                  abortSignal,
+                  onStdout: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: entry.tc.id, stream: 'stdout', text: chunk }),
+                  onStderr: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: entry.tc.id, stream: 'stderr', text: chunk }),
+                }
+              );
+              return { isDuplicate: false, result };
+            })
+          );
+
+          for (let bIdx = 0; bIdx < batch.length; bIdx++) {
+            const { tc: batchTc, effectiveArgs: batchArgs } = batch[bIdx];
+            const out = batchOutputs[bIdx];
+            if (out.isDuplicate) {
+              session.messages.push({
+                role: 'tool',
+                toolCallId: batchTc.id,
+                toolName: batchTc.name,
+                content: out.message,
+              });
+              onEvent?.({
+                type: 'tool_result',
+                toolCallId: batchTc.id,
+                name: batchTc.name,
+                ok: false,
+                output: out.message,
+              });
+            } else {
+              recordCompletedToolCall(batchTc, batchArgs, out.result);
+            }
+          }
+          continue;
+        }
+
+        const tc = calls[callIdx];
         if (tc.parseError) {
           tracker.recordParseError(tc.name, tc.parseError);
           const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid double-quoted JSON arguments.`;
@@ -431,42 +556,7 @@ export async function runAgentTurn({
           }
         );
 
-        const outcome = tracker.recordToolOutcome({
-          name: tc.name,
-          args: effectiveArgs,
-          ok: result.ok,
-          output: result.output,
-        });
-
-        const enrichedOutput =
-          outcome.failed && outcome.hint
-            ? `${result.output}\n\n[Self-Healing Hint] ${outcome.hint}`
-            : result.output;
-
-        executedToolResults.push({
-          name: tc.name,
-          ok: result.ok,
-          output: result.output,
-        });
-
-        session.messages.push({
-          role: 'tool',
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content: enrichedOutput,
-          images: result.images,
-          diff: result.diff,
-        });
-
-        onEvent?.({
-          type: 'tool_result',
-          toolCallId: tc.id,
-          name: tc.name,
-          ok: result.ok,
-          output: enrichedOutput,
-          diff: result.diff,
-          images: result.images,
-        });
+        recordCompletedToolCall(tc, effectiveArgs, result);
       }
 
       session.updatedAt = new Date().toISOString();

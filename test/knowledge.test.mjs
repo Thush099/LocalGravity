@@ -8,6 +8,7 @@ import {
   ensureKnowledgeSeeded,
   listKnowledge,
   readKnowledge,
+  resetLearnedFixes,
   saveKnowledge,
   searchKnowledge,
   deleteKnowledge,
@@ -47,6 +48,19 @@ test('knowledge engine seeds MEMORY.md, stores docs safely, and searches matchin
 
   assert.equal(await deleteKnowledge('brand-style', paths), true);
   assert.equal(await readKnowledge('brand-style', paths), null);
+
+  await saveKnowledge(
+    {
+      name: 'LEARNED_FIXES',
+      title: 'Custom Fixes',
+      tags: ['custom'],
+      content: '- Custom temporary learned rule',
+    },
+    paths
+  );
+  const resetDoc = await resetLearnedFixes(paths);
+  assert.match(resetDoc.content, /Autonomous Self-Learned Mistake Prevention Rules/);
+  assert.doesNotMatch(resetDoc.content, /Custom temporary learned rule/);
 
   await fs.rm(tmpHome, { recursive: true, force: true });
 });

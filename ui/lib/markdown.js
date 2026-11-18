@@ -9,24 +9,54 @@ export function escapeHtml(str) {
 
 function renderInline(text) {
   let out = escapeHtml(text);
-  // Inline code first
-  const codeSlots = [];
-  out = out.replace(/`([^`]+)`/g, (_m, code) => {
-    const idx = codeSlots.length;
-    codeSlots.push(`<code class="inline-code">${code}</code>`);
-    return `\u0000CODE${idx}\u0000`;
-  });
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  // Protect inline code spans first
+  const slots = [];
+  const stash = (html) => {
+    const idx = slots.length;
+    slots.push(html);
+    return `\u0000SLOT${idx}\u0000`;
+  };
+
+  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(`<code class="inline-code">${code}</code>`));
   out = out.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<a href="$2" class="md-link" target="_blank" rel="noopener noreferrer">$1</a>'
+    /\[([^\]]+)\]\(((?:https?:\/\/|file:\/\/)[^\s)]+)\)/g,
+    (_m, label, url) => stash(`<a href="${url}" class="md-link" target="_blank" rel="noopener noreferrer">${label}</a>`)
   );
-  return out.replace(/\u0000CODE(\d+)\u0000/g, (_m, idx) => codeSlots[Number(idx)]);
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  // Auto-link bare http(s) URLs not inside stashed markdown links
+  out = out.replace(
+    /(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+    (_m, prefix, url) => `${prefix}${stash(`<a href="${url}" class="md-link" target="_blank" rel="noopener noreferrer">${url}</a>`)}`
+  );
+  return out.replace(/\u0000SLOT(\d+)\u0000/g, (_m, idx) => slots[Number(idx)]);
+}
+
+function splitTableCells(line) {
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map((c) => c.trim());
+}
+
+function isTableSeparatorLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed.includes('|') && !trimmed.includes('-')) return false;
+  const cells = splitTableCells(trimmed);
+  return cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+}
+
+function parseTableAlignments(line) {
+  return splitTableCells(line).map((c) => {
+    if (c.startsWith(':') && c.endsWith(':')) return 'center';
+    if (c.endsWith(':')) return 'right';
+    return 'left';
+  });
 }
 
 /**
- * Render Markdown safely to HTML with copyable fenced code blocks.
+ * Render Markdown safely to HTML with copyable fenced code blocks, GFM tables, and task lists.
  */
 export function renderMarkdown(markdown) {
   const src = String(markdown || '');
@@ -78,6 +108,44 @@ export function renderMarkdown(markdown) {
       continue;
     }
 
+    // GFM pipe tables: header line with pipes followed by alignment separator row
+    if (line.includes('|') && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
+      closeList();
+      const headers = splitTableCells(line);
+      const alignments = parseTableAlignments(lines[i + 1]);
+      i += 2;
+      const bodyRows = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|') && !/^```/.test(lines[i])) {
+        bodyRows.push(splitTableCells(lines[i]));
+        i++;
+      }
+      i--; // Step back so outer loop advances cleanly
+
+      const thHtml = headers
+        .map((cell, idx) => {
+          const align = alignments[idx] || 'left';
+          const alignAttr = align !== 'left' ? ` style="text-align:${align}"` : '';
+          return `<th${alignAttr}>${renderInline(cell)}</th>`;
+        })
+        .join('');
+      const tbodyHtml = bodyRows
+        .map(
+          (row) =>
+            `<tr>${headers
+              .map((_, idx) => {
+                const align = alignments[idx] || 'left';
+                const alignAttr = align !== 'left' ? ` style="text-align:${align}"` : '';
+                return `<td${alignAttr}>${renderInline(row[idx] ?? '')}</td>`;
+              })
+              .join('')}</tr>`
+        )
+        .join('');
+      html.push(
+        `<div class="md-table-wrap"><table class="md-table"><thead><tr>${thHtml}</tr></thead><tbody>${tbodyHtml}</tbody></table></div>`
+      );
+      continue;
+    }
+
     const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
     if (headingMatch) {
       closeList();
@@ -96,6 +164,20 @@ export function renderMarkdown(markdown) {
     if (bqMatch) {
       closeList();
       html.push(`<blockquote class="md-quote">${renderInline(bqMatch[1])}</blockquote>`);
+      continue;
+    }
+
+    const taskMatch = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.+)$/);
+    if (taskMatch) {
+      if (listType !== 'ul') {
+        closeList();
+        listType = 'ul';
+        html.push('<ul class="md-list">');
+      }
+      const checked = taskMatch[1].toLowerCase() === 'x';
+      html.push(
+        `<li class="md-task-item"><input type="checkbox" class="md-task-cb" disabled${checked ? ' checked' : ''} /><span>${renderInline(taskMatch[2])}</span></li>`
+      );
       continue;
     }
 

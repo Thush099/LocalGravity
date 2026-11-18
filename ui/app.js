@@ -461,7 +461,7 @@ function buildDisplayItemHtml(item, idx) {
   const showActions = (!item.isStreaming && item.content) || item.isError;
   const actionsHtml = showActions
     ? `<div class="msg-actions">
-        ${item.isError ? '<button type="button" class="msg-action-btn retry-turn-btn">Retry turn</button>' : ''}
+        <button type="button" class="msg-action-btn retry-turn-btn" data-idx="${idx}">Retry turn</button>
         ${
           !item.isStreaming && item.content
             ? `<button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
@@ -1081,6 +1081,16 @@ async function openLearnedFixesEditor() {
       tags: ['self-improvement', 'mistakes', 'auto-learned'],
       content: '# Autonomous Self-Learned Mistake Prevention Rules\n\n- ',
     });
+  }
+}
+
+async function resetLearnedFixesRules() {
+  try {
+    await apiRequest('/api/knowledge/LEARNED_FIXES/reset', { method: 'POST' });
+    await loadKnowledge();
+    showToast('Reset LEARNED_FIXES.md to default baseline rules');
+  } catch (err) {
+    showToast(err.message);
   }
 }
 
@@ -1807,6 +1817,8 @@ const PALETTE_ACTION_ITEMS = [
   { label: 'Toggle Safety mode', hint: 'Switch Ask / Auto command approval', keywords: 'safety approval auto', run: () => $('#safety-toggle').click() },
   { label: 'Compact conversation', hint: 'Summarize older turns to free context', keywords: 'context tokens compact summarize', run: () => $('#compact-btn').click() },
   { label: 'Export conversation', hint: 'Download the current chat as Markdown', keywords: 'download markdown save export', run: () => $('#export-chat-btn').click() },
+  { label: 'Inspect Self-Learned Fixes', hint: 'View and edit LEARNED_FIXES.md mistake prevention rules', keywords: 'learned fixes self-improve rules mistakes', run: () => openLearnedFixesEditor() },
+  { label: 'Reset Self-Learned Fixes', hint: 'Restore LEARNED_FIXES.md to clean baseline rules', keywords: 'reset learned fixes self-improve rules', run: () => resetLearnedFixesRules() },
   { label: 'Keyboard shortcuts', hint: 'Show every shortcut', keywords: 'help keys hotkeys', run: () => openShortcutsModal() },
 ];
 
@@ -2188,6 +2200,7 @@ function wireEvents() {
   $('#import-url-btn').addEventListener('click', openImportUrlModal);
   $('#skill-library-btn').addEventListener('click', openSkillLibraryModal);
   $('#open-learned-fixes-btn')?.addEventListener('click', openLearnedFixesEditor);
+  $('#reset-learned-fixes-btn')?.addEventListener('click', resetLearnedFixesRules);
   $('#new-knowledge-btn').addEventListener('click', () => openKnowledgeModal(null));
   $('#upload-knowledge-btn').addEventListener('click', () => $('#knowledge-file-input').click());
   $('#import-know-url-btn').addEventListener('click', openKnowledgeUrlModal);
