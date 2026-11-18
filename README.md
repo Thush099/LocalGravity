@@ -17,9 +17,13 @@ Built to run fast inside **16 GB Unified Memory** (~**1.1 MB** installed Swift `
   - **Local Ollama (Recommended: `qwen3.5:9b`; optional `qwen3.5:4b` fast preset):** Native vision, native tool calling, toggleable **Deep Think** mode, and M4-tuned context budgets (`8K` / `16K` / `32K` with automatic context compaction at 70% capacity).
   - **Multi-Provider Support:** Connect **OpenRouter (`:free` & Pro)**, **Groq**, **Google Gemini**, **Anthropic Claude**, **OpenAI / ChatGPT**, or any **Custom OpenAI-Compatible Endpoint**. Keys stay strictly local in `~/.localgravity/config.json` (`0600`).
 - **Antigravity-Style Tool Loop & Safety Gate:**
-  - Built-in tools: `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `run_command`, `inspect_media`, `fetch_url`, `list_skills`/`read_skill`/`save_skill` (with `extra_files` scripts), and `list_knowledge`/`search_knowledge`/`read_knowledge`/`save_knowledge`.
+  - Built-in tools: `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `run_command`, `run_applescript`, `run_shortcut`, `calculate`, `update_plan`, `inspect_media`, `fetch_url`, `copy_to_clipboard`/`paste_from_clipboard`, `show_notification`, `open_app`, `set_reminder`, `list_skills`/`read_skill`/`save_skill` (with `extra_files` scripts), and `list_knowledge`/`search_knowledge`/`read_knowledge`/`save_knowledge`.
+  - **macOS Quick Actions:** Everyday Mac actions without shelling out — copy/paste the clipboard, show a notification banner, open any app, run any **Apple Shortcut** by name (turning all your Shortcuts into agent superpowers), and set background **timers/reminders**. Deep `run_applescript` automation is available when a single command is not enough.
+  - **Live Task Plan (`update_plan`):** The agent publishes an interactive multi-step checklist that streams to the UI in real time so you can watch it tick off each step — plan, active, and done states render as a live progress panel.
+  - **Safe Calculator (`calculate`):** Exact arithmetic (`+ - * / % ^`, parentheses, `sqrt`/`abs`/`log`, `pi`/`e`) via an injection-safe parser — no `eval`, no shell.
+  - **AppleScript Automation (`run_applescript`):** Deep macOS automation via `osascript` (Finder, Notes, Safari, System Events) run from a temp file through `execFile` (never a shell), always gated as a mutating action.
   - **Visual Media Inspection (`inspect_media`):** Extracts video keyframes via `ffmpeg` or scales photos via `sips` and passes them directly to the vision model so the agent can visually verify edits before and after running commands.
-  - **Safety Policies:** Interactive **Ask** mode pauses mutating commands and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
+  - **Safety Policies:** Interactive **Ask** mode pauses mutating commands, AppleScript, and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
 - **Self-Teaching Skills & Knowledge Base:**
   - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
   - Includes **28 Starter Skills** across engineering, macOS automation, media production, research, writing, data, DevOps, accessibility, and study coaching: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `devops-engineer`, `macos-automator`, `mac-organizer`, `image-batch-processor`, `video-producer`, `photo-editor`, `video-editor`, `data-analyst`, `data-visualizer`, `presentation-builder`, `technical-writer`, `humanizer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `research-assistant`, `study-coach`, `accessibility-auditor`, `skill-scout`, `self-upgrade`, and `skill-creator`.
@@ -64,6 +68,20 @@ Built to run fast inside **16 GB Unified Memory** (~**1.1 MB** installed Swift `
   qwen3.5:9b         ffmpeg, magick      OpenRouter, Groq,
   gemma4:12b         sips, osascript     Gemini, Claude, OpenAI
 ```
+
+---
+
+## What can it do?
+
+Point LocalGravity at anything and it plans, acts, and shows its work:
+
+- *“Audit my Mac storage and tell me what's eating space, then clean only the safe caches.”*
+- *“Reframe this clip to 9:16 for Shorts, compress it under 50 MB, and verify the result visually.”*
+- *“Rewrite this paragraph so it sounds human, then copy the result to my clipboard.”*
+- *“Teach yourself my Git release workflow as a reusable skill and remind me in 20 minutes.”*
+- *“Run my 'Daily Backup' Shortcut and summarize what it changed.”*
+
+Every turn is a live, steerable run: watch the task plan tick off step-by-step, see each tool call with diffs and output, approve or edit risky commands in **Ask** mode, and interrupt anytime.
 
 ---
 
