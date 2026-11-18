@@ -91,12 +91,13 @@ async function prepareAttachmentContext(attachments = [], paths) {
   return { images, notes };
 }
 
-function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') {
+export function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') {
   const out = [{ role: 'system', content: systemPrompt }];
+  const isAnthropic = provider === 'anthropic';
   let pendingToolImages = [];
 
   const flushImages = () => {
-    if (provider !== 'anthropic' && pendingToolImages.length > 0) {
+    if (!isAnthropic && pendingToolImages.length > 0) {
       out.push({
         role: 'user',
         content: '[Visual media inspection frames attached from inspect_media]',
@@ -121,10 +122,17 @@ function buildModelMessages(systemPrompt, sessionMessages, provider = 'ollama') 
         isOlderTool && rawContent.length > 2400
           ? `${rawContent.slice(0, 2200)}\n... [earlier tool output truncated for speed]`
           : rawContent;
-      out.push({ ...msg, content: trimmedContent });
+      const toolMsg = { ...msg, content: trimmedContent };
       if (Array.isArray(msg.images) && msg.images.length > 0) {
         pendingToolImages.push(...msg.images);
+        if (!isAnthropic) {
+          // Ollama / OpenAI-compatible providers receive these frames via the synthetic
+          // user message from flushImages(). Strip them from the tool message so the same
+          // vision frames are never uploaded twice (which double-bills context tokens).
+          delete toolMsg.images;
+        }
       }
+      out.push(toolMsg);
     }
   }
   flushImages();
@@ -426,6 +434,7 @@ export async function runAgentTurn({
                   paths,
                   cwd,
                   abortSignal,
+                  onEvent,
                   onStdout: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: entry.tc.id, stream: 'stdout', text: chunk }),
                   onStderr: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: entry.tc.id, stream: 'stderr', text: chunk }),
                 }
@@ -551,6 +560,7 @@ export async function runAgentTurn({
             paths,
             cwd,
             abortSignal,
+            onEvent,
             onStdout: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: tc.id, stream: 'stdout', text: chunk }),
             onStderr: (chunk) => onEvent?.({ type: 'tool_output', toolCallId: tc.id, stream: 'stderr', text: chunk }),
           }

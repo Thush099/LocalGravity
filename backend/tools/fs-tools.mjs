@@ -37,9 +37,11 @@ export function buildCompactDiff(oldText, newText, filePath) {
 export async function listDir({ path: dirPath, recursive = false, max_entries = 120 }) {
   const resolved = expandUserPath(dirPath || '.');
   const results = [];
+  const MAX_DEPTH = 12;
 
-  async function walk(curDir, relPrefix = '') {
+  async function walk(curDir, relPrefix = '', depth = 0) {
     if (results.length >= max_entries) return;
+    if (depth > MAX_DEPTH) return;
     const entries = await fs.readdir(curDir, { withFileTypes: true });
     entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
 
@@ -50,7 +52,7 @@ export async function listDir({ path: dirPath, recursive = false, max_entries = 
       const display = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         results.push(`[DIR]  ${display}/`);
-        if (recursive) await walk(full, display);
+        if (recursive) await walk(full, display, depth + 1);
       } else {
         try {
           const st = await fs.stat(full);
@@ -192,9 +194,11 @@ export async function searchFilesTool({ root, query, glob }) {
 
   const matches = [];
   const extFilter = glob && glob.startsWith('*.') ? glob.slice(1).toLowerCase() : null;
+  const MAX_DEPTH = 12;
 
-  async function walk(dir) {
+  async function walk(dir, depth = 0) {
     if (matches.length >= 60) return;
+    if (depth > MAX_DEPTH) return;
     let entries;
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
@@ -206,7 +210,7 @@ export async function searchFilesTool({ root, query, glob }) {
       if (entry.name === '.git' || entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(full);
+        await walk(full, depth + 1);
       } else if (entry.isFile()) {
         if (extFilter && !entry.name.toLowerCase().endsWith(extFilter)) continue;
         if (entry.name.toLowerCase().includes(needle)) {

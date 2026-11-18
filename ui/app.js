@@ -300,6 +300,7 @@ function groupMessagesForDisplay(messages = []) {
           thinking: [],
           tools: [],
           content: '',
+          plan: null,
           selfImprovedLessons: [],
           isError: false,
         };
@@ -329,6 +330,9 @@ function groupMessagesForDisplay(messages = []) {
         toolEntry.output = msg.content || '';
         toolEntry.diff = msg.diff || '';
         toolEntry.images = msg.images || [];
+        if (toolEntry.name === 'update_plan') {
+          currentAssistant.plan = parsePlanFromOutput(msg.content || '');
+        }
         const out = String(msg.content || '');
         const exitNonZero = /^Exit code:\s*(?!0\b)\d+/m.test(out);
         const failed =
@@ -343,6 +347,33 @@ function groupMessagesForDisplay(messages = []) {
     }
   }
   return items;
+}
+
+function parsePlanFromOutput(output) {
+  const lines = String(output || '').split('\n');
+  const steps = [];
+  for (const line of lines) {
+    const m = /^\[([x>\s])\]\s*(.+)$/.exec(line.trim());
+    if (m) {
+      const mark = m[1].trim();
+      steps.push({ text: m[2].trim(), status: mark === 'x' ? 'done' : mark === '>' ? 'active' : 'pending' });
+    }
+  }
+  return steps.length > 0 ? steps : null;
+}
+
+function buildPlanHtml(item) {
+  const plan = item.plan;
+  if (!Array.isArray(plan) || plan.length === 0) return '';
+  const done = plan.filter((s) => s.status === 'done').length;
+  const rows = plan
+    .map((s) => {
+      const icon = s.status === 'done' ? '&#10003;' : s.status === 'active' ? '&#9679;' : '&#9675;';
+      const cls = s.status === 'done' ? 'done' : s.status === 'active' ? 'active' : 'pending';
+      return `<li class="plan-step ${cls}"><span class="plan-icon">${icon}</span><span class="plan-text">${escapeHtml(s.text)}</span></li>`;
+    })
+    .join('');
+  return `<div class="plan-panel"><div class="plan-head"><span>Plan</span><span class="plan-progress">${done}/${plan.length}</span></div><ul class="plan-list">${rows}</ul></div>`;
 }
 
 function buildToolBodyHtml(tool) {
@@ -492,6 +523,7 @@ function buildDisplayItemHtml(item, idx) {
     <div class="msg-row" ${item.isStreaming ? 'id="live-assistant-row"' : ''}>
       <div class="msg-assistant${item.isError ? ' error' : ''}">
         ${liveStatusHtml}
+        <div class="live-plan-slot">${buildPlanHtml(item)}</div>
         <div class="live-thinking-slot">${thinkingHtml}</div>
         <div class="live-tools-slot">${toolsHtml}</div>
         <div class="live-self-improved-slot">${selfImprovedHtml}</div>
@@ -645,6 +677,13 @@ function scheduleLiveUpdate() {
       }
     }
 
+    const planSig = JSON.stringify(item.plan || []);
+    if (item._lastPlanSig !== planSig) {
+      item._lastPlanSig = planSig;
+      const planSlot = liveRow.querySelector('.live-plan-slot');
+      if (planSlot) planSlot.innerHTML = buildPlanHtml(item);
+    }
+
     const lessonsSig = (item.selfImprovedLessons || []).join('|');
     if (item._lastLessonsSig !== lessonsSig) {
       item._lastLessonsSig = lessonsSig;
@@ -790,6 +829,7 @@ async function sendPrompt(overridePayload = null) {
     thinking: [],
     tools: [],
     content: '',
+    plan: null,
     selfImprovedLessons: [],
   };
   state.isRunning = true;
@@ -826,6 +866,8 @@ async function sendPrompt(overridePayload = null) {
           state.liveAssistantMsg.thinking.push(evt.text);
         } else if (evt.type === 'text_delta') {
           state.liveAssistantMsg.content += evt.text;
+        } else if (evt.type === 'plan_update') {
+          state.liveAssistantMsg.plan = Array.isArray(evt.plan) ? evt.plan : null;
         } else if (evt.type === 'tool_call') {
           state.liveAssistantMsg.tools.push({
             id: evt.toolCallId,

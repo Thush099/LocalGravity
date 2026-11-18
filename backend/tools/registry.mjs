@@ -3,9 +3,20 @@ import { LEARNED_FIXES_DOC, normalizeToolCall } from '../agent/self-improver.mjs
 import { invalidateKnowledgeCache, listKnowledge, readKnowledge, saveKnowledge, searchKnowledge } from '../knowledge-engine.mjs';
 import { invalidateSkillsCache, listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
 import { getRuntimePaths } from '../state/paths.mjs';
+import { runAppleScriptTool } from './applescript-tool.mjs';
+import { calculateTool } from './calc-tool.mjs';
 import { runCommandTool } from './exec-tool.mjs';
 import { buildCompactDiff, editFileTool, listDir, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
 import { inspectMediaTool } from './media-tool.mjs';
+import {
+  copyToClipboardTool,
+  openAppTool,
+  pasteFromClipboardTool,
+  runShortcutTool,
+  setReminderTool,
+  showNotificationTool,
+} from './macos-tool.mjs';
+import { updatePlanTool } from './plan-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
 
 export const TOOL_DEFINITIONS = [
@@ -102,6 +113,136 @@ export const TOOL_DEFINITIONS = [
           timeout_ms: { type: 'number' },
         },
         required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_applescript',
+      description: 'Run an AppleScript via osascript for deep macOS automation (Finder, Notes, Safari, System Events). Always requires approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          script: { type: 'string', description: 'The AppleScript source to run.' },
+          timeout_ms: { type: 'number' },
+        },
+        required: ['script'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calculate',
+      description: 'Evaluate an arithmetic expression safely (supports + - * / % ^, parentheses, sqrt/abs/round/log, pi/e). No shell, no eval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          expression: { type: 'string', description: 'The arithmetic expression to evaluate.' },
+        },
+        required: ['expression'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_plan',
+      description: 'Publish the current multi-step task checklist so the user can watch progress. Call it once at the start and update step statuses as you go.',
+      parameters: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string', description: 'Short step description.' },
+                status: { type: 'string', enum: ['pending', 'active', 'done'], description: 'Current status.' },
+              },
+              required: ['text'],
+            },
+          },
+        },
+        required: ['steps'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'copy_to_clipboard',
+      description: 'Copy text to the macOS clipboard (pbcopy) so the user can paste it anywhere.',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: 'Text to copy.' } },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'paste_from_clipboard',
+      description: 'Read the current macOS clipboard text (pbpaste).',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_notification',
+      description: 'Show a macOS notification banner (title + message).',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Notification title (default: LocalGravity).' },
+          message: { type: 'string', description: 'Notification body.' },
+        },
+        required: ['message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_app',
+      description: 'Open a macOS application by name (e.g. Safari, Notes, Finder).',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'Application name.' } },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_shortcut',
+      description: 'Run an existing macOS Shortcut by name (Shortcuts app). Turns every user Shortcut into an agent capability. Always requires approval.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Shortcut name.' },
+          input: { type: 'string', description: 'Optional text input piped to the Shortcut.' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_reminder',
+      description: 'Show a one-shot macOS notification reminder after N seconds (fires in the background).',
+      parameters: {
+        type: 'object',
+        properties: {
+          seconds: { type: 'number', description: 'Delay in seconds before the reminder fires.' },
+          message: { type: 'string', description: 'Reminder text.' },
+        },
+        required: ['seconds', 'message'],
       },
     },
   },
@@ -255,12 +396,19 @@ const ALWAYS_READONLY_TOOLS = new Set([
   'search_files',
   'inspect_media',
   'fetch_url',
+  'calculate',
+  'update_plan',
+  'paste_from_clipboard',
   'list_skills',
   'read_skill',
   'list_knowledge',
   'search_knowledge',
   'read_knowledge',
 ]);
+
+// Non-destructive macOS actions: frictionless in interactive use, but a scheduled
+// background job must not silently poke at the live desktop (clipboards, banners, apps).
+const HARMLESS_ACTION_TOOLS = new Set(['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder']);
 
 /**
  * Evaluate whether a tool call should auto-run, pause for approval, or be blocked.
@@ -305,6 +453,39 @@ export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, contex
       : { decision: 'ask', reason: classification.reason, preview: String(args.command || '') };
   }
 
+  if (name === 'run_applescript') {
+    // AppleScript can drive arbitrary macOS apps and system state: always treat as mutating.
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow AppleScript automation.' };
+    }
+    return safetyMode === 'auto'
+      ? { decision: 'allow' }
+      : { decision: 'ask', reason: 'Run AppleScript automation (can modify apps and files).', preview: String(args.script || '') };
+  }
+
+  if (name === 'run_shortcut') {
+    // A Shortcut is opaque automation that can do anything: treat as mutating.
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow running Shortcuts.' };
+    }
+    return safetyMode === 'auto'
+      ? { decision: 'allow' }
+      : { decision: 'ask', reason: 'Run macOS Shortcut (can perform arbitrary actions).', preview: `shortcuts run ${String(args.name || '')}` };
+  }
+
+  if (HARMLESS_ACTION_TOOLS.has(name)) {
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow this macOS action.' };
+    }
+    return { decision: 'allow' };
+  }
+
   if (name === 'write_file' || name === 'edit_file') {
     const fileInfo = classifyFileWrite(args.path || '', skillsDir, knowledgeDir);
     if (fileInfo.autoAllowInAskMode) {
@@ -329,6 +510,8 @@ export async function generateToolPreview({ name: rawName, args: rawArgs = {} })
   const args = normalized.arguments;
 
   if (name === 'run_command') return String(args.command || '');
+  if (name === 'run_applescript') return String(args.script || '');
+  if (name === 'run_shortcut') return `shortcuts run ${String(args.name || '')}`;
   if (name === 'write_file') {
     const resolved = expandUserPath(args.path || '');
     let oldContent = '';
@@ -395,6 +578,24 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         invalidateKnowledgeCache(paths.knowledgeDir);
         return result;
       }
+      case 'run_applescript':
+        return await runAppleScriptTool(args, { abortSignal: context.abortSignal });
+      case 'calculate':
+        return calculateTool(args);
+      case 'update_plan':
+        return updatePlanTool(args, { onEvent: context.onEvent });
+      case 'copy_to_clipboard':
+        return await copyToClipboardTool(args);
+      case 'paste_from_clipboard':
+        return await pasteFromClipboardTool();
+      case 'show_notification':
+        return await showNotificationTool(args);
+      case 'open_app':
+        return await openAppTool(args);
+      case 'run_shortcut':
+        return await runShortcutTool(args);
+      case 'set_reminder':
+        return await setReminderTool(args);
       case 'inspect_media':
         return await inspectMediaTool(args);
       case 'list_skills': {

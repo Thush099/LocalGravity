@@ -28,6 +28,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let forceKillTimer = null;
     const maxCapture = 32000;
 
     const killGroup = (signal = 'SIGTERM') => {
@@ -44,7 +45,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
 
     const timer = setTimeout(() => {
       killGroup('SIGTERM');
-      setTimeout(() => killGroup('SIGKILL'), 1500);
+      forceKillTimer = setTimeout(() => killGroup('SIGKILL'), 1500);
       if (!settled) {
         settled = true;
         resolve({
@@ -56,7 +57,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
 
     const onAbort = () => {
       killGroup('SIGTERM');
-      setTimeout(() => killGroup('SIGKILL'), 1000);
+      forceKillTimer = setTimeout(() => killGroup('SIGKILL'), 1000);
     };
     abortSignal?.addEventListener('abort', onAbort, { once: true });
 
@@ -74,6 +75,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       abortSignal?.removeEventListener('abort', onAbort);
       if (!settled) {
         settled = true;
@@ -83,6 +85,7 @@ export function runCommandTool({ command, cwd, timeout_ms = 60000, onStdout, onS
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       abortSignal?.removeEventListener('abort', onAbort);
       if (settled) return;
       settled = true;

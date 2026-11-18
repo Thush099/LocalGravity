@@ -66,18 +66,19 @@ async function probeVideo(resolvedPath) {
 export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edge = 1280 }) {
   const resolved = expandUserPath(mediaPath);
   const ext = path.extname(resolved).toLowerCase();
+  const edge = Math.min(Math.max(64, Number(max_edge) || 1280), 2048);
   const tmpPng = path.join(os.tmpdir(), `localgravity-inspect-${crypto.randomUUID()}.png`);
 
   try {
     const st = await fs.stat(resolved);
-    const cacheKey = `${resolved}:${st.mtimeMs}:${st.size}:${timestamp_sec ?? 'auto'}:${max_edge}`;
+    const cacheKey = `${resolved}:${st.mtimeMs}:${st.size}:${timestamp_sec ?? 'auto'}:${edge}`;
     const cached = getCachedMedia(cacheKey);
     if (cached) return cached;
 
     if (IMAGE_EXTS.has(ext)) {
       const [meta] = await Promise.all([
         probeImage(resolved),
-        execFileAsync('sips', ['-s', 'format', 'png', '-Z', String(max_edge), resolved, '--out', tmpPng]),
+        execFileAsync('sips', ['-s', 'format', 'png', '-Z', String(edge), resolved, '--out', tmpPng]),
       ]);
       const base64 = (await fs.readFile(tmpPng)).toString('base64');
       const result = {
@@ -107,7 +108,7 @@ export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edg
         '-frames:v',
         '1',
         '-vf',
-        `scale='min(${max_edge},iw)':-2`,
+        `scale='min(${edge},iw)':-2`,
         tmpPng,
       ]);
       const base64 = (await fs.readFile(tmpPng)).toString('base64');
