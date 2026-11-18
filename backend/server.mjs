@@ -49,6 +49,7 @@ import {
   saveSession,
 } from './state/storage.mjs';
 import { inspectMediaTool } from './tools/media-tool.mjs';
+import { expandUserPath } from './tools/safety.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -821,7 +822,22 @@ export function createAgentServer({
       if (req.method === 'GET' && pathname === '/api/media/preview') {
         const targetPath = url.searchParams.get('path');
         if (!targetPath) return sendJson(res, 400, { ok: false, error: 'Missing path' });
-        const result = await inspectMediaTool({ path: targetPath, max_edge: 480 });
+        // Trust boundary: this path arrives from the UI. Restrict previews to real media
+        // files inside user-content roots (home, external volumes, temp) so a forged
+        // request cannot probe system paths like /etc or /System.
+        const resolved = path.resolve(expandUserPath(targetPath));
+        const previewRoots = [os.homedir(), '/Volumes', os.tmpdir()];
+        const inPreviewRoot = previewRoots.some(
+          (root) => resolved === root || resolved.startsWith(root + path.sep)
+        );
+        if (!inPreviewRoot) {
+          return sendJson(res, 400, { ok: false, error: 'Media preview is restricted to user files (home, external volumes, or temp).' });
+        }
+        const st = await fs.stat(resolved).catch(() => null);
+        if (!st || !st.isFile()) {
+          return sendJson(res, 404, { ok: false, error: 'Not a readable file' });
+        }
+        const result = await inspectMediaTool({ path: resolved, max_edge: 480 });
         if (!result.ok || !result.images?.length) {
           return sendJson(res, 404, { ok: false, error: result.output });
         }

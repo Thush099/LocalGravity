@@ -1351,15 +1351,23 @@ function renderSettingsView() {
 }
 
 // Modals
+let modalReturnFocusEl = null;
+
 function openModal(title, htmlContent) {
+  modalReturnFocusEl = document.activeElement;
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = htmlContent;
   $('#modal-backdrop').classList.remove('hidden');
+  $('#modal-close-btn')?.focus();
 }
 
 function closeModal() {
   $('#modal-backdrop').classList.add('hidden');
   $('#modal-body').innerHTML = '';
+  if (modalReturnFocusEl && typeof modalReturnFocusEl.focus === 'function') {
+    modalReturnFocusEl.focus();
+  }
+  modalReturnFocusEl = null;
 }
 
 function openSkillModal(existing) {
@@ -1928,7 +1936,7 @@ function renderPalette(query = '') {
       lastGroup = item.group;
     }
     html += `
-      <button type="button" class="palette-item${idx === state.paletteIndex ? ' active' : ''}" data-idx="${idx}" role="option" aria-selected="${idx === state.paletteIndex}">
+      <button type="button" id="palette-opt-${idx}" class="palette-item${idx === state.paletteIndex ? ' active' : ''}" data-idx="${idx}" role="option" aria-selected="${idx === state.paletteIndex}">
         <span class="palette-item-main">
           <span class="palette-item-label">${escapeHtml(item.label)}</span>
           ${item.hint ? `<span class="palette-item-hint">${escapeHtml(item.hint)}</span>` : ''}
@@ -1941,6 +1949,14 @@ function renderPalette(query = '') {
     btn.addEventListener('click', () => runPaletteItem(Number(btn.dataset.idx)));
   });
   results.querySelector('.palette-item.active')?.scrollIntoView({ block: 'nearest' });
+  const paletteInput = $('#palette-input');
+  if (paletteInput) {
+    if (state.paletteItems.length > 0) {
+      paletteInput.setAttribute('aria-activedescendant', `palette-opt-${state.paletteIndex}`);
+    } else {
+      paletteInput.removeAttribute('aria-activedescendant');
+    }
+  }
 }
 
 async function runPaletteItem(index) {
@@ -1968,6 +1984,7 @@ async function openCommandPalette() {
   $('#palette-backdrop').classList.remove('hidden');
   const input = $('#palette-input');
   input.value = '';
+  input.setAttribute('aria-expanded', 'true');
   renderPalette('');
   setTimeout(() => input.focus(), 0);
 
@@ -1998,6 +2015,11 @@ function closeCommandPalette() {
   state.paletteIndex = 0;
   $('#palette-backdrop').classList.add('hidden');
   $('#palette-results').innerHTML = '';
+  const input = $('#palette-input');
+  if (input) {
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
 }
 
 function toggleCommandPalette() {

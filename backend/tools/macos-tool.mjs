@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { expandUserPath } from './safety.mjs';
 
 const MAX_CLIPBOARD_CHARS = 200000;
 const MAX_REMINDER_SECONDS = 86400;
@@ -54,8 +53,6 @@ function escapeAppleScriptString(value) {
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"');
 }
-
-const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi);
 
 export async function copyToClipboardTool({ text }) {
   const value = String(text ?? '');
@@ -146,8 +143,4 @@ export async function setReminderTool({ seconds, message }) {
     output: `Reminder set for ${delay} seconds from now: "${msg.slice(0, 120)}"`,
     fireAt: new Date(Date.now() + delay * 1000).toISOString(),
   };
-}
-
-export function createMacosTool() {
-  return { runBinary, expandUserPath };
 }
