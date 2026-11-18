@@ -2275,7 +2275,7 @@ button, input, textarea, select {
   min-width: 0;
 }
 
-.dash-greeting-block h1 {
+.dash-greeting-block h2 {
   margin: 0 0 4px;
   font-size: 22px;
   font-weight: 650;

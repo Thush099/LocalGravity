@@ -21,6 +21,7 @@ Use this skill when the user asks how the Mac is doing, what is slowing it down,
 - **Memory**: "used" includes cache that macOS reclaims on demand. Wired and compressed are the numbers that matter when the user reports swapping.
 - **GPU utilization** is render load; high numbers during idle desktop use suggest a runaway window or animation.
 - **Storage**: warn at 85% full on the Data volume; macOS needs headroom for caches and updates.
+- **Power**: `100% charged on AC Power` is normal; a laptop suddenly discharging on AC suggests a weak adapter. Report remaining time only when the estimate is non-zero.
 - Compare against the **top processes list** before blaming the system; it is usually one app.
 
 ## Output format
