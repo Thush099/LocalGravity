@@ -306,10 +306,21 @@ function renderMonitor() {
       ['Uptime', metrics.uptimeSeconds != null ? formatUptime(metrics.uptimeSeconds) : '—'],
       ['Wired memory', mem.wiredBytes != null ? formatBytes(mem.wiredBytes) : '—'],
       ['Compressed memory', mem.compressedBytes != null ? formatBytes(mem.compressedBytes) : '—'],
-      ['GPU', gpu ? `${escapeHtml(gpu.name)}${gpu.inUseMemoryBytes ? ` · ${formatBytes(gpu.inUseMemoryBytes)} in use` : ''}` : 'No GPU stats exposed'],
+      ['GPU', gpu ? `${gpu.name}${gpu.inUseMemoryBytes ? ` · ${formatBytes(gpu.inUseMemoryBytes)} in use` : ''}` : 'No GPU stats exposed'],
     ];
+    if (metrics.battery) {
+      const b = metrics.battery;
+      const est =
+        b.minutesRemaining == null
+          ? ''
+          : ` · ${Math.floor(b.minutesRemaining / 60)}h ${b.minutesRemaining % 60}m ${b.state === 'discharging' ? 'left' : 'to full'}`;
+      rows.splice(3, 0, [
+        'Battery',
+        `${b.percent ?? '—'}%${b.state ? ` · ${b.state}` : ''}${est}${b.powerSource ? ` · ${b.powerSource}` : ''}`,
+      ]);
+    }
     details.innerHTML = rows
-      .map(([k, v]) => `<div class="detail-row"><dt>${escapeHtml(k)}</dt><dd>${v.startsWith('No GPU') ? escapeHtml(v) : v}</dd></div>`)
+      .map(([k, v]) => `<div class="detail-row"><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
       .join('');
   }
 

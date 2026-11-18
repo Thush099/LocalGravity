@@ -9,6 +9,7 @@ import {
   parseGpuStats,
   parseDf,
   parsePs,
+  parsePmsetBatt,
   summarizeSystemMetrics,
 } from '../backend/system-monitor.mjs';
 
@@ -132,4 +133,45 @@ test('summarizeSystemMetrics renders a compact agent-facing report', () => {
   assert.match(report, /node \(pid 7\): 9\.1% cpu/);
   assert.match(report, /Uptime: 2 hours/);
   assert.equal(summarizeSystemMetrics(null), 'System metrics unavailable.');
+});
+
+test('parsePmsetBatt reads power source, state, and time estimate', () => {
+  const charging = parsePmsetBatt(
+    "Now drawing from 'AC Power'\n -InternalBattery-0 (id=12345678)\t85%; charging; 0:25 remaining present: true\n"
+  );
+  assert.deepEqual(charging, {
+    powerSource: 'AC Power',
+    percent: 85,
+    state: 'charging',
+    minutesRemaining: 25,
+  });
+
+  const draining = parsePmsetBatt(
+    "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t62%; discharging; 3:07 remaining present: true\n"
+  );
+  assert.equal(draining.powerSource, 'Battery Power');
+  assert.equal(draining.state, 'discharging');
+  assert.equal(draining.minutesRemaining, 187);
+
+  const charged = parsePmsetBatt(
+    "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; (no estimate) present: true\n"
+  );
+  assert.equal(charged.state, 'charged');
+  assert.equal(charged.minutesRemaining, null);
+
+  // Desktop Macs report a power source but no battery line.
+  assert.equal(parsePmsetBatt("Now drawing from 'AC Power'\n"), null);
+  assert.equal(parsePmsetBatt(''), null);
+});
+
+test('summarizeSystemMetrics includes power when a battery is present', () => {
+  const report = summarizeSystemMetrics({
+    cpu: { percent: 5 },
+    memory: {},
+    gpu: null,
+    disks: [],
+    processes: [],
+    battery: { powerSource: 'Battery Power', percent: 62, state: 'discharging', minutesRemaining: 187 },
+  });
+  assert.match(report, /Power: 62% discharging on Battery Power \(3h 7m left\)/);
 });

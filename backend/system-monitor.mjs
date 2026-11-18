@@ -197,6 +197,31 @@ export async function sampleCpuTimes() {
 }
 
 /**
+ * Parse `pmset -g batt` output.
+ * First line names the power source; battery lines carry percent, state,
+ * and an optional time estimate. Desktop Macs report no battery line.
+ */
+export function parsePmsetBatt(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const sourceMatch = lines[0].match(/drawing from ['"]([^'"]+)['"]/i);
+  const battLine = lines.find((l) => /Battery|InternalBattery/i.test(l) && /%/.test(l));
+  if (!battLine) return null;
+  const percentMatch = battLine.match(/(\d{1,3})\s*%/);
+  const stateMatch = battLine.match(/%;\s*([^;]+);/);
+  const timeMatch = battLine.match(/(\d+):(\d{2})\s+remaining/i);
+  return {
+    powerSource: sourceMatch ? sourceMatch[1] : null,
+    percent: percentMatch ? Math.min(100, Number(percentMatch[1])) : null,
+    state: stateMatch ? stateMatch[1].trim() : null,
+    minutesRemaining: timeMatch ? Number(timeMatch[1]) * 60 + Number(timeMatch[2]) : null,
+  };
+}
+
+/**
  * Collect a full local-system snapshot: CPU, memory, GPU, storage, top processes.
  * Read-only; every collector degrades to null on failure instead of throwing.
  */
@@ -205,7 +230,7 @@ export async function collectSystemMetrics({ sampleMs = 250 } = {}) {
   if (first && sampleMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, sampleMs));
   }
-  const [second, vmStat, gpuDump, dfDump, psDump, loadDump, memSizeDump, bootDump] =
+  const [second, vmStat, gpuDump, dfDump, psDump, loadDump, memSizeDump, bootDump, battDump] =
     await Promise.all([
       sampleCpuTimes(),
       runBinary('/usr/bin/vm_stat', []),
@@ -215,6 +240,7 @@ export async function collectSystemMetrics({ sampleMs = 250 } = {}) {
       runBinary('/usr/sbin/sysctl', ['-n', 'vm.loadavg']),
       runBinary('/usr/sbin/sysctl', ['-n', 'hw.memsize']),
       runBinary('/usr/sbin/sysctl', ['-n', 'kern.boottime']),
+      runBinary('/usr/bin/pmset', ['-g', 'batt']),
     ]);
 
   const pageSize = 16384;
@@ -254,6 +280,7 @@ export async function collectSystemMetrics({ sampleMs = 250 } = {}) {
       ? [Number(loadMatch[1]), Number(loadMatch[2]), Number(loadMatch[3])]
       : null,
     uptimeSeconds: bootMatch ? Math.max(0, Math.floor(Date.now() / 1000) - Number(bootMatch[1])) : null,
+    battery: battDump.ok ? parsePmsetBatt(battDump.stdout) : null,
     arch: os.arch(),
   };
 }
@@ -288,6 +315,21 @@ export function summarizeSystemMetrics(metrics) {
     );
   } else {
     lines.push('GPU: no utilization data exposed by the driver');
+  }
+  if (metrics.battery) {
+    const b = metrics.battery;
+    const estimate =
+      b.minutesRemaining === null
+        ? ''
+        : b.state === 'discharging'
+          ? ` (${Math.floor(b.minutesRemaining / 60)}h ${b.minutesRemaining % 60}m left)`
+          : ` (${Math.floor(b.minutesRemaining / 60)}h ${b.minutesRemaining % 60}m to full)`;
+    lines.push(
+      `Power: ${b.percent === null ? 'level unknown' : `${b.percent}%`}` +
+        (b.state ? ` ${b.state}` : '') +
+        (b.powerSource ? ` on ${b.powerSource}` : '') +
+        estimate
+    );
   }
   for (const d of metrics.disks.slice(0, 4)) {
     lines.push(
