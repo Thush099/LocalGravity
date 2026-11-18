@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { fetchWithRetry } from './http-retry.mjs';
 import { readResponseLines, safeParseArguments } from './tool-parser.mjs';
 
 function toAnthropicPayload(messages, tools) {
@@ -85,6 +86,7 @@ export async function streamAnthropicChat({
   tools,
   signal,
   onEvent,
+  retryOptions,
 }) {
   const endpoint = `${String(baseUrl).replace(/\/+$/, '')}/v1/messages`;
   const payload = toAnthropicPayload(messages, tools);
@@ -98,16 +100,21 @@ export async function streamAnthropicChat({
   if (payload.system) body.system = payload.system;
   if (payload.tools && payload.tools.length > 0) body.tools = payload.tools;
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey || '',
-      'anthropic-version': '2023-06-01',
+  const res = await fetchWithRetry(
+    globalThis.fetch,
+    endpoint,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+      signal,
     },
-    body: JSON.stringify(body),
-    signal,
-  });
+    retryOptions
+  );
 
   if (!res.ok) {
     const errText = await res.text();

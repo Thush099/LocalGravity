@@ -18,11 +18,13 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
   - **Safety Policies:** Interactive **Ask** mode pauses mutating commands and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
 - **Self-Teaching Skills & Knowledge Base:**
   - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
-  - Includes **17 Starter Skills**: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `data-analyst`, `self-upgrade`, `mac-organizer`, `video-editor`, `photo-editor`, `humanizer`, and `skill-creator`.
-  - One-click **Teach as skill**, **Import from GitHub** (paste any raw `SKILL.md` or `github.com/.../blob/...` link, with a **Refresh** button that re-downloads from the stored source URL), **Import from Antigravity** (`~/.gemini/config/skills`), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+  - Includes **28 Starter Skills** across engineering, macOS automation, media production, research, writing, data, DevOps, accessibility, and study coaching: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `devops-engineer`, `macos-automator`, `mac-organizer`, `image-batch-processor`, `video-producer`, `photo-editor`, `video-editor`, `data-analyst`, `data-visualizer`, `presentation-builder`, `technical-writer`, `humanizer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `research-assistant`, `study-coach`, `accessibility-auditor`, `skill-scout`, `self-upgrade`, and `skill-creator`.
+  - **Skill Library browser:** scan the skills already installed on this Mac (`~/.agents/skills`, `~/.claude/skills`, and `~/.gemini/config/skills`), see which are already installed, and copy selected workflows into LocalGravity in one click.
+  - One-click **Teach as skill**, **Import from GitHub** (paste any raw `SKILL.md` or `github.com/.../blob/...` link, with a **Refresh** button that re-downloads from the stored source URL), persistent **`MEMORY.md`**, and `.md`/`.txt`/`.json`/`.csv` Knowledge Document uploads (`~/.localgravity/knowledge/`).
+  - **Hash-tracked starter upgrades:** untouched starter skills receive improved instructions when the app updates, while user edits and deletions are preserved.
   - **Turn-aware skill hints:** each message is scored against skill triggers, and the two best matches are surfaced in the system prompt so small local models load the right playbook.
 - **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, follow-up message queueing / instant interrupt while a turn is running, full-text search across past conversations with matched-message snippets, and one-click **Markdown export** of the current session.
-- **Local API Hardening:** Every `/api/*` route requires the per-launch token, and mutating requests from a foreign `Origin` are rejected so a browser page cannot ride the app's cookie.
+- **Local API Hardening:** Every `/api/*` route requires the per-launch token, mutating requests from a foreign `Origin` are rejected so a browser page cannot ride the app's cookie, the UI is served with a strict `script-src 'self'` CSP plus `nosniff`/`DENY` headers, malformed JSON returns `400`, oversized bodies return `413`, and cloud providers retry once on `429`/`5xx` with `Retry-After` support.
 - **Scheduled Background Automations (`launchd`):**
   - Save any workflow as a one-click Automation card or attach an hourly/daily `launchd` schedule (`~/Library/LaunchAgents/com.localgravity.<id>.plist`).
   - Headless background runs execute via `backend/cli-run.mjs`, write isolated session logs, default to **Read-Only Audit mode** (`allowAutoRun: false` unless explicitly opted in), and post macOS notifications when done.
@@ -95,7 +97,7 @@ This builds **`/Applications/LocalGravity.app`**, signs it ad-hoc, and registers
 npm test
 ```
 
-Unit and integration tests cover atomic JSON state & concurrency, `SKILL.md` & Knowledge Base traversal safety, shell-chaining bypass detection, `inspect_media` frame/image extraction, SSE/NDJSON provider normalization, ReAct loop tool execution & compaction, and authenticated HTTP APIs.
+Unit and integration tests cover atomic JSON state & concurrency, `SKILL.md` & Knowledge Base traversal safety, starter-skill upgrade tracking, local skill-library discovery and import, shell-chaining bypass detection, `inspect_media` frame/image extraction, SSE/NDJSON provider normalization, transient provider retry, ReAct loop tool execution & compaction, and authenticated HTTP APIs.
 
 ---
 

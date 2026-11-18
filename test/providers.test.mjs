@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { fetchWithRetry } from '../backend/providers/http-retry.mjs';
 import { extractFallbackToolCalls, extractInlineThinking } from '../backend/providers/tool-parser.mjs';
 import { selectBestInstalledOllamaModel, streamOllamaChat } from '../backend/providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../backend/providers/openai-compat.mjs';
@@ -160,6 +161,56 @@ test('ollama, openai-compatible, and anthropic adapters stream thinking, text, a
     assert.equal(claudeRes.thinking, 'Check ');
     assert.equal(claudeRes.content, 'Claude ok');
     assert.equal(claudeRes.toolCalls[0].name, 'list_skills');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('fetchWithRetry retries transient provider errors once and leaves client errors alone', async () => {
+  let attempts = 0;
+  const flaky = async () => {
+    attempts += 1;
+    return attempts === 1
+      ? new Response('rate limited', { status: 429, headers: { 'retry-after': '0' } })
+      : new Response('ok', { status: 200 });
+  };
+  const recovered = await fetchWithRetry(flaky, 'http://mock.test', {}, { maxRetries: 1, baseDelayMs: 1 });
+  assert.equal(recovered.status, 200);
+  assert.equal(attempts, 2);
+
+  let clientAttempts = 0;
+  const unauthorized = async () => {
+    clientAttempts += 1;
+    return new Response('no', { status: 401 });
+  };
+  const failed = await fetchWithRetry(unauthorized, 'http://mock.test', {}, { maxRetries: 2, baseDelayMs: 1 });
+  assert.equal(failed.status, 401);
+  assert.equal(clientAttempts, 1);
+});
+
+test('openai-compatible adapter recovers from a 429 before streaming', async () => {
+  const origFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      return new Response('slow down', { status: 429, headers: { 'retry-after': '0' } });
+    }
+    return makeStreamResponse([
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: 'Recovered' } }] }) + '\n\n',
+      'data: [DONE]\n\n',
+    ]);
+  };
+
+  try {
+    const res = await streamOpenAIChat({
+      baseUrl: 'http://mock-oai.local/v1',
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      retryOptions: { maxRetries: 1, baseDelayMs: 1 },
+    });
+    assert.equal(attempts, 2);
+    assert.equal(res.content, 'Recovered');
   } finally {
     globalThis.fetch = origFetch;
   }

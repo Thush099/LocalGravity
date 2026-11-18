@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import { LEARNED_FIXES_DOC, normalizeToolCall } from '../agent/self-improver.mjs';
-import { listKnowledge, readKnowledge, saveKnowledge, searchKnowledge } from '../knowledge-engine.mjs';
-import { listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
+import { invalidateKnowledgeCache, listKnowledge, readKnowledge, saveKnowledge, searchKnowledge } from '../knowledge-engine.mjs';
+import { invalidateSkillsCache, listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
 import { getRuntimePaths } from '../state/paths.mjs';
 import { runCommandTool } from './exec-tool.mjs';
 import { buildCompactDiff, editFileTool, listDir, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
@@ -364,20 +364,37 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await listDir(args);
       case 'read_file':
         return await readFileTool(args);
-      case 'write_file':
-        return await writeFileTool(args);
-      case 'edit_file':
-        return await editFileTool(args);
+      case 'write_file': {
+        const result = await writeFileTool(args);
+        if (result.ok) {
+          invalidateSkillsCache(paths.skillsDir);
+          invalidateKnowledgeCache(paths.knowledgeDir);
+        }
+        return result;
+      }
+      case 'edit_file': {
+        const result = await editFileTool(args);
+        if (result.ok) {
+          invalidateSkillsCache(paths.skillsDir);
+          invalidateKnowledgeCache(paths.knowledgeDir);
+        }
+        return result;
+      }
       case 'search_files':
         return await searchFilesTool(args);
-      case 'run_command':
-        return await runCommandTool({
+      case 'run_command': {
+        const result = await runCommandTool({
           ...args,
           cwd: args.cwd || context.cwd,
           onStdout: context.onStdout,
           onStderr: context.onStderr,
           abortSignal: context.abortSignal,
         });
+        // Shell recipes and inline scripts can edit managed skills/knowledge files directly.
+        invalidateSkillsCache(paths.skillsDir);
+        invalidateKnowledgeCache(paths.knowledgeDir);
+        return result;
+      }
       case 'inspect_media':
         return await inspectMediaTool(args);
       case 'list_skills': {

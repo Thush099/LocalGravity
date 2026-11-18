@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { fetchWithRetry } from './http-retry.mjs';
 import {
   extractFallbackToolCalls,
   extractInlineThinking,
@@ -117,6 +118,7 @@ export async function streamOpenAIChat({
   signal,
   onEvent,
   extraHeaders = {},
+  retryOptions,
 }) {
   const endpoint = `${String(baseUrl || '').replace(/\/+$/, '')}/chat/completions`;
   const headers = {
@@ -134,12 +136,17 @@ export async function streamOpenAIChat({
     body.tools = tools;
   }
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  const res = await fetchWithRetry(
+    globalThis.fetch,
+    endpoint,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    },
+    retryOptions
+  );
 
   if (!res.ok) {
     const errText = await res.text();

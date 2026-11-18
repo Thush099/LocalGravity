@@ -25,11 +25,10 @@ import {
   selectBestInstalledOllamaModel,
 } from './providers/ollama.mjs';
 import { CLOUD_PRESETS } from './providers/openai-compat.mjs';
+import { importSkillsFromSource, listSkillSources } from './skill-sources.mjs';
 import {
   deleteSkill,
-  importExternalSkills,
   importSkillFromUrl,
-  listExternalSkills,
   refreshSkillFromUrl,
   listSkills,
   readSkill,
@@ -69,12 +68,37 @@ const MIME_TYPES = {
   '.png': 'image/png',
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+};
+
+// Model output is rendered as sanitized Markdown, but a strict script policy keeps any
+// injected HTML from becoming executable inside the token-authenticated app origin.
+const UI_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
 const uiAssetCache = new Map();
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -113,11 +137,22 @@ async function readJsonBody(req, limitBytes = 4 * 1024 * 1024) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > limitBytes) throw new Error('Request payload too large');
+    if (size > limitBytes) {
+      const err = new Error(`Request payload exceeds ${Math.round(limitBytes / 1024)} KB limit`);
+      err.statusCode = 413;
+      throw err;
+    }
     chunks.push(chunk);
   }
   const raw = Buffer.concat(chunks).toString('utf8').trim();
-  return raw ? JSON.parse(raw) : {};
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const err = new Error('Request body is not valid JSON');
+    err.statusCode = 400;
+    throw err;
+  }
 }
 
 function parseCookies(req) {
@@ -195,7 +230,12 @@ function maskConfigForClient(cfg) {
   return { config: rest, configuredKeys };
 }
 
-export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchFn = globalThis.fetch } = {}) {
+export function createAgentServer({
+  authToken,
+  paths = getRuntimePaths(),
+  fetchFn = globalThis.fetch,
+  skillHomeDir = os.homedir(),
+} = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
   const resolveRunApprovals = (runState, reason) => {
@@ -234,7 +274,12 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
             uiAssetCache.set(resolved, { mtimeMs: st.mtimeMs, data });
           }
           const ext = path.extname(resolved).toLowerCase();
-          res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+          const headers = {
+            ...SECURITY_HEADERS,
+            'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+          };
+          if (ext === '.html') headers['Content-Security-Policy'] = UI_CONTENT_SECURITY_POLICY;
+          res.writeHead(200, headers);
           res.end(data);
         } catch {
           res.writeHead(404).end('Not found');
@@ -474,15 +519,39 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
       }
 
       if (req.method === 'GET' && pathname === '/api/skills/external') {
-        const antigravitySkillsDir = path.join(os.homedir(), '.gemini', 'config', 'skills');
-        const skills = await listExternalSkills(antigravitySkillsDir);
-        return sendJson(res, 200, { ok: true, sourceDir: antigravitySkillsDir, skills });
+        const installed = await listSkills(paths);
+        const sources = await listSkillSources({
+          homeDir: skillHomeDir,
+          installedSlugs: installed.map((skill) => skill.slug),
+        });
+        const antigravity = sources.find((source) => source.id === 'antigravity') || { dir: '', skills: [] };
+        return sendJson(res, 200, {
+          ok: true,
+          sources,
+          sourceDir: antigravity.dir,
+          skills: antigravity.skills,
+        });
       }
 
-      if (req.method === 'POST' && pathname === '/api/skills/import-antigravity') {
+      if (
+        req.method === 'POST' &&
+        (pathname === '/api/skills/import-external' || pathname === '/api/skills/import-antigravity')
+      ) {
         const body = await readJsonBody(req);
-        const antigravitySkillsDir = path.join(os.homedir(), '.gemini', 'config', 'skills');
-        const imported = await importExternalSkills(antigravitySkillsDir, body.names, paths);
+        const sourceId = pathname.endsWith('import-antigravity')
+          ? 'antigravity'
+          : String(body.sourceId || '').trim();
+        const names = (Array.isArray(body.names) ? body.names : [])
+          .map((name) => String(name || '').trim())
+          .filter(Boolean)
+          .slice(0, 200);
+        if (!sourceId) {
+          return sendJson(res, 400, { ok: false, error: 'Choose a skill library to import from.' });
+        }
+        if (names.length === 0) {
+          return sendJson(res, 400, { ok: false, error: 'Select at least one skill to import.' });
+        }
+        const imported = await importSkillsFromSource(sourceId, names, { homeDir: skillHomeDir, paths });
         return sendJson(res, 200, { ok: true, imported });
       }
 
@@ -756,7 +825,7 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
       sendJson(res, 404, { ok: false, error: 'Endpoint not found' });
     } catch (err) {
       if (!res.headersSent) {
-        sendJson(res, 500, { ok: false, error: err.message });
+        sendJson(res, Number(err?.statusCode) || 500, { ok: false, error: err.message });
       } else if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
         res.end();

@@ -11,12 +11,19 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
   const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-api-'));
   const paths = getRuntimePaths(tmpHome);
   const authToken = 'secret-test-token-123';
+  await fs.mkdir(path.join(tmpHome, '.agents', 'skills', 'local-helper'), { recursive: true });
+  await fs.writeFile(
+    path.join(tmpHome, '.agents', 'skills', 'local-helper', 'SKILL.md'),
+    '---\nname: local-helper\ndescription: Helper from the local skill library\ntriggers: ["local"]\n---\n\n# Local helper\n\n1. Do the local thing.',
+    'utf8'
+  );
   const remoteSkillMarkdown =
     '---\nname: api-reviewer\ndescription: Review API contracts\ntriggers: ["api", "contract"]\n---\n\n# API review\n\n1. Check the contract.';
   const srv = createAgentServer({
     authToken,
     paths,
     fetchFn: async () => new Response(remoteSkillMarkdown),
+    skillHomeDir: tmpHome,
   });
   const { EventEmitter } = await import('node:events');
   const origFetch = globalThis.fetch;
@@ -109,6 +116,20 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.equal(health.ok, true);
     assert.ok(health.system.totalRamGb >= 1);
 
+    // The UI is served with a strict script policy and no-sniff headers
+    const uiRes = await fetch(`${base}/`);
+    assert.equal(uiRes.status, 200);
+    assert.match(uiRes.headers.get('content-security-policy') || '', /script-src 'self'/);
+    assert.equal(uiRes.headers.get('x-content-type-options'), 'nosniff');
+
+    // Malformed JSON is a client error, not a 500
+    const badJsonRes = await fetch(`${base}/api/models/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: '{not valid json',
+    });
+    assert.equal(badJsonRes.status, 400);
+
     // Model config saves keys and masks them on GET
     const saveCfgRes = await fetch(`${base}/api/models/config`, {
       method: 'POST',
@@ -146,6 +167,38 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
       await fetch(`${base}/api/skills`, { headers: { 'X-Auth-Token': authToken } })
     ).json();
     assert.ok(skillsList.skills.some((s) => s.slug === 'custom-reel'));
+
+    // Local skill libraries are browsable and importable
+    const externalRes = await fetch(`${base}/api/skills/external`, {
+      headers: { 'X-Auth-Token': authToken },
+    });
+    assert.equal(externalRes.status, 200);
+    const external = await externalRes.json();
+    const agentsSource = external.sources.find((source) => source.id === 'agents');
+    assert.ok(agentsSource);
+    assert.ok(
+      agentsSource.skills.some((skill) => skill.slug === 'local-helper' && skill.installed === false)
+    );
+
+    const importExternalRes = await fetch(`${base}/api/skills/import-external`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ sourceId: 'agents', names: ['local-helper'] }),
+    });
+    assert.equal(importExternalRes.status, 200);
+    const importExternalData = await importExternalRes.json();
+    assert.deepEqual(importExternalData.imported, ['local-helper']);
+    const skillsAfterLocalImport = await (
+      await fetch(`${base}/api/skills`, { headers: { 'X-Auth-Token': authToken } })
+    ).json();
+    assert.ok(skillsAfterLocalImport.skills.some((s) => s.slug === 'local-helper'));
+
+    const badExternalRes = await fetch(`${base}/api/skills/import-external`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ sourceId: 'agents', names: [] }),
+    });
+    assert.equal(badExternalRes.status, 400);
 
     // Import a skill from a GitHub URL through the injected fetch implementation
     const importUrlRes = await fetch(`${base}/api/skills/import-url`, {

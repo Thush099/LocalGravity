@@ -15,6 +15,7 @@ import {
   importSkillFromUrl,
   normalizeSkillUrl,
   refreshSkillFromUrl,
+  syncStarterSkillsFrom,
 } from '../backend/skills-engine.mjs';
 
 test('skills engine syncs starters without clobbering edits, rejects path traversal, and imports skills', async () => {
@@ -120,6 +121,47 @@ test('skills engine syncs starters without clobbering edits, rejects path traver
     importSkillFromUrl('http://127.0.0.1:8787/SKILL.md', { fetchFn: noFetch, paths })
   );
   assert.equal(fetched, false);
+
+  await fs.rm(tmpHome, { recursive: true, force: true });
+});
+
+test('starter sync updates untouched skills, preserves user edits, and honors deletions', async () => {
+  const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-starter-sync-'));
+  const paths = getRuntimePaths(path.join(tmpHome, 'runtime'));
+  const starterDir = path.join(tmpHome, 'starter');
+  const starterSkillDir = path.join(starterDir, 'evolving-skill');
+
+  const writeStarter = async (version) => {
+    await fs.mkdir(starterSkillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(starterSkillDir, 'SKILL.md'),
+      `---\nname: evolving-skill\ndescription: Starter version ${version}\ntriggers: ["evolve"]\n---\n\n# Version ${version}\n`,
+      'utf8'
+    );
+  };
+
+  await writeStarter('one');
+  assert.deepEqual(await syncStarterSkillsFrom(starterDir, paths), ['evolving-skill']);
+  assert.match((await readSkill('evolving-skill', paths)).content, /Version one/);
+
+  // An untouched starter copy picks up shipped improvements.
+  await writeStarter('two');
+  assert.deepEqual(await syncStarterSkillsFrom(starterDir, paths), ['evolving-skill']);
+  assert.match((await readSkill('evolving-skill', paths)).content, /Version two/);
+
+  // A user-edited starter is never overwritten.
+  await saveSkill(
+    { name: 'evolving-skill', description: 'My version', triggers: ['mine'], content: '# Mine' },
+    paths
+  );
+  await writeStarter('three');
+  assert.deepEqual(await syncStarterSkillsFrom(starterDir, paths), []);
+  assert.match((await readSkill('evolving-skill', paths)).content, /Mine/);
+
+  // Deleting a starter keeps it deleted on later syncs.
+  assert.equal(await deleteSkill('evolving-skill', paths), true);
+  await syncStarterSkillsFrom(starterDir, paths);
+  assert.equal(await readSkill('evolving-skill', paths), null);
 
   await fs.rm(tmpHome, { recursive: true, force: true });
 });

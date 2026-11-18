@@ -1475,47 +1475,146 @@ function openImportUrlModal() {
   };
 }
 
-async function openImportAntigravityModal() {
-  const res = await apiRequest('/api/skills/external');
-  const items = res.skills || [];
+async function openSkillLibraryModal() {
+  openModal('Skill Library', '<p class="section-hint">Scanning the skill libraries on this Mac...</p>');
+  let res;
+  try {
+    res = await apiRequest('/api/skills/external');
+  } catch (err) {
+    closeModal();
+    showToast(err.message);
+    return;
+  }
+
+  const sources = (res.sources || []).filter((source) => Array.isArray(source.skills));
+  if (sources.length === 0) {
+    showToast('No local skill libraries found');
+    return;
+  }
+
+  let activeId =
+    sources.find((source) => source.skills.some((skill) => !skill.installed))?.id || sources[0].id;
+  let query = '';
+
   openModal(
-    'Import Skills from Antigravity',
-    items.length === 0
-      ? `<p class="section-hint">No external skills found in <code>${escapeHtml(res.sourceDir)}</code>.</p>`
-      : `
-        <p class="section-hint">Select skills from <code>${escapeHtml(res.sourceDir)}</code> to copy into LocalGravity:</p>
-        <div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
-          ${items
-            .map(
-              (s) => `
-            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
-              <input type="checkbox" class="ag-skill-cb" value="${escapeHtml(s.slug)}" />
-              <div><strong>${escapeHtml(s.slug)}</strong><div class="status-sub">${escapeHtml(s.description)}</div></div>
-            </label>`
-            )
-            .join('')}
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="secondary-btn" id="m-cancel">Cancel</button>
-          <button type="button" class="primary-btn" id="m-do-import">Import selected</button>
-        </div>`
+    'Skill Library',
+    `
+    <p class="section-hint">
+      Copy skills already installed on this Mac into LocalGravity. Skills you already have are marked and disabled.
+    </p>
+    <div id="skill-library-tabs" class="skill-library-tabs"></div>
+    <input id="m-skill-lib-search" class="text-input" type="search" placeholder="Filter skills..." />
+    <div id="skill-library-meta" class="status-sub"></div>
+    <div id="skill-library-list" class="skill-library-list"></div>
+    <div class="modal-footer">
+      <button type="button" class="secondary-btn" id="m-cancel">Cancel</button>
+      <button type="button" class="primary-btn" id="m-do-import">Import selected</button>
+    </div>`
   );
-  const cancelBtn = $('#m-cancel');
-  if (cancelBtn) cancelBtn.onclick = closeModal;
+
+  const tabRow = $('#skill-library-tabs');
+  const listEl = $('#skill-library-list');
+  const metaEl = $('#skill-library-meta');
   const importBtn = $('#m-do-import');
-  if (importBtn) {
-    importBtn.onclick = async () => {
-      const names = $$('.ag-skill-cb:checked').map((cb) => cb.value);
-      if (names.length === 0) return;
-      const imp = await apiRequest('/api/skills/import-antigravity', {
+  const searchInput = $('#m-skill-lib-search');
+
+  const activeSource = () => sources.find((source) => source.id === activeId) || sources[0];
+
+  const updateImportButton = () => {
+    const count = $$('.lib-skill-cb:checked').length;
+    importBtn.disabled = count === 0;
+    importBtn.textContent = count > 0 ? `Import ${count} skill${count === 1 ? '' : 's'}` : 'Import selected';
+  };
+
+  const renderList = () => {
+    const source = activeSource();
+    const needle = query.toLowerCase();
+    const matches = source.skills.filter(
+      (skill) =>
+        !needle ||
+        skill.slug.toLowerCase().includes(needle) ||
+        String(skill.description || '').toLowerCase().includes(needle)
+    );
+    const shown = matches.slice(0, 250);
+    metaEl.textContent = `${source.skills.length} skill${source.skills.length === 1 ? '' : 's'} in ${source.dir}${matches.length > shown.length ? ` (showing first ${shown.length})` : ''}`;
+
+    if (source.skills.length === 0) {
+      listEl.innerHTML = `<div class="status-sub">No skills found in <code>${escapeHtml(source.dir)}</code>.</div>`;
+      return;
+    }
+    if (shown.length === 0) {
+      listEl.innerHTML = '<div class="status-sub">No skills match that filter.</div>';
+      return;
+    }
+
+    listEl.innerHTML = shown
+      .map(
+        (skill) => `
+        <label class="skill-library-row${skill.installed ? ' installed' : ''}">
+          <input type="checkbox" class="lib-skill-cb" value="${escapeHtml(skill.slug)}" ${skill.installed ? 'disabled' : ''} />
+          <span class="skill-library-copy">
+            <strong>${escapeHtml(skill.slug)}</strong>
+            ${skill.installed ? '<span class="card-tag">Installed</span>' : ''}
+            <span class="status-sub">${escapeHtml(skill.description || 'No description')}</span>
+          </span>
+        </label>`
+      )
+      .join('');
+    listEl.querySelectorAll('.lib-skill-cb').forEach((cb) => cb.addEventListener('change', updateImportButton));
+  };
+
+  const renderTabs = () => {
+    tabRow.innerHTML = sources
+      .map((source) => {
+        const fresh = source.skills.filter((skill) => !skill.installed).length;
+        return `<button type="button" class="skill-library-tab${source.id === activeId ? ' active' : ''}" data-source="${escapeHtml(source.id)}">${escapeHtml(source.label)} <span>${fresh}</span></button>`;
+      })
+      .join('');
+    tabRow.querySelectorAll('.skill-library-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeId = btn.dataset.source;
+        renderTabs();
+        renderList();
+        updateImportButton();
+      });
+    });
+  };
+
+  importBtn.disabled = true;
+  importBtn.textContent = 'Import selected';
+  importBtn.onclick = async () => {
+    const names = $$('.lib-skill-cb:checked').map((cb) => cb.value);
+    if (names.length === 0) return;
+    importBtn.disabled = true;
+    importBtn.textContent = 'Importing...';
+    try {
+      const imp = await apiRequest('/api/skills/import-external', {
         method: 'POST',
-        body: JSON.stringify({ names }),
+        body: JSON.stringify({ sourceId: activeId, names }),
       });
       closeModal();
       await loadSkills();
-      showToast(`Imported ${imp.imported.length} skill(s)`);
-    };
-  }
+      showToast(`Imported ${imp.imported.length} skill${imp.imported.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      showToast(err.message);
+      importBtn.disabled = false;
+      updateImportButton();
+    }
+  };
+
+  $('#m-cancel').onclick = closeModal;
+  let searchTimer = null;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      query = searchInput.value.trim();
+      renderList();
+      updateImportButton();
+    }, 120);
+  });
+  renderTabs();
+  renderList();
+  updateImportButton();
 }
 
 async function refreshHealth() {
@@ -1726,7 +1825,7 @@ function wireEvents() {
 
   $('#new-skill-btn').addEventListener('click', () => openSkillModal(null));
   $('#import-url-btn').addEventListener('click', openImportUrlModal);
-  $('#import-ag-skills-btn').addEventListener('click', openImportAntigravityModal);
+  $('#skill-library-btn').addEventListener('click', openSkillLibraryModal);
   $('#open-learned-fixes-btn')?.addEventListener('click', openLearnedFixesEditor);
   $('#new-knowledge-btn').addEventListener('click', () => openKnowledgeModal(null));
   $('#upload-knowledge-btn').addEventListener('click', () => $('#knowledge-file-input').click());

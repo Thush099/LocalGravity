@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getRuntimePaths, getStarterSkillsDir } from './state/paths.mjs';
@@ -110,6 +111,20 @@ async function copyDirMissingOnly(srcDir, destDir) {
   }
 }
 
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function listRelativeFiles(dir, prefix = '') {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = [];
@@ -136,13 +151,68 @@ async function getStarterNamesSet() {
   return cachedStarterNames;
 }
 
+const SEED_MARKER_FILE = '.seeded-starters.json';
+
+function hashContent(text) {
+  return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex');
+}
+
+async function fileExists(target) {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function copyMissingExtraFiles(srcDir, destDir) {
+  let copied = 0;
+  await fs.mkdir(destDir, { recursive: true });
+  const entries = await fs.readdir(srcDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === 'SKILL.md') continue;
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copied += await copyMissingExtraFiles(srcPath, destPath);
+    } else if (entry.isFile() && !(await fileExists(destPath))) {
+      await fs.copyFile(srcPath, destPath);
+      copied += 1;
+    }
+  }
+  return copied;
+}
+
+async function loadSeedState(markerPath) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(markerPath, 'utf8'));
+    if (Array.isArray(parsed)) {
+      // Legacy marker: original hashes are unknown, so adopt the installed copies safely.
+      return {
+        starters: Object.fromEntries(
+          parsed.filter((slug) => typeof slug === 'string' && slug).map((slug) => [slug, null])
+        ),
+      };
+    }
+    if (parsed && typeof parsed === 'object' && parsed.starters && typeof parsed.starters === 'object') {
+      return { starters: { ...parsed.starters } };
+    }
+  } catch {
+    // No marker yet
+  }
+  return { starters: {} };
+}
+
 /**
- * Copy missing starter skills into the user's skills directory once per starter slug so user deletions stay deleted.
+ * Sync starter skills from a specific directory, tracking content hashes so shipped
+ * improvements reach untouched installs while user edits and deletions are preserved.
  */
-export async function syncStarterSkills(paths = getRuntimePaths()) {
-  const starterDir = getStarterSkillsDir();
+export async function syncStarterSkillsFrom(starterDir, paths = getRuntimePaths()) {
+  cachedStarterNames = null;
   await fs.mkdir(paths.skillsDir, { recursive: true });
   const synced = [];
+
   let entries = [];
   try {
     entries = await fs.readdir(starterDir, { withFileTypes: true });
@@ -150,44 +220,84 @@ export async function syncStarterSkills(paths = getRuntimePaths()) {
     return synced;
   }
 
-  const seededMarkerPath = path.join(paths.root, '.seeded-starters.json');
-  let seededSet = new Set();
-  try {
-    const raw = await fs.readFile(seededMarkerPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) seededSet = new Set(parsed);
-  } catch {
-    seededSet = new Set();
-  }
-
+  const markerPath = path.join(paths.root, SEED_MARKER_FILE);
+  const state = await loadSeedState(markerPath);
   let markerDirty = false;
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const slug = sanitizeSkillSlug(entry.name);
-    if (seededSet.has(slug)) continue;
+    const srcSkillDir = path.join(starterDir, slug);
+    const starterMdPath = path.join(srcSkillDir, 'SKILL.md');
+    const starterRaw = await fs.readFile(starterMdPath, 'utf8').catch(() => null);
+    if (starterRaw === null) continue;
+
+    const starterHash = hashContent(starterRaw);
     const destSkillDir = path.join(paths.skillsDir, slug);
-    const destMd = path.join(destSkillDir, 'SKILL.md');
-    let exists = false;
-    try {
-      await fs.access(destMd);
-      exists = true;
-    } catch {
-      exists = false;
-    }
-    if (!exists) {
-      await copyDirMissingOnly(path.join(starterDir, slug), destSkillDir);
+    const destMdPath = path.join(destSkillDir, 'SKILL.md');
+    const hasRecord = Object.prototype.hasOwnProperty.call(state.starters, slug);
+    const recorded = hasRecord ? state.starters[slug] : undefined;
+
+    if (!(await fileExists(destMdPath))) {
+      // A recorded starter whose folder is gone was deleted by the user: keep it deleted.
+      if (hasRecord) continue;
+      await copyDirMissingOnly(srcSkillDir, destSkillDir);
+      state.starters[slug] = hashContent(await fs.readFile(destMdPath, 'utf8'));
       synced.push(slug);
+      markerDirty = true;
+      continue;
     }
-    seededSet.add(slug);
-    markerDirty = true;
+
+    const destHash = hashContent(await fs.readFile(destMdPath, 'utf8'));
+
+    if (!hasRecord || recorded === null) {
+      state.starters[slug] = destHash === starterHash ? starterHash : destHash;
+      markerDirty = true;
+      continue;
+    }
+
+    if (destHash !== recorded) {
+      // The user edited this starter; never overwrite their version.
+      continue;
+    }
+
+    if (destHash !== starterHash) {
+      await fs.writeFile(destMdPath, starterRaw, 'utf8');
+      state.starters[slug] = starterHash;
+      synced.push(slug);
+      markerDirty = true;
+    }
+
+    // New helper scripts shipped with a starter should appear even when SKILL.md is unchanged.
+    const addedFiles = await copyMissingExtraFiles(srcSkillDir, destSkillDir);
+    if (addedFiles > 0 && !synced.includes(slug)) synced.push(slug);
   }
 
   if (markerDirty) {
     await fs.mkdir(paths.root, { recursive: true });
-    await fs.writeFile(seededMarkerPath, JSON.stringify([...seededSet], null, 2) + '\n', 'utf8');
-    skillsListCache.delete(paths.skillsDir);
+    await fs.writeFile(
+      markerPath,
+      `${JSON.stringify({ version: 2, starters: state.starters }, null, 2)}\n`,
+      'utf8'
+    );
   }
+  if (synced.length > 0) skillsListCache.delete(paths.skillsDir);
   return synced;
+}
+
+/**
+ * Copy missing starter skills into the user's skills directory, updating untouched
+ * starter copies when the app ships improved instructions.
+ */
+export async function syncStarterSkills(paths = getRuntimePaths()) {
+  return syncStarterSkillsFrom(getStarterSkillsDir(), paths);
+}
+
+/**
+ * Drop the memoized skill index so a write/command outside the engine is picked up next read.
+ */
+export function invalidateSkillsCache(skillsDir) {
+  skillsListCache.delete(skillsDir);
 }
 
 export async function listSkills(paths = getRuntimePaths()) {
@@ -202,26 +312,26 @@ export async function listSkills(paths = getRuntimePaths()) {
   ]);
 
   const dirEntries = entries.filter((e) => e.isDirectory());
-  const loaded = await Promise.all(
-    dirEntries.map(async (entry) => {
-      const skillMdPath = path.join(paths.skillsDir, entry.name, 'SKILL.md');
-      try {
-        const raw = await fs.readFile(skillMdPath, 'utf8');
-        const parsed = parseFrontmatter(raw);
-        return {
-          name: parsed.name || entry.name,
-          slug: entry.name,
-          description: parsed.description || 'No description provided.',
-          triggers: parsed.triggers,
-          source: parsed.source || '',
-          sourcePath: skillMdPath,
-          isStarter: starterNames.has(entry.name),
-        };
-      } catch {
-        return null;
-      }
-    })
-  );
+  // Large imported libraries can contain hundreds of skills; cap file reads so macOS
+  // does not hit its open-file descriptor limit.
+  const loaded = await mapWithConcurrency(dirEntries, 32, async (entry) => {
+    const skillMdPath = path.join(paths.skillsDir, entry.name, 'SKILL.md');
+    try {
+      const raw = await fs.readFile(skillMdPath, 'utf8');
+      const parsed = parseFrontmatter(raw);
+      return {
+        name: parsed.name || entry.name,
+        slug: entry.name,
+        description: parsed.description || 'No description provided.',
+        triggers: parsed.triggers,
+        source: parsed.source || '',
+        sourcePath: skillMdPath,
+        isStarter: starterNames.has(entry.name),
+      };
+    } catch {
+      return null;
+    }
+  });
 
   const skills = loaded.filter(Boolean).sort((a, b) => a.slug.localeCompare(b.slug));
   skillsListCache.set(paths.skillsDir, skills);
@@ -316,24 +426,23 @@ export async function deleteSkill(name, paths = getRuntimePaths()) {
 export async function listExternalSkills(sourceDir) {
   try {
     const entries = await fs.readdir(sourceDir, { withFileTypes: true });
-    const found = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    const candidates = entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink());
+    const loaded = await mapWithConcurrency(candidates, 32, async (entry) => {
       const mdPath = path.join(sourceDir, entry.name, 'SKILL.md');
       try {
         const raw = await fs.readFile(mdPath, 'utf8');
         const parsed = parseFrontmatter(raw);
-        found.push({
+        return {
           slug: entry.name,
           name: parsed.name || entry.name,
           description: parsed.description || '',
-        });
+        };
       } catch {
         // Ignore directories without SKILL.md
+        return null;
       }
-    }
-    found.sort((a, b) => a.slug.localeCompare(b.slug));
-    return found;
+    });
+    return loaded.filter(Boolean).sort((a, b) => a.slug.localeCompare(b.slug));
   } catch {
     return [];
   }

@@ -6,6 +6,13 @@ import { formatFrontmatter, parseFrontmatter } from './skills-engine.mjs';
 const KNOWLEDGE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/;
 const knowledgeDirCache = new Map();
 
+/**
+ * Drop the memoized knowledge index so external edits are reflected on the next read.
+ */
+export function invalidateKnowledgeCache(knowledgeDir) {
+  knowledgeDirCache.delete(knowledgeDir);
+}
+
 export function sanitizeKnowledgeName(name) {
   if (typeof name !== 'string' || !KNOWLEDGE_NAME_RE.test(name)) {
     throw new Error(
