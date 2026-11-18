@@ -28,7 +28,10 @@
         </button>
 
         <nav class="main-nav" aria-label="Primary">
-          <button type="button" class="nav-btn active" data-view="agent">Agent</button>
+          <button type="button" class="nav-btn active" data-view="dashboard">Dashboard</button>
+          <button type="button" class="nav-btn" data-view="agent">Agent</button>
+          <button type="button" class="nav-btn" data-view="monitor">System Monitor</button>
+          <button type="button" class="nav-btn" data-view="schedule">Timetable</button>
           <button type="button" class="nav-btn" data-view="skills">Skills & Knowledge</button>
           <button type="button" class="nav-btn" data-view="automations">Automations</button>
           <button type="button" class="nav-btn" data-view="settings">Models & Settings</button>
@@ -59,7 +62,7 @@
 
       <main class="workspace">
         <!-- VIEW: AGENT -->
-        <section id="view-agent" class="view active">
+        <section id="view-agent" class="view">
           <header class="workspace-header">
             <div class="header-left">
               <button
@@ -133,7 +136,7 @@
                   <div class="welcome-badges">
                     <span class="welcome-badge"><span class="status-dot online" aria-hidden="true"></span> On-device</span>
                     <span class="welcome-badge">Full file access</span>
-                    <span class="welcome-badge">28 starter skills</span>
+                    <span class="welcome-badge">30 starter skills</span>
                   </div>
                 </div>
                 <div class="welcome-orbit" aria-hidden="true">
@@ -206,6 +209,144 @@
             <div class="composer-hint">
               <span><kbd>↵</kbd> send <span class="hint-divider">·</span> <kbd>⇧↵</kbd> newline</span>
               <span class="composer-local"><span class="status-dot online" aria-hidden="true"></span> Local by default</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW: DASHBOARD -->
+        <section id="view-dashboard" class="view active">
+          <header class="dash-header">
+            <div class="dash-clock-block">
+              <div id="dash-clock" class="dash-clock" aria-label="Current time">--:--:--</div>
+              <div id="dash-date" class="dash-date"></div>
+            </div>
+            <div class="dash-greeting-block">
+              <h1 id="dash-greeting">Welcome back</h1>
+              <p id="dash-summary" class="view-sub">Loading your day…</p>
+            </div>
+          </header>
+
+          <div id="dash-stats" class="stat-grid" aria-live="polite">
+            <div class="stat-tile"><span class="stat-label">CPU</span><span class="stat-value" id="dash-cpu">—</span><div class="usage-bar"><span id="dash-cpu-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">Memory</span><span class="stat-value" id="dash-mem">—</span><div class="usage-bar"><span id="dash-mem-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">GPU</span><span class="stat-value" id="dash-gpu">—</span><div class="usage-bar"><span id="dash-gpu-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">Storage</span><span class="stat-value" id="dash-disk">—</span><div class="usage-bar"><span id="dash-disk-bar"></span></div></div>
+          </div>
+
+          <div class="dash-columns">
+            <div class="dash-card">
+              <div class="dash-card-head">
+                <h3>Today's agenda</h3>
+                <button id="dash-open-timetable" class="secondary-btn" type="button">Open timetable</button>
+              </div>
+              <ul id="dash-agenda" class="agenda-list"></ul>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-head"><h3>Quick actions</h3></div>
+              <div class="quick-action-grid">
+                <button id="dash-new-task" class="quick-action-btn" type="button">New agent task</button>
+                <button id="dash-add-event" class="quick-action-btn" type="button">Add to timetable</button>
+                <button id="dash-set-reminder" class="quick-action-btn" type="button">Set a reminder</button>
+                <button id="dash-open-monitor" class="quick-action-btn" type="button">System monitor</button>
+              </div>
+              <div class="dash-card-head dash-card-head-spaced"><h3>Mac snapshot</h3></div>
+              <div id="dash-snapshot" class="dash-snapshot">Loading…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW: SYSTEM MONITOR -->
+        <section id="view-monitor" class="view">
+          <header class="view-header">
+            <div>
+              <h2>System Monitor</h2>
+              <p class="view-sub">Live CPU, memory, GPU, storage, and top processes for this Mac. Read-only sampling.</p>
+            </div>
+            <div class="toolbar-actions">
+              <label class="field-inline"><input id="monitor-autorefresh" type="checkbox" checked /> Auto-refresh</label>
+              <button id="monitor-refresh-btn" class="secondary-btn" type="button">Refresh now</button>
+            </div>
+          </header>
+
+          <div id="monitor-updated" class="status-sub" aria-live="polite">Not sampled yet.</div>
+          <div id="monitor-stats" class="stat-grid">
+            <div class="stat-tile"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">GPU</span><span class="stat-value" id="mon-gpu">—</span><div class="usage-bar"><span id="mon-gpu-bar"></span></div></div>
+            <div class="stat-tile"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
+          </div>
+
+          <div class="monitor-grid">
+            <div class="dash-card">
+              <div class="dash-card-head"><h3>Details</h3></div>
+              <dl id="monitor-details" class="monitor-details"></dl>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-head"><h3>Storage volumes</h3></div>
+              <table class="data-table">
+                <thead><tr><th>Volume</th><th>Used</th><th>Free</th><th>Used %</th></tr></thead>
+                <tbody id="monitor-disks"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="dash-card">
+            <div class="dash-card-head"><h3>Top processes</h3><span class="status-sub">sorted by CPU</span></div>
+            <table class="data-table">
+              <thead><tr><th>Process</th><th>PID</th><th>CPU %</th><th>Memory %</th><th>Memory</th></tr></thead>
+              <tbody id="monitor-processes"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- VIEW: TIMETABLE -->
+        <section id="view-schedule" class="view">
+          <header class="view-header">
+            <div>
+              <h2>Timetable</h2>
+              <p class="view-sub">Recurring weekly blocks: classes, meetings, workouts, focus time. The agent can add entries too.</p>
+            </div>
+          </header>
+
+          <div class="schedule-columns">
+            <form id="schedule-form" class="dash-card schedule-form">
+              <h3>Add an entry</h3>
+              <label class="field-block">
+                <span>Title</span>
+                <input id="sched-title" class="text-input" type="text" maxlength="120" placeholder="Deep work" required />
+              </label>
+              <div class="field-row">
+                <label class="field-block">
+                  <span>Start (24h)</span>
+                  <input id="sched-time" class="text-input" type="time" required />
+                </label>
+                <label class="field-block">
+                  <span>Minutes</span>
+                  <input id="sched-duration" class="text-input" type="number" min="5" max="1440" value="30" />
+                </label>
+              </div>
+              <fieldset class="day-picker">
+                <legend>Repeats on</legend>
+                <label><input type="checkbox" name="sched-day" value="1" checked /> Mon</label>
+                <label><input type="checkbox" name="sched-day" value="2" checked /> Tue</label>
+                <label><input type="checkbox" name="sched-day" value="3" checked /> Wed</label>
+                <label><input type="checkbox" name="sched-day" value="4" checked /> Thu</label>
+                <label><input type="checkbox" name="sched-day" value="5" checked /> Fri</label>
+                <label><input type="checkbox" name="sched-day" value="6" /> Sat</label>
+                <label><input type="checkbox" name="sched-day" value="0" /> Sun</label>
+              </fieldset>
+              <label class="field-block">
+                <span>Notes (optional)</span>
+                <textarea id="sched-notes" class="text-input" rows="2" maxlength="500" placeholder="Bring the design review notes"></textarea>
+              </label>
+              <button class="primary-btn" type="submit">Save entry</button>
+            </form>
+            <div class="dash-card">
+              <div class="dash-card-head">
+                <h3>Week at a glance</h3>
+                <button id="sched-refresh-btn" class="secondary-btn" type="button">Refresh</button>
+              </div>
+              <div id="schedule-week" class="schedule-week"></div>
             </div>
           </div>
         </section>

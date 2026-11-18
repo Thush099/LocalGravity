@@ -2,11 +2,20 @@ import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } 
 import { escapeHtml, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { buildPaletteItems } from './lib/palette.js';
+import {
+  formatClockDate,
+  formatClockTime,
+  formatMinutesUntil,
+  formatUptime,
+  greetingFor,
+  nextEntryFrom,
+  usageTone,
+} from './lib/dashboard.js';
 
 const SIDEBAR_STORAGE_KEY = 'lg-sidebar-collapsed';
 
 const state = {
-  view: 'agent',
+  view: 'dashboard',
   sidebarCollapsed: false,
   subtab: 'skills',
   health: null,
@@ -33,6 +42,10 @@ const state = {
   paletteOpen: false,
   paletteItems: [],
   paletteIndex: 0,
+  metrics: null,
+  schedule: [],
+  scheduleToday: [],
+  monitorTimer: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -152,13 +165,258 @@ function switchView(viewName) {
   state.view = viewName;
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === viewName));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${viewName}`));
-  if (viewName === 'skills') {
+  if (viewName === 'dashboard') {
+    refreshSystemMetrics();
+    loadSchedule();
+  } else if (viewName === 'monitor') {
+    refreshSystemMetrics();
+  } else if (viewName === 'schedule') {
+    loadSchedule();
+  } else if (viewName === 'skills') {
     loadSkills();
     loadKnowledge();
   } else if (viewName === 'automations') {
     loadAutomations();
   } else if (viewName === 'settings') {
     refreshHealth();
+  }
+  updateMonitorAutoRefresh();
+}
+
+// ---- Dashboard, System Monitor, and Timetable ----
+
+function tickClock() {
+  const clockEl = $('#dash-clock');
+  if (!clockEl) return;
+  const now = new Date();
+  clockEl.textContent = formatClockTime(now);
+  $('#dash-date').textContent = formatClockDate(now);
+  $('#dash-greeting').textContent = greetingFor(now);
+}
+
+function setUsageBar(barId, valueId, percent, valueLabel) {
+  const bar = $(barId);
+  const label = $(valueId);
+  const p = Number.isFinite(Number(percent)) ? Math.max(0, Math.min(100, Number(percent))) : null;
+  if (bar) {
+    bar.style.width = p === null ? '0%' : `${p}%`;
+    bar.dataset.tone = p === null ? 'ok' : usageTone(p);
+  }
+  if (label) label.textContent = valueLabel ?? (p === null ? '—' : `${Math.round(p)}%`);
+}
+
+function topDisk(metrics) {
+  const disks = metrics?.disks || [];
+  return disks.find((d) => d.mount === '/System/Volumes/Data') || disks.find((d) => d.mount === '/') || disks[0] || null;
+}
+
+function renderDashboard() {
+  const metrics = state.metrics;
+  const mem = metrics?.memory || {};
+  const gpu = metrics?.gpu;
+  const disk = topDisk(metrics);
+  setUsageBar('#dash-cpu-bar', '#dash-cpu', metrics?.cpu?.percent);
+  setUsageBar(
+    '#dash-mem-bar',
+    '#dash-mem',
+    mem.usedPercent,
+    mem.totalBytes ? `${formatBytes(mem.usedBytes || 0)} / ${formatBytes(mem.totalBytes)}` : '—'
+  );
+  setUsageBar('#dash-gpu-bar', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—');
+  setUsageBar(
+    '#dash-disk-bar',
+    '#dash-disk',
+    disk?.usedPercent,
+    disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
+  );
+
+  const now = new Date();
+  const next = nextEntryFrom(state.scheduleToday, now);
+  const remaining = state.scheduleToday.filter((e) => e.startMinutes + (e.durationMin || 0) > now.getHours() * 60 + now.getMinutes()).length;
+  const summary = $('#dash-summary');
+  if (summary) {
+    summary.textContent = next
+      ? `${remaining} item${remaining === 1 ? '' : 's'} left today · ${next.inProgress ? `now: ${next.entry.title}` : `next: ${next.entry.title} ${formatMinutesUntil(next.minutesUntil)}`}`
+      : `${remaining} item${remaining === 1 ? '' : 's'} left today · nothing else scheduled`;
+  }
+
+  const snapshot = $('#dash-snapshot');
+  if (snapshot) {
+    const parts = [];
+    if (metrics?.uptimeSeconds != null) parts.push(`Uptime ${formatUptime(metrics.uptimeSeconds)}`);
+    if (metrics?.loadAvg) parts.push(`Load ${metrics.loadAvg.join(' / ')}`);
+    if (metrics?.cpu?.cores) parts.push(`${metrics.cpu.cores} cores`);
+    const top = metrics?.processes?.[0];
+    if (top) parts.push(`Busiest: ${top.command} (${top.cpuPercent}%)`);
+    snapshot.textContent = parts.join(' · ') || 'Snapshot unavailable.';
+  }
+  renderAgenda();
+}
+
+function renderAgenda() {
+  const list = $('#dash-agenda');
+  if (!list) return;
+  const items = state.scheduleToday || [];
+  if (items.length === 0) {
+    list.innerHTML = '<li class="agenda-empty">Nothing scheduled today. Add blocks in the Timetable.</li>';
+    return;
+  }
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  list.innerHTML = items
+    .map((e) => {
+      const end = e.startMinutes + (e.durationMin || 0);
+      const done = currentMinutes >= end;
+      const active = currentMinutes >= e.startMinutes && currentMinutes < end;
+      return `<li class="agenda-item${active ? ' active' : ''}${done ? ' done' : ''}">
+        <span class="agenda-time">${escapeHtml(e.time)}</span>
+        <span class="agenda-title">${escapeHtml(e.title)}</span>
+        <span class="agenda-meta">${escapeHtml(String(e.durationMin || 30))} min</span>
+      </li>`;
+    })
+    .join('');
+}
+
+function renderMonitor() {
+  const metrics = state.metrics;
+  if (!metrics) return;
+  const mem = metrics.memory || {};
+  const gpu = metrics.gpu;
+  const disk = topDisk(metrics);
+  setUsageBar('#mon-cpu-bar', '#mon-cpu', metrics.cpu?.percent, metrics.cpu?.percent == null ? '—' : `${metrics.cpu.percent}%`);
+  setUsageBar(
+    '#mon-mem-bar',
+    '#mon-mem',
+    mem.usedPercent,
+    mem.totalBytes ? `${formatBytes(mem.usedBytes || 0)} / ${formatBytes(mem.totalBytes)}` : '—'
+  );
+  setUsageBar('#mon-gpu-bar', '#mon-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—');
+  setUsageBar(
+    '#mon-disk-bar',
+    '#mon-disk',
+    disk?.usedPercent,
+    disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
+  );
+
+  const details = $('#monitor-details');
+  if (details) {
+    const rows = [
+      ['CPU cores', metrics.cpu?.cores ? String(metrics.cpu.cores) : '—'],
+      ['Load average', metrics.loadAvg ? metrics.loadAvg.join(' / ') : '—'],
+      ['Uptime', metrics.uptimeSeconds != null ? formatUptime(metrics.uptimeSeconds) : '—'],
+      ['Wired memory', mem.wiredBytes != null ? formatBytes(mem.wiredBytes) : '—'],
+      ['Compressed memory', mem.compressedBytes != null ? formatBytes(mem.compressedBytes) : '—'],
+      ['GPU', gpu ? `${escapeHtml(gpu.name)}${gpu.inUseMemoryBytes ? ` · ${formatBytes(gpu.inUseMemoryBytes)} in use` : ''}` : 'No GPU stats exposed'],
+    ];
+    details.innerHTML = rows
+      .map(([k, v]) => `<div class="detail-row"><dt>${escapeHtml(k)}</dt><dd>${v.startsWith('No GPU') ? escapeHtml(v) : v}</dd></div>`)
+      .join('');
+  }
+
+  const disksBody = $('#monitor-disks');
+  if (disksBody) {
+    disksBody.innerHTML = (metrics.disks || [])
+      .map(
+        (d) => `<tr>
+          <td>${escapeHtml(d.mount)}</td>
+          <td>${formatBytes(d.usedBytes)}</td>
+          <td>${formatBytes(d.availableBytes)}</td>
+          <td><span class="usage-pill" data-tone="${usageTone(d.usedPercent)}">${d.usedPercent}%</span></td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="4">No volumes reported.</td></tr>';
+  }
+
+  const procsBody = $('#monitor-processes');
+  if (procsBody) {
+    procsBody.innerHTML = (metrics.processes || [])
+      .map(
+        (p) => `<tr>
+          <td>${escapeHtml(p.command)}</td>
+          <td>${p.pid}</td>
+          <td><span class="usage-pill" data-tone="${usageTone(p.cpuPercent)}">${p.cpuPercent}</span></td>
+          <td>${p.memPercent}</td>
+          <td>${formatBytes(p.rssBytes)}</td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="5">No processes reported.</td></tr>';
+  }
+
+  const updated = $('#monitor-updated');
+  if (updated) updated.textContent = `Updated ${new Date(metrics.timestamp).toLocaleTimeString()} · samples refresh every 4 s`;
+}
+
+async function refreshSystemMetrics() {
+  try {
+    const data = await apiRequest('/api/system/metrics');
+    state.metrics = data.metrics || null;
+    renderDashboard();
+    renderMonitor();
+  } catch {
+    // Keep the last snapshot; the next tick retries.
+  }
+}
+
+function updateMonitorAutoRefresh() {
+  const shouldRun =
+    (state.view === 'dashboard' || state.view === 'monitor') &&
+    (state.view !== 'monitor' || $('#monitor-autorefresh')?.checked !== false);
+  if (shouldRun && !state.monitorTimer) {
+    state.monitorTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshSystemMetrics();
+    }, 4000);
+  } else if (!shouldRun && state.monitorTimer) {
+    clearInterval(state.monitorTimer);
+    state.monitorTimer = null;
+  }
+}
+
+function scheduleDaysLabel(days) {
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (Array.isArray(days) && days.length === 7) return 'Every day';
+  return (days || []).map((d) => names[d] ?? '?').join(' ');
+}
+
+function renderScheduleWeek() {
+  const host = $('#schedule-week');
+  if (!host) return;
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const today = new Date().getDay();
+  const entries = state.schedule || [];
+  host.innerHTML = order
+    .map((day) => {
+      const dayEntries = entries
+        .filter((e) => Array.isArray(e.days) && e.days.includes(day))
+        .sort((a, b) => String(a.time).localeCompare(String(b.time)));
+      const items = dayEntries
+        .map(
+          (e) => `<li class="week-item${e.enabled === false ? ' disabled' : ''}">
+            <span class="agenda-time">${escapeHtml(e.time)}</span>
+            <span class="agenda-title">${escapeHtml(e.title)}</span>
+            <span class="agenda-meta">${escapeHtml(String(e.durationMin || 30))} min</span>
+            <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+          </li>`
+        )
+        .join('') || '<li class="agenda-empty">Nothing</li>';
+      return `<div class="week-day${day === today ? ' today' : ''}">
+        <div class="week-day-name">${names[day]}${day === today ? ' · today' : ''}</div>
+        <ul class="week-list">${items}</ul>
+      </div>`;
+    })
+    .join('');
+}
+
+async function loadSchedule() {
+  try {
+    const data = await apiRequest('/api/schedule');
+    state.schedule = data.entries || [];
+    state.scheduleToday = data.today || [];
+    renderAgenda();
+    renderDashboard();
+    renderScheduleWeek();
+  } catch {
+    // Keep the last known schedule; the next view switch retries.
   }
 }
 
@@ -1859,7 +2117,10 @@ async function refreshHealth() {
 
 const PALETTE_ACTION_ITEMS = [
   { label: 'New task', hint: 'Start a fresh conversation', keywords: 'create session new chat', run: () => createNewTask() },
+  { label: 'Go to Dashboard', hint: 'Clock, agenda, and Mac stats', keywords: 'view dashboard home clock', run: () => switchView('dashboard') },
   { label: 'Go to Agent', hint: 'Return to the chat timeline', keywords: 'view chat', run: () => switchView('agent') },
+  { label: 'Go to System Monitor', hint: 'CPU, memory, GPU, storage, processes', keywords: 'view monitor cpu memory gpu task manager', run: () => switchView('monitor') },
+  { label: 'Go to Timetable', hint: 'Weekly schedule and reminders', keywords: 'view timetable schedule agenda', run: () => switchView('schedule') },
   { label: 'Go to Skills & Knowledge', hint: 'Manage skills, memory, and docs', keywords: 'view skills knowledge', run: () => switchView('skills') },
   { label: 'Go to Automations', hint: 'Saved workflows and schedules', keywords: 'view jobs launchd', run: () => switchView('automations') },
   { label: 'Go to Models & Settings', hint: 'Providers, models, runtime', keywords: 'view settings config', run: () => switchView('settings') },
@@ -2069,6 +2330,68 @@ function wireEvents() {
       $$('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
       $$('.subtab').forEach((t) => t.classList.toggle('active', t.id === `subtab-${state.subtab}`));
     });
+  });
+
+  // Dashboard, monitor, and timetable controls
+  $('#monitor-refresh-btn')?.addEventListener('click', () => refreshSystemMetrics());
+  $('#monitor-autorefresh')?.addEventListener('change', () => updateMonitorAutoRefresh());
+  $('#sched-refresh-btn')?.addEventListener('click', () => loadSchedule());
+  $('#dash-open-timetable')?.addEventListener('click', () => switchView('schedule'));
+  $('#dash-open-monitor')?.addEventListener('click', () => switchView('monitor'));
+  $('#dash-add-event')?.addEventListener('click', () => {
+    switchView('schedule');
+    $('#sched-title')?.focus();
+  });
+  $('#dash-set-reminder')?.addEventListener('click', () => {
+    switchView('agent');
+    const input = $('#prompt-input');
+    if (input) {
+      input.value = 'Remind me in 10 minutes to ';
+      input.focus();
+    }
+  });
+  $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
+
+  $('#schedule-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = $('#sched-title').value.trim();
+    const time = $('#sched-time').value;
+    const durationMin = Number($('#sched-duration').value) || 30;
+    const notes = $('#sched-notes').value.trim();
+    const days = $$('input[name="sched-day"]:checked').map((el) => Number(el.value));
+    if (!title || !time) {
+      showToast('Enter a title and a start time.');
+      return;
+    }
+    if (days.length === 0) {
+      showToast('Pick at least one weekday.');
+      return;
+    }
+    try {
+      await apiRequest('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, time, days, durationMin, notes }),
+      });
+      $('#sched-title').value = '';
+      $('#sched-notes').value = '';
+      showToast('Timetable entry saved');
+      await loadSchedule();
+    } catch (err) {
+      showToast(err.message || 'Could not save the entry.');
+    }
+  });
+
+  $('#schedule-week')?.addEventListener('click', async (e) => {
+    const delBtn = e.target.closest('.week-delete');
+    if (!delBtn) return;
+    try {
+      await apiRequest(`/api/schedule/${encodeURIComponent(delBtn.dataset.id)}`, { method: 'DELETE' });
+      showToast('Entry removed');
+      await loadSchedule();
+    } catch (err) {
+      showToast(err.message || 'Could not remove the entry.');
+    }
   });
 
   // Single delegated event listener on #chat-messages so buttons work smoothly even while streaming
@@ -2453,8 +2776,11 @@ async function init() {
     setSidebarCollapsed(false, false);
   }
   wireEvents();
+  tickClock();
+  setInterval(tickClock, 1000);
   await Promise.all([refreshHealth(), loadSessions()]);
   renderMessages(true);
+  switchView('dashboard');
 }
 
 init().catch((err) => showToast(err.message));
