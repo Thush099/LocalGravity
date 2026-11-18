@@ -21,6 +21,7 @@ export function getRuntimePaths(homeOverride) {
     automationsFile: path.join(root, 'automations.json'),
     skillsDir: path.join(root, 'skills'),
     knowledgeDir: path.join(root, 'knowledge'),
+    scheduleFile: path.join(root, 'schedule.json'),
     launchAgentsDir,
   };
 }

@@ -19,6 +19,12 @@ import {
   searchKnowledge,
 } from './knowledge-engine.mjs';
 import {
+  deleteScheduleEntry,
+  entriesForDate,
+  loadSchedule,
+  upsertScheduleEntry,
+} from './schedule.mjs';
+import {
   checkOllamaHealth,
   deleteOllamaModel,
   ensureOllamaRunning,
@@ -50,6 +56,7 @@ import {
 } from './state/storage.mjs';
 import { inspectMediaTool } from './tools/media-tool.mjs';
 import { expandUserPath } from './tools/safety.mjs';
+import { collectSystemMetrics } from './system-monitor.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +100,8 @@ const UI_CONTENT_SECURITY_POLICY = [
 
 let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
+let cachedMetrics = null;
+let cachedMetricsAt = 0;
 const uiAssetCache = new Map();
 
 function sendJson(res, status, data) {
@@ -333,6 +342,45 @@ export function createAgentServer({
           presets: CLOUD_PRESETS,
           ...maskConfigForClient(cfg),
         });
+        return;
+      }
+
+      // System metrics (read-only snapshot for the dashboard and monitor views)
+      if (req.method === 'GET' && pathname === '/api/system/metrics') {
+        const now = Date.now();
+        if (!cachedMetrics || now - cachedMetricsAt > 2000) {
+          cachedMetrics = await collectSystemMetrics();
+          cachedMetricsAt = now;
+        }
+        sendJson(res, 200, { ok: true, metrics: cachedMetrics });
+        return;
+      }
+
+      // Schedule / timetable
+      if (req.method === 'GET' && pathname === '/api/schedule') {
+        const entries = await loadSchedule(paths);
+        sendJson(res, 200, { ok: true, entries, today: entriesForDate(entries) });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/schedule') {
+        const body = await readJsonBody(req);
+        const result = await upsertScheduleEntry(body, paths);
+        if (!result.ok) return sendJson(res, 400, { ok: false, error: result.error });
+        sendJson(res, 200, {
+          ok: true,
+          entry: result.entry,
+          entries: result.entries,
+          today: entriesForDate(result.entries),
+        });
+        return;
+      }
+
+      const scheduleDelMatch = pathname.match(/^\/api\/schedule\/([^/]+)$/);
+      if (scheduleDelMatch && req.method === 'DELETE') {
+        const result = await deleteScheduleEntry(decodeURIComponent(scheduleDelMatch[1]), paths);
+        if (!result.ok) return sendJson(res, 404, { ok: false, error: result.error });
+        sendJson(res, 200, { ok: true, deleted: result.deleted, entries: result.entries });
         return;
       }
 

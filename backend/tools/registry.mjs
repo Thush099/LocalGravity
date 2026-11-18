@@ -18,6 +18,13 @@ import {
 } from './macos-tool.mjs';
 import { updatePlanTool } from './plan-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
+import {
+  deleteScheduleEntry,
+  entriesForDate,
+  loadSchedule,
+  upsertScheduleEntry,
+} from '../schedule.mjs';
+import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
 
 export const TOOL_DEFINITIONS = [
   {
@@ -388,6 +395,69 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'system_stats',
+      description:
+        'Snapshot this Mac\'s CPU, memory, GPU, storage, and top processes. Read-only; use it before/after heavy jobs or when the user asks how the Mac is doing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          include_processes: {
+            type: 'boolean',
+            description: 'Include the top processes list (default true).',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_schedule_item',
+      description:
+        'Add a recurring timetable entry (class, meeting, workout, focus block). Times are local 24-hour HH:MM; days are 0=Sunday..6=Saturday, default every day.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          time: { type: 'string', description: 'Start time as HH:MM (24-hour).' },
+          days: { type: 'array', items: { type: 'number' }, description: 'Weekdays 0=Sun..6=Sat.' },
+          duration_min: { type: 'number', description: 'Length in minutes (default 30).' },
+          notes: { type: 'string' },
+        },
+        required: ['title', 'time'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_schedule_items',
+      description: "List the user's timetable entries, or just today's agenda when today_only is set.",
+      parameters: {
+        type: 'object',
+        properties: {
+          today_only: { type: 'boolean' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_schedule_item',
+      description: 'Remove a timetable entry by its id.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+        },
+        required: ['id'],
+      },
+    },
+  },
 ];
 
 const ALWAYS_READONLY_TOOLS = new Set([
@@ -404,6 +474,8 @@ const ALWAYS_READONLY_TOOLS = new Set([
   'list_knowledge',
   'search_knowledge',
   'read_knowledge',
+  'system_stats',
+  'list_schedule_items',
 ]);
 
 // Non-destructive macOS actions: frictionless in interactive use, but a scheduled
@@ -431,7 +503,14 @@ export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, contex
     return { decision: 'allow' };
   }
 
-  if (name === 'save_skill' || name === 'save_knowledge' || name === 'self_improve') {
+  // Managed app state (skills, knowledge, timetable): reversible and surfaced in the UI.
+  if (
+    name === 'save_skill' ||
+    name === 'save_knowledge' ||
+    name === 'self_improve' ||
+    name === 'add_schedule_item' ||
+    name === 'remove_schedule_item'
+  ) {
     return { decision: 'allow' };
   }
 
@@ -598,6 +677,49 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await setReminderTool(args);
       case 'inspect_media':
         return await inspectMediaTool(args);
+      case 'system_stats': {
+        const metrics = await collectSystemMetrics();
+        if (args.include_processes === false) metrics.processes = [];
+        return { ok: true, output: summarizeSystemMetrics(metrics) };
+      }
+      case 'add_schedule_item': {
+        const result = await upsertScheduleEntry(
+          {
+            title: args.title,
+            time: args.time,
+            days: args.days,
+            durationMin: args.duration_min,
+            notes: args.notes,
+          },
+          paths
+        );
+        return result.ok
+          ? { ok: true, output: `Added "${result.entry.title}" at ${result.entry.time} (id ${result.entry.id}).` }
+          : { ok: false, output: result.error };
+      }
+      case 'list_schedule_items': {
+        const entries = await loadSchedule(paths);
+        const rows = args.today_only ? entriesForDate(entries) : entries;
+        if (rows.length === 0) {
+          return { ok: true, output: args.today_only ? 'Nothing scheduled today.' : 'The timetable is empty.' };
+        }
+        return {
+          ok: true,
+          output: rows
+            .map(
+              (e) =>
+                `- ${e.time} ${e.title} (${e.durationMin} min, days [${e.days.join(',')}], id ${e.id})` +
+                (e.notes ? ` — ${e.notes}` : '')
+            )
+            .join('\n'),
+        };
+      }
+      case 'remove_schedule_item': {
+        const result = await deleteScheduleEntry(args.id, paths);
+        return result.ok
+          ? { ok: true, output: `Removed schedule entry ${result.deleted}.` }
+          : { ok: false, output: result.error };
+      }
       case 'list_skills': {
         const skills = await listSkills(paths);
         return {
