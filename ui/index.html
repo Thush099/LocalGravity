@@ -77,14 +77,30 @@
               <button id="safety-toggle" class="pill-btn toggle-pill" type="button" title="Toggle command approval policy">
                 Safety: Ask
               </button>
-              <div class="context-meter" title="Estimated context window usage">
-                <span id="context-label">0k / 8k</span>
+              <div
+                id="context-meter"
+                class="context-meter"
+                role="progressbar"
+                aria-label="Context window usage"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                title="Estimated context window usage"
+              >
+                <div class="context-top">
+                  <span id="context-label">0k / 8k</span>
+                  <span id="context-percent">0%</span>
+                </div>
+                <div class="context-bar"><span id="context-fill"></span></div>
               </div>
               <button id="compact-btn" class="pill-btn" type="button" title="Summarize older messages to free context">
                 Compact
               </button>
               <button id="export-chat-btn" class="pill-btn" type="button" title="Download this conversation as Markdown">
                 Export
+              </button>
+              <button id="palette-open-btn" class="pill-btn" type="button" title="Command palette (⌘K)">
+                ⌘K
               </button>
             </div>
           </header>
@@ -116,8 +132,12 @@
                 </div>
               </div>
             </div>
-            <div id="chat-messages" class="chat-messages"></div>
+            <div id="chat-messages" class="chat-messages" role="log"></div>
           </div>
+
+          <button id="scroll-bottom-btn" class="scroll-bottom-btn hidden" type="button" aria-label="Scroll to the latest message">
+            ↓ Latest
+          </button>
 
           <div id="composer-dropzone" class="composer-wrap">
             <div id="drop-overlay" class="drop-overlay hidden">Drop photos, videos, folders, or documents to attach</div>
@@ -288,6 +308,31 @@
           <button id="modal-close-btn" class="icon-btn" type="button" aria-label="Close">×</button>
         </div>
         <div id="modal-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- COMMAND PALETTE -->
+    <div id="palette-backdrop" class="palette-backdrop hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="palette-card">
+        <div class="palette-input-row">
+          <span class="palette-icon" aria-hidden="true">⌘K</span>
+          <input
+            id="palette-input"
+            class="palette-input"
+            type="text"
+            placeholder="Search tasks, skills, docs, or run a command..."
+            autocomplete="off"
+            aria-controls="palette-results"
+          />
+          <button id="palette-close-btn" class="icon-btn" type="button" aria-label="Close command palette">×</button>
+        </div>
+        <div id="palette-results" class="palette-results" role="listbox" aria-label="Command results"></div>
+        <div class="palette-footer">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> open</span>
+          <span><kbd>esc</kbd> close</span>
+          <button id="palette-shortcuts-btn" class="palette-link" type="button">All shortcuts</button>
+        </div>
       </div>
     </div>
 

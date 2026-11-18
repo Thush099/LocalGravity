@@ -1,5 +1,6 @@
 import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } from './lib/api.js';
 import { escapeHtml, renderMarkdown } from './lib/markdown.js';
+import { buildPaletteItems } from './lib/palette.js';
 
 const state = {
   view: 'agent',
@@ -24,6 +25,10 @@ const state = {
   liveAssistantMsg: null,
   displayedItems: [],
   pendingApprovals: new Map(),
+  contextTokens: 0,
+  paletteOpen: false,
+  paletteItems: [],
+  paletteIndex: 0,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -43,6 +48,38 @@ function formatBytes(bytes) {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+}
+
+function estimateTokens(messages = []) {
+  let total = 0;
+  for (const msg of messages) {
+    total += 8;
+    if (typeof msg.content === 'string') total += Math.ceil(msg.content.length / 3.5);
+    if (typeof msg.thinking === 'string') total += Math.ceil(msg.thinking.length / 3.5);
+    if (Array.isArray(msg.toolCalls)) total += Math.ceil(JSON.stringify(msg.toolCalls).length / 3.5);
+    if (Array.isArray(msg.images)) total += msg.images.length * 768;
+  }
+  return total;
+}
+
+function updateContextMeter(tokens, numCtx) {
+  const limit = Number(numCtx) || Number(state.config?.numCtx) || 8192;
+  const safeTokens = Math.max(0, Number(tokens) || 0);
+  const pct = Math.min(100, Math.round((safeTokens / limit) * 100));
+  const label = $('#context-label');
+  const percent = $('#context-percent');
+  const fill = $('#context-fill');
+  const meter = $('#context-meter');
+  if (label) label.textContent = `${(safeTokens / 1000).toFixed(1)}k / ${Math.round(limit / 1000)}k`;
+  if (percent) percent.textContent = `${pct}%`;
+  if (fill) {
+    fill.style.width = `${pct}%`;
+    fill.className = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+  }
+  if (meter) {
+    meter.setAttribute('aria-valuenow', String(pct));
+    meter.title = `${pct}% of ${limit.toLocaleString()} token context used (estimated)`;
+  }
 }
 
 // Swift native bridges
@@ -101,9 +138,8 @@ function updateHeaderControls() {
   const ctxLimit = state.config.numCtx || 8192;
   const ctxSelect = $('#num-ctx-select');
   if (ctxSelect) ctxSelect.value = String(ctxLimit);
-  if (!state.isRunning) {
-    $('#context-label').textContent = `0k / ${Math.round(ctxLimit / 1000)}k`;
-  }
+  const estimatedTokens = state.contextTokens || estimateTokens(state.activeSession?.messages || []);
+  updateContextMeter(estimatedTokens, ctxLimit);
 }
 
 function renderSidebarStatus() {
@@ -214,7 +250,14 @@ function groupMessagesForDisplay(messages = []) {
       }
     } else if (msg.role === 'assistant') {
       if (!currentAssistant) {
-        currentAssistant = { type: 'assistant', thinking: [], tools: [], content: '', selfImprovedLessons: [] };
+        currentAssistant = {
+          type: 'assistant',
+          thinking: [],
+          tools: [],
+          content: '',
+          selfImprovedLessons: [],
+          isError: false,
+        };
         items.push(currentAssistant);
       }
       if (msg.thinking) currentAssistant.thinking.push(msg.thinking);
@@ -234,6 +277,7 @@ function groupMessagesForDisplay(messages = []) {
       if (msg.content) {
         currentAssistant.content += (currentAssistant.content ? '\n\n' : '') + msg.content;
       }
+      if (msg.isError) currentAssistant.isError = true;
     } else if (msg.role === 'tool' && currentAssistant) {
       const toolEntry = currentAssistant.tools.find((t) => t.id === msg.toolCallId);
       if (toolEntry) {
@@ -254,6 +298,39 @@ function groupMessagesForDisplay(messages = []) {
     }
   }
   return items;
+}
+
+function buildToolBodyHtml(tool) {
+  const diff = String(tool.diff || '');
+  if (diff) {
+    const lines = diff.split('\n');
+    const shown = lines.slice(0, 140);
+    const body = shown
+      .map((line) => {
+        const cls =
+          line.startsWith('+++') || line.startsWith('---')
+            ? 'diff-meta'
+            : line.startsWith('+')
+              ? 'diff-add'
+              : line.startsWith('-')
+                ? 'diff-del'
+                : 'diff-ctx';
+        return `<span class="diff-line ${cls}">${escapeHtml(line) || ' '}</span>`;
+      })
+      .join('');
+    const truncated = lines.length > shown.length ? '<span class="diff-line diff-meta">... diff truncated</span>' : '';
+    return `<div class="tool-body tool-diff">${body}${truncated}</div>`;
+  }
+
+  const output = String(tool.output || '');
+  if (output) {
+    if (tool.status === 'running' || output.length <= 600) {
+      return `<pre class="tool-body">${escapeHtml(output)}</pre>`;
+    }
+    return `<details class="tool-details"><summary>Output · ${output.split('\n').length} lines</summary><pre class="tool-body">${escapeHtml(output)}</pre></details>`;
+  }
+
+  return `<pre class="tool-body">${escapeHtml(JSON.stringify(tool.arguments || {}, null, 2))}</pre>`;
 }
 
 function buildDisplayItemHtml(item, idx) {
@@ -285,7 +362,10 @@ function buildDisplayItemHtml(item, idx) {
             : t.status === 'wait'
               ? 'Needs approval'
               : 'Running';
-      const bodyText = t.diff || t.output || JSON.stringify(t.arguments || {}, null, 2);
+      const durationHtml =
+        Number.isFinite(t.durationMs) && t.durationMs > 0
+          ? `<span class="tool-duration">${(t.durationMs / 1000).toFixed(1)}s</span>`
+          : '';
       const thumbs =
         Array.isArray(t.images) && t.images.length > 0
           ? `<div class="media-thumbs">${t.images
@@ -314,9 +394,9 @@ function buildDisplayItemHtml(item, idx) {
         <div class="tool-card" data-card-tool-id="${escapeHtml(t.id)}">
           <div class="tool-head">
             <span class="tool-name">${escapeHtml(t.name)}</span>
-            <span class="tool-badge ${badgeCls}">${badgeLabel}</span>
+            <span class="tool-head-right">${durationHtml}<span class="tool-badge ${badgeCls}">${badgeLabel}</span></span>
           </div>
-          <div class="tool-body">${escapeHtml(bodyText)}</div>
+          ${buildToolBodyHtml(t)}
           ${thumbs}
           ${approvalHtml}
         </div>`;
@@ -333,14 +413,19 @@ function buildDisplayItemHtml(item, idx) {
         </div>`
       : '';
 
-  const actionsHtml =
-    !item.isStreaming && item.content
-      ? `<div class="msg-actions">
-          <button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
-          <button type="button" class="msg-action-btn teach-skill-btn" data-idx="${idx}">Teach as skill</button>
-          <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>
-        </div>`
-      : '';
+  const showActions = (!item.isStreaming && item.content) || item.isError;
+  const actionsHtml = showActions
+    ? `<div class="msg-actions">
+        ${item.isError ? '<button type="button" class="msg-action-btn retry-turn-btn">Retry turn</button>' : ''}
+        ${
+          !item.isStreaming && item.content
+            ? `<button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
+               <button type="button" class="msg-action-btn teach-skill-btn" data-idx="${idx}">Teach as skill</button>
+               <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>`
+            : ''
+        }
+      </div>`
+    : '';
 
   const phaseLabel =
     item.thinking?.length > 0 && !item.content && item.tools?.length === 0
@@ -360,7 +445,7 @@ function buildDisplayItemHtml(item, idx) {
 
   return `
     <div class="msg-row" ${item.isStreaming ? 'id="live-assistant-row"' : ''}>
-      <div class="msg-assistant">
+      <div class="msg-assistant${item.isError ? ' error' : ''}">
         ${liveStatusHtml}
         <div class="live-thinking-slot">${thinkingHtml}</div>
         <div class="live-tools-slot">${toolsHtml}</div>
@@ -371,6 +456,15 @@ function buildDisplayItemHtml(item, idx) {
     </div>`;
 }
 
+function updateScrollButton() {
+  const scrollBox = $('#chat-scroll');
+  const btn = $('#scroll-bottom-btn');
+  if (!scrollBox || !btn) return;
+  const hasContent = (state.activeSession?.messages?.length || 0) > 0 || Boolean(state.liveAssistantMsg);
+  const distanceFromBottom = scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight;
+  btn.classList.toggle('hidden', !hasContent || distanceFromBottom < 220);
+}
+
 function scrollToBottomIfPinned(force = false) {
   const scrollBox = $('#chat-scroll');
   if (!scrollBox) return;
@@ -378,6 +472,7 @@ function scrollToBottomIfPinned(force = false) {
   if (force || distanceFromBottom < 140) {
     scrollBox.scrollTop = scrollBox.scrollHeight;
   }
+  updateScrollButton();
 }
 
 /**
@@ -392,6 +487,7 @@ function renderMessages(forceScroll = false) {
   if (!hasAny) {
     state.displayedItems = [];
     container.innerHTML = '';
+    updateScrollButton();
     return;
   }
 
@@ -462,7 +558,15 @@ function scheduleLiveUpdate() {
     }
 
     const toolsSig = JSON.stringify(
-      (item.tools || []).map((t) => [t.id, t.status, t.output?.length || 0, t.diff?.length || 0, t.images?.length || 0, Boolean(t.approval)])
+      (item.tools || []).map((t) => [
+        t.id,
+        t.status,
+        t.output?.length || 0,
+        t.diff?.length || 0,
+        t.images?.length || 0,
+        Boolean(t.approval),
+        t.durationMs || 0,
+      ])
     );
     if (item._lastToolsSig !== toolsSig) {
       item._lastToolsSig = toolsSig;
@@ -531,6 +635,7 @@ async function resolveApproval(toolCallId, approved, editedCommand) {
   if (tool) {
     tool.approval = null;
     tool.status = approved ? 'running' : 'fail';
+    if (approved) tool.startedAt = Date.now();
     scheduleLiveUpdate();
   }
   await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/approve`, {
@@ -561,6 +666,8 @@ async function openSession(id) {
   const searchInput = $('#session-search');
   if (searchInput) searchInput.value = '';
   state.activeSession = res.session;
+  state.contextTokens = estimateTokens(state.activeSession.messages || []);
+  updateContextMeter(state.contextTokens, state.config?.numCtx);
   switchView('agent');
   await loadSessions();
   renderMessages(true);
@@ -573,6 +680,8 @@ async function createNewTask() {
   });
   state.activeSession = res.session;
   state.liveAssistantMsg = null;
+  state.contextTokens = 0;
+  updateContextMeter(0, state.config?.numCtx);
   await loadSessions();
   switchView('agent');
   renderMessages(true);
@@ -681,6 +790,7 @@ async function sendPrompt(overridePayload = null) {
             output: '',
             diff: '',
             images: [],
+            startedAt: Date.now(),
           });
         } else if (evt.type === 'approval_required') {
           const t = state.liveAssistantMsg.tools.find((x) => x.id === evt.toolCallId);
@@ -699,6 +809,7 @@ async function sendPrompt(overridePayload = null) {
             t.output = evt.output || '';
             t.diff = evt.diff || '';
             t.images = evt.images || [];
+            t.durationMs = t.startedAt ? Date.now() - t.startedAt : null;
           }
         } else if (evt.type === 'self_improved') {
           if (evt.resolvedModel && state.config) {
@@ -713,9 +824,14 @@ async function sendPrompt(overridePayload = null) {
             }
           }
         } else if (evt.type === 'context_stats') {
-          $('#context-label').textContent = `${(evt.tokens / 1000).toFixed(1)}k / ${Math.round(evt.numCtx / 1000)}k`;
+          state.contextTokens = Number(evt.tokens) || 0;
+          updateContextMeter(state.contextTokens, evt.numCtx || state.config?.numCtx);
           return;
         } else if (evt.type === 'compacted') {
+          if (Number.isFinite(evt.tokensAfter)) {
+            state.contextTokens = evt.tokensAfter;
+            updateContextMeter(state.contextTokens, state.config?.numCtx);
+          }
           showToast('Context compacted automatically');
         } else if (evt.type === 'error') {
           showToast(evt.message || 'Model error');
@@ -745,6 +861,8 @@ async function sendPrompt(overridePayload = null) {
         // Keep current messages if reload fails
       }
     }
+    state.contextTokens = estimateTokens(state.activeSession?.messages || []);
+    updateContextMeter(state.contextTokens, state.config?.numCtx);
     renderMessages(false);
 
     if (state.queuedMessage) {
@@ -1628,6 +1746,189 @@ async function refreshHealth() {
   if (state.view === 'settings') renderSettingsView();
 }
 
+const PALETTE_ACTION_ITEMS = [
+  { label: 'New task', hint: 'Start a fresh conversation', keywords: 'create session new chat', run: () => createNewTask() },
+  { label: 'Go to Agent', hint: 'Return to the chat timeline', keywords: 'view chat', run: () => switchView('agent') },
+  { label: 'Go to Skills & Knowledge', hint: 'Manage skills, memory, and docs', keywords: 'view skills knowledge', run: () => switchView('skills') },
+  { label: 'Go to Automations', hint: 'Saved workflows and schedules', keywords: 'view jobs launchd', run: () => switchView('automations') },
+  { label: 'Go to Models & Settings', hint: 'Providers, models, runtime', keywords: 'view settings config', run: () => switchView('settings') },
+  { label: 'Import skill from GitHub', hint: 'Paste a SKILL.md or GitHub link', keywords: 'skill install github url', run: () => openImportUrlModal() },
+  { label: 'Open Skill Library', hint: 'Copy skills installed on this Mac', keywords: 'skills import library', run: () => openSkillLibraryModal() },
+  { label: 'Create new skill', hint: 'Write a reusable SKILL.md', keywords: 'skills teach new', run: () => openSkillModal(null) },
+  { label: 'New knowledge doc', hint: 'Save notes, preferences, or reference material', keywords: 'knowledge memory new', run: () => openKnowledgeModal(null) },
+  { label: 'Create automation', hint: 'Save a workflow for one-click or scheduled runs', keywords: 'automation workflow schedule new', run: () => openAutomationModal() },
+  { label: 'Toggle Deep Think', hint: 'Slower, more deliberate reasoning', keywords: 'thinking model reasoning', run: () => $('#thinking-toggle').click() },
+  { label: 'Toggle Safety mode', hint: 'Switch Ask / Auto command approval', keywords: 'safety approval auto', run: () => $('#safety-toggle').click() },
+  { label: 'Compact conversation', hint: 'Summarize older turns to free context', keywords: 'context tokens compact summarize', run: () => $('#compact-btn').click() },
+  { label: 'Export conversation', hint: 'Download the current chat as Markdown', keywords: 'download markdown save export', run: () => $('#export-chat-btn').click() },
+  { label: 'Keyboard shortcuts', hint: 'Show every shortcut', keywords: 'help keys hotkeys', run: () => openShortcutsModal() },
+];
+
+function paletteGroups() {
+  const sessionItems = state.sessions.slice(0, 40).map((session) => ({
+    label: session.title || 'Untitled task',
+    hint: `${session.messageCount || 0} messages${session.updatedAt ? ` · ${new Date(session.updatedAt).toLocaleDateString()}` : ''}`,
+    badge: session.source === 'scheduled' ? 'Auto' : '',
+    keywords: session.title || '',
+    run: () => openSession(session.id),
+  }));
+
+  const skillItems = state.skills.map((skill) => ({
+    label: skill.slug,
+    hint: skill.description || '',
+    badge: skill.source ? 'Imported' : skill.isStarter ? 'Starter' : 'Learned',
+    keywords: `${skill.slug} ${skill.description || ''}`,
+    run: async () => {
+      const res = await apiRequest(`/api/skills/${encodeURIComponent(skill.slug)}`);
+      openSkillModal(res.skill);
+    },
+  }));
+
+  const knowledgeItems = state.knowledge.map((doc) => ({
+    label: doc.title || doc.name,
+    hint: `ID: ${doc.name}${doc.tags?.length ? ` · ${doc.tags.join(', ')}` : ''}`,
+    badge: doc.name === 'MEMORY' ? 'Memory' : doc.name === 'LEARNED_FIXES' ? 'Auto' : '',
+    keywords: `${doc.name} ${doc.title || ''} ${(doc.tags || []).join(' ')}`,
+    run: async () => {
+      const res = await apiRequest(`/api/knowledge/${encodeURIComponent(doc.name)}`);
+      openKnowledgeModal(res.doc);
+    },
+  }));
+
+  return [
+    { id: 'actions', label: 'Actions', items: PALETTE_ACTION_ITEMS },
+    { id: 'sessions', label: 'Tasks', items: sessionItems, limit: 6 },
+    { id: 'skills', label: 'Skills', items: skillItems, limit: 6 },
+    { id: 'knowledge', label: 'Knowledge', items: knowledgeItems, limit: 5 },
+  ];
+}
+
+function renderPalette(query = '') {
+  state.paletteItems = buildPaletteItems({
+    query,
+    groups: paletteGroups(),
+    limits: { actions: 10 },
+  });
+  if (state.paletteIndex >= state.paletteItems.length) {
+    state.paletteIndex = Math.max(0, state.paletteItems.length - 1);
+  }
+
+  const results = $('#palette-results');
+  if (!results) return;
+  if (state.paletteItems.length === 0) {
+    results.innerHTML = '<div class="palette-empty">No matching tasks, skills, docs, or commands.</div>';
+    return;
+  }
+
+  let html = '';
+  let lastGroup = '';
+  state.paletteItems.forEach((item, idx) => {
+    if (item.group !== lastGroup) {
+      html += `<div class="palette-group">${escapeHtml(item.group)}</div>`;
+      lastGroup = item.group;
+    }
+    html += `
+      <button type="button" class="palette-item${idx === state.paletteIndex ? ' active' : ''}" data-idx="${idx}" role="option" aria-selected="${idx === state.paletteIndex}">
+        <span class="palette-item-main">
+          <span class="palette-item-label">${escapeHtml(item.label)}</span>
+          ${item.hint ? `<span class="palette-item-hint">${escapeHtml(item.hint)}</span>` : ''}
+        </span>
+        ${item.badge ? `<span class="palette-badge">${escapeHtml(item.badge)}</span>` : ''}
+      </button>`;
+  });
+  results.innerHTML = html;
+  results.querySelectorAll('.palette-item').forEach((btn) => {
+    btn.addEventListener('click', () => runPaletteItem(Number(btn.dataset.idx)));
+  });
+  results.querySelector('.palette-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+async function runPaletteItem(index) {
+  const item = state.paletteItems[index];
+  if (!item) return;
+  closeCommandPalette();
+  try {
+    await item.run();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function movePalette(delta) {
+  if (state.paletteItems.length === 0) return;
+  state.paletteIndex =
+    (state.paletteIndex + delta + state.paletteItems.length) % state.paletteItems.length;
+  renderPalette($('#palette-input').value.trim());
+}
+
+async function openCommandPalette() {
+  if (!$('#modal-backdrop').classList.contains('hidden')) closeModal();
+  state.paletteOpen = true;
+  state.paletteIndex = 0;
+  $('#palette-backdrop').classList.remove('hidden');
+  const input = $('#palette-input');
+  input.value = '';
+  renderPalette('');
+  setTimeout(() => input.focus(), 0);
+
+  const jobs = [];
+  if (state.skills.length === 0) {
+    jobs.push(
+      apiRequest('/api/skills').then((res) => {
+        state.skills = res.skills || [];
+      })
+    );
+  }
+  if (state.knowledge.length === 0) {
+    jobs.push(
+      apiRequest('/api/knowledge').then((res) => {
+        state.knowledge = res.docs || [];
+      })
+    );
+  }
+  if (jobs.length > 0) {
+    await Promise.all(jobs).catch(() => {});
+    if (state.paletteOpen) renderPalette($('#palette-input').value.trim());
+  }
+}
+
+function closeCommandPalette() {
+  state.paletteOpen = false;
+  state.paletteItems = [];
+  state.paletteIndex = 0;
+  $('#palette-backdrop').classList.add('hidden');
+  $('#palette-results').innerHTML = '';
+}
+
+function toggleCommandPalette() {
+  if (state.paletteOpen) closeCommandPalette();
+  else openCommandPalette();
+}
+
+function openShortcutsModal() {
+  const rows = [
+    ['Command palette', ['⌘', 'K']],
+    ['Send message', ['⌘', '↵']],
+    ['Export conversation', ['⌘', '⇧', 'E']],
+    ['Keyboard shortcuts', ['⌘', '/']],
+    ['Navigate palette', ['↑', '↓']],
+    ['Open highlighted result', ['↵']],
+    ['Close palette or dialog', ['Esc']],
+  ];
+  openModal(
+    'Keyboard Shortcuts',
+    `<div class="shortcut-list">${rows
+      .map(
+        ([label, keys]) =>
+          `<div class="shortcut-row"><span>${escapeHtml(label)}</span><span>${keys
+            .map((key) => `<kbd>${escapeHtml(key)}</kbd>`)
+            .join('')}</span></div>`
+      )
+      .join('')}</div>
+    <p class="section-hint">Shortcuts work while typing. Esc closes the palette first, then any open dialog.</p>`
+  );
+}
+
 function wireEvents() {
   $$('.nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -1670,6 +1971,16 @@ function wireEvents() {
     if (saveAutoBtn) {
       const lastUser = [...(state.activeSession?.messages || [])].reverse().find((m) => m.role === 'user');
       openAutomationModal({ name: state.activeSession?.title || '', prompt: lastUser?.content || '' });
+      return;
+    }
+
+    const retryBtn = e.target.closest('.retry-turn-btn');
+    if (retryBtn) {
+      const lastUser = [...(state.activeSession?.messages || [])].reverse().find((m) => m.role === 'user');
+      if (lastUser?.content) {
+        $('#prompt-input').value = lastUser.content;
+        await sendPrompt();
+      }
       return;
     }
 
@@ -1751,6 +2062,8 @@ function wireEvents() {
       method: 'POST',
     });
     state.activeSession = res.session;
+    state.contextTokens = estimateTokens(state.activeSession.messages || []);
+    updateContextMeter(state.contextTokens, state.config?.numCtx);
     renderMessages();
     showToast(res.compacted ? 'Conversation compacted' : 'Context is already compact');
   });
@@ -1761,7 +2074,7 @@ function wireEvents() {
     promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
   });
   promptInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       sendPrompt();
     }
@@ -1910,6 +2223,86 @@ function wireEvents() {
       navigator.clipboard.writeText(btn.dataset.code || '');
       showToast('Command copied');
     });
+  });
+
+  // Command palette and global shortcuts
+  $('#palette-open-btn').addEventListener('click', openCommandPalette);
+  $('#palette-close-btn').addEventListener('click', closeCommandPalette);
+  $('#palette-shortcuts-btn').addEventListener('click', () => {
+    closeCommandPalette();
+    openShortcutsModal();
+  });
+  $('#palette-backdrop').addEventListener('click', (e) => {
+    if (e.target === $('#palette-backdrop')) closeCommandPalette();
+  });
+  $('#palette-input').addEventListener('input', (e) => {
+    state.paletteIndex = 0;
+    renderPalette(e.target.value.trim());
+  });
+  $('#palette-input').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      movePalette(1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      movePalette(-1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      runPaletteItem(state.paletteIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeCommandPalette();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    const key = String(e.key || '').toLowerCase();
+    if (mod && key === 'k') {
+      e.preventDefault();
+      toggleCommandPalette();
+      return;
+    }
+    if (mod && key === '/') {
+      e.preventDefault();
+      if (state.paletteOpen) closeCommandPalette();
+      openShortcutsModal();
+      return;
+    }
+    if (mod && e.shiftKey && key === 'e') {
+      e.preventDefault();
+      $('#export-chat-btn').click();
+      return;
+    }
+    if (mod && e.key === 'Enter' && !state.paletteOpen) {
+      const active = document.activeElement;
+      if (active === $('#prompt-input') || active === document.body) {
+        e.preventDefault();
+        sendPrompt();
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (state.paletteOpen) {
+        e.preventDefault();
+        closeCommandPalette();
+        return;
+      }
+      if (!$('#modal-backdrop').classList.contains('hidden')) {
+        e.preventDefault();
+        closeModal();
+      }
+    }
+  });
+
+  $('#chat-scroll').addEventListener('scroll', updateScrollButton, { passive: true });
+  $('#scroll-bottom-btn').addEventListener('click', () => {
+    scrollToBottomIfPinned(true);
+    updateScrollButton();
   });
 
   window.addEventListener('focus', () => {
