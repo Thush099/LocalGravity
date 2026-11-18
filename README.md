@@ -1,8 +1,12 @@
 # LocalGravity
 
+[![CI](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml/badge.svg)](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements-macos-apple-silicon)
+
 **A lightweight, native macOS Launchpad AI agent desktop app** powered by local [Ollama](https://ollama.com) models on Apple Silicon (`qwen3.5:9b`, `gemma4:12b`) and optional Cloud Boost providers (OpenRouter, Groq, Google Gemini, Anthropic Claude, OpenAI / ChatGPT)—with autonomous tools, vision inspection, self-teaching `SKILL.md` skills, a persistent Knowledge Base, and scheduled `launchd` automations.
 
-Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKWebView` bundle vs. 600+ MB Electron apps) so you can run daily Mac organization, photo/video editing, writing rewrites, and automation tasks offline or with free endpoints while reserving cloud quotas for heavy work.
+Built to run fast inside **16 GB Unified Memory** (~**1.1 MB** installed Swift `WKWebView` bundle vs. 600+ MB Electron apps) so you can run daily Mac organization, photo/video editing, writing rewrites, and automation tasks offline or with free endpoints while reserving cloud quotas for heavy work.
 
 ---
 
@@ -10,7 +14,7 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
 
 - **Native macOS Launchpad App (`/Applications/LocalGravity.app`):** Compiled `arm64` Swift `WKWebView` host that manages an isolated, token-authenticated Node.js v26 agent server on `127.0.0.1` and shuts it down cleanly on quit.
 - **Hybrid Model Switcher:**
-  - **Local Ollama (Default: `qwen3.5:4b` fast mode + `qwen3.5:9b`):** Native vision, native tool calling, toggleable **Deep Think** mode, and M4-tuned context budgets (`8K` / `16K` / `32K` with automatic context compaction at 70% capacity).
+  - **Local Ollama (Recommended: `qwen3.5:9b`; optional `qwen3.5:4b` fast preset):** Native vision, native tool calling, toggleable **Deep Think** mode, and M4-tuned context budgets (`8K` / `16K` / `32K` with automatic context compaction at 70% capacity).
   - **Multi-Provider Support:** Connect **OpenRouter (`:free` & Pro)**, **Groq**, **Google Gemini**, **Anthropic Claude**, **OpenAI / ChatGPT**, or any **Custom OpenAI-Compatible Endpoint**. Keys stay strictly local in `~/.localgravity/config.json` (`0600`).
 - **Antigravity-Style Tool Loop & Safety Gate:**
   - Built-in tools: `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `run_command`, `inspect_media`, `fetch_url`, `list_skills`/`read_skill`/`save_skill` (with `extra_files` scripts), and `list_knowledge`/`search_knowledge`/`read_knowledge`/`save_knowledge`.
@@ -24,7 +28,8 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
   - **Hash-tracked starter upgrades:** untouched starter skills receive improved instructions when the app updates, while user edits and deletions are preserved.
   - **Turn-aware skill hints:** each message is scored against skill triggers, and the two best matches are surfaced in the system prompt so small local models load the right playbook.
 - **Responsive Multi-Turn Chat:** Supports live status timers, **Deep Think: Off / On** speed toggle, follow-up message queueing / instant interrupt while a turn is running, full-text search across past conversations with matched-message snippets, and one-click **Markdown export** of the current session.
-- **Command Palette & Keyboard Control:** `⌘K` searches tasks, skills, knowledge docs, and actions; `⌘↵` sends, `⌘⇧E` exports, `⌘/` shows every shortcut, and `Esc` closes overlays. The header has a live context-window meter that turns amber at 70% and red at 90%, tool cards show durations and collapsible output, file edits render as colored diffs, failed turns get a **Retry** action, and a scroll-to-latest pill appears when you read back.
+- **Focus-First Interface:** A collapsible sidebar (`⌘\`) with persisted state, an orbital local-first welcome screen, relative task timestamps, composer shortcut hints, reduced-motion support, and responsive header controls that stay usable down to the 920 px minimum window size.
+- **Command Palette & Keyboard Control:** `⌘K` searches tasks, skills, knowledge docs, and actions; `⌘↵` sends, `⌘⇧E` exports, `⌘/` shows every shortcut, `⌘\` collapses the sidebar, and `Esc` closes overlays. The header has a live context-window meter that turns amber at 70% and red at 90%, tool cards show durations and collapsible output, file edits render as colored diffs, failed turns get a **Retry** action, and a scroll-to-latest pill appears when you read back.
 - **Local API Hardening:** Every `/api/*` route requires the per-launch token, mutating requests from a foreign `Origin` are rejected so a browser page cannot ride the app's cookie, the UI is served with a strict `script-src 'self'` CSP plus `nosniff`/`DENY` headers, malformed JSON returns `400`, oversized bodies return `413`, and cloud providers retry once on `429`/`5xx` with `Retry-After` support.
 - **Scheduled Background Automations (`launchd`):**
   - Save any workflow as a one-click Automation card or attach an hourly/daily `launchd` schedule (`~/Library/LaunchAgents/com.localgravity.<id>.plist`).
@@ -84,7 +89,7 @@ Built to run fast inside **16 GB Unified Memory** (~**848 KB** native Swift `WKW
 ```bash
 git clone https://github.com/Thush099/LocalGravity.git
 cd LocalGravity
-npm test
+npm run check
 npm run build:app
 ```
 
@@ -92,11 +97,15 @@ This builds **`/Applications/LocalGravity.app`**, signs it ad-hoc, and registers
 
 ---
 
-## Running Tests
+## Checks & CI
+
+Run the full local check suite (tests plus JavaScript and shell syntax):
 
 ```bash
-npm test
+npm run check
 ```
+
+GitHub Actions runs the same checks on every push and pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 Unit and integration tests cover atomic JSON state & concurrency, `SKILL.md` & Knowledge Base traversal safety, starter-skill upgrade tracking, local skill-library discovery and import, shell-chaining bypass detection, `inspect_media` frame/image extraction, SSE/NDJSON provider normalization, transient provider retry, ReAct loop tool execution & compaction, and authenticated HTTP APIs.
 
@@ -116,6 +125,12 @@ Pass `--purge-models` (or answer `y` at the prompt) to also remove `qwen3.5:9b`,
 
 ---
 
+## Contributing
+
+Issues and pull requests are welcome. Run `npm run check` before opening a PR, and keep each change focused on a clear user-visible improvement.
+
+---
+
 ## License
 
-MIT
+[MIT](LICENSE)

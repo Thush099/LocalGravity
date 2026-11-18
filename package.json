@@ -6,6 +6,7 @@
   "description": "Native macOS Launchpad AI agent desktop app powered by local Ollama (Qwen3.5-9B) & multi-provider cloud models with self-teaching SKILL.md and Knowledge Base.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "check": "bash scripts/check.sh",
     "start": "node backend/server.mjs",
     "build:app": "bash scripts/build-app.sh",
     "uninstall:app": "bash scripts/uninstall.sh"
