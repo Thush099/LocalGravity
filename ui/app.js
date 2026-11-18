@@ -2357,11 +2357,34 @@ function wireEvents() {
     $('#sched-title')?.focus();
   });
   $('#dash-set-reminder')?.addEventListener('click', () => {
-    switchView('agent');
-    const input = $('#prompt-input');
-    if (input) {
-      input.value = 'Remind me in 10 minutes to ';
-      input.focus();
+    const form = $('#quick-reminder-form');
+    const btn = $('#dash-set-reminder');
+    const willShow = form?.classList.contains('hidden');
+    form?.classList.toggle('hidden', !willShow);
+    btn?.setAttribute('aria-expanded', String(Boolean(willShow)));
+    if (willShow) $('#reminder-minutes')?.focus();
+  });
+
+  $('#quick-reminder-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const minutes = Number($('#reminder-minutes').value);
+    const message = $('#reminder-message').value.trim();
+    if (!Number.isFinite(minutes) || minutes <= 0 || !message) {
+      showToast('Enter minutes and a message.');
+      return;
+    }
+    try {
+      const data = await apiRequest('/api/reminders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ minutes, message }),
+      });
+      $('#reminder-message').value = '';
+      $('#quick-reminder-form').classList.add('hidden');
+      $('#dash-set-reminder')?.setAttribute('aria-expanded', 'false');
+      showToast(data.output || 'Reminder set');
+    } catch (err) {
+      showToast(err.message || 'Could not set the reminder.');
     }
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());

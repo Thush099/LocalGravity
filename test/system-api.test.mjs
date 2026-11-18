@@ -63,6 +63,30 @@ test('system metrics and schedule APIs work over authenticated HTTP', async () =
     res = await fetch(`${base}/api/schedule/${entryId}`, { method: 'DELETE', headers });
     assert.equal(res.status, 404);
 
+    // Quick reminders: validate input, then schedule a real detached reminder.
+    res = await fetch(`${base}/api/reminders`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ minutes: 0, message: 'x' }),
+    });
+    assert.equal(res.status, 400);
+    res = await fetch(`${base}/api/reminders`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ minutes: 5, message: '   ' }),
+    });
+    assert.equal(res.status, 400);
+    res = await fetch(`${base}/api/reminders`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ minutes: 5, message: 'Stand up and stretch' }),
+    });
+    assert.equal(res.status, 200);
+    data = await res.json();
+    assert.equal(data.ok, true);
+    assert.match(data.output, /Reminder set for 300 seconds/);
+    assert.ok(Number.isFinite(new Date(data.fireAt).getTime()));
+
     // Cross-origin mutation stays blocked.
     res = await fetch(`${base}/api/schedule`, {
       method: 'POST',

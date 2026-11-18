@@ -55,6 +55,7 @@ import {
   saveSession,
 } from './state/storage.mjs';
 import { inspectMediaTool } from './tools/media-tool.mjs';
+import { setReminderTool } from './tools/macos-tool.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
 
@@ -354,6 +355,22 @@ export function createAgentServer({
         }
         sendJson(res, 200, { ok: true, metrics: cachedMetrics });
         return;
+      }
+
+      // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)
+      if (req.method === 'POST' && pathname === '/api/reminders') {
+        const body = await readJsonBody(req);
+        const minutes = Number(body.minutes);
+        const seconds = Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : Number(body.seconds);
+        const message = String(body.message ?? '').trim();
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+          return sendJson(res, 400, { ok: false, error: 'Reminder delay must be a positive number of minutes.' });
+        }
+        if (!message || message.length > 200) {
+          return sendJson(res, 400, { ok: false, error: 'Reminder message must be 1-200 characters.' });
+        }
+        const result = await setReminderTool({ seconds, message });
+        return sendJson(res, result.ok ? 200 : 400, result);
       }
 
       // Schedule / timetable

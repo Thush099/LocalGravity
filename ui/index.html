@@ -246,9 +246,20 @@
               <div class="quick-action-grid">
                 <button id="dash-new-task" class="quick-action-btn" type="button">New agent task</button>
                 <button id="dash-add-event" class="quick-action-btn" type="button">Add to timetable</button>
-                <button id="dash-set-reminder" class="quick-action-btn" type="button">Set a reminder</button>
+                <button id="dash-set-reminder" class="quick-action-btn" type="button" aria-expanded="false">Set a reminder</button>
                 <button id="dash-open-monitor" class="quick-action-btn" type="button">System monitor</button>
               </div>
+              <form id="quick-reminder-form" class="quick-reminder-form hidden">
+                <label class="field-block">
+                  <span>Remind me in (minutes)</span>
+                  <input id="reminder-minutes" class="text-input" type="number" min="1" max="1440" value="10" />
+                </label>
+                <label class="field-block">
+                  <span>Message</span>
+                  <input id="reminder-message" class="text-input" type="text" maxlength="200" placeholder="Stand up and stretch" />
+                </label>
+                <button class="primary-btn" type="submit">Set reminder</button>
+              </form>
               <div class="dash-card-head dash-card-head-spaced"><h3>Mac snapshot</h3></div>
               <div id="dash-snapshot" class="dash-snapshot">Loading…</div>
             </div>
