@@ -2268,6 +2268,13 @@ button, input, textarea, select {
   font-size: 14px;
 }
 
+.dash-greeting-block {
+  margin-left: auto;
+  padding-left: 16px;
+  max-width: 52%;
+  min-width: 0;
+}
+
 .dash-greeting-block h1 {
   margin: 0 0 4px;
   font-size: 22px;
@@ -2479,10 +2486,8 @@ button, input, textarea, select {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
+  overflow-wrap: anywhere;
+  max-width: 64%;
 }
 
 .data-table {
