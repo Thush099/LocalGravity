@@ -4,6 +4,7 @@ import { getRuntimePaths } from './state/paths.mjs';
 import { formatFrontmatter, parseFrontmatter } from './skills-engine.mjs';
 
 const KNOWLEDGE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/;
+const knowledgeDirCache = new Map();
 
 export function sanitizeKnowledgeName(name) {
   if (typeof name !== 'string' || !KNOWLEDGE_NAME_RE.test(name)) {
@@ -44,6 +45,7 @@ export async function ensureKnowledgeSeeded(paths = getRuntimePaths()) {
       DEFAULT_MEMORY_BODY
     );
     await fs.writeFile(memoryPath, seeded, 'utf8');
+    knowledgeDirCache.delete(paths.knowledgeDir);
   }
 
   const fixesPath = path.join(paths.knowledgeDir, 'LEARNED_FIXES.md');
@@ -58,40 +60,55 @@ export async function ensureKnowledgeSeeded(paths = getRuntimePaths()) {
       DEFAULT_LEARNED_FIXES_BODY
     );
     await fs.writeFile(fixesPath, seededFixes, 'utf8');
+    knowledgeDirCache.delete(paths.knowledgeDir);
   }
 }
 
 export async function listKnowledge(paths = getRuntimePaths()) {
   await fs.mkdir(paths.knowledgeDir, { recursive: true });
-  const entries = await fs.readdir(paths.knowledgeDir, { withFileTypes: true });
-  const docs = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-    const name = entry.name.slice(0, -3);
-    const fullPath = path.join(paths.knowledgeDir, entry.name);
-    try {
-      const [raw, stat] = await Promise.all([fs.readFile(fullPath, 'utf8'), fs.stat(fullPath)]);
-      const parsed = parseFrontmatter(raw);
-      docs.push({
-        name,
-        title: parsed.title || name,
-        tags: parsed.tags,
-        sizeBytes: stat.size,
-        updatedAt: stat.mtime.toISOString(),
-      });
-    } catch {
-      // Ignore unreadable docs
+  try {
+    const dirStat = await fs.stat(paths.knowledgeDir);
+    const cached = knowledgeDirCache.get(paths.knowledgeDir);
+    if (cached && cached.mtimeMs === dirStat.mtimeMs) {
+      return cached.docs;
     }
+
+    const entries = await fs.readdir(paths.knowledgeDir, { withFileTypes: true });
+    const mdEntries = entries.filter((e) => e.isFile() && e.name.endsWith('.md'));
+
+    const loaded = await Promise.all(
+      mdEntries.map(async (entry) => {
+        const name = entry.name.slice(0, -3);
+        const fullPath = path.join(paths.knowledgeDir, entry.name);
+        try {
+          const [raw, stat] = await Promise.all([fs.readFile(fullPath, 'utf8'), fs.stat(fullPath)]);
+          const parsed = parseFrontmatter(raw);
+          return {
+            name,
+            title: parsed.title || name,
+            tags: parsed.tags,
+            sizeBytes: stat.size,
+            updatedAt: stat.mtime.toISOString(),
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    const docs = loaded.filter(Boolean);
+    const rank = (name) => (name === 'LEARNED_FIXES' ? 0 : name === 'MEMORY' ? 1 : 2);
+    docs.sort((a, b) => {
+      const ra = rank(a.name);
+      const rb = rank(b.name);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    });
+    knowledgeDirCache.set(paths.knowledgeDir, { mtimeMs: dirStat.mtimeMs, docs });
+    return docs;
+  } catch {
+    return [];
   }
-  const rank = (name) => (name === 'LEARNED_FIXES' ? 0 : name === 'MEMORY' ? 1 : 2);
-  docs.sort((a, b) => {
-    const ra = rank(a.name);
-    const rb = rank(b.name);
-    if (ra !== rb) return ra - rb;
-    return a.name.localeCompare(b.name);
-  });
-  return docs;
 }
 
 export async function readKnowledge(name, paths = getRuntimePaths()) {
@@ -125,6 +142,7 @@ export async function saveKnowledge(input, paths = getRuntimePaths()) {
     input.content || ''
   );
   await fs.writeFile(fullPath, md, 'utf8');
+  knowledgeDirCache.delete(paths.knowledgeDir);
   return { name: safeName, path: fullPath };
 }
 
@@ -133,6 +151,7 @@ export async function deleteKnowledge(name, paths = getRuntimePaths()) {
   const fullPath = path.join(paths.knowledgeDir, `${safeName}.md`);
   try {
     await fs.unlink(fullPath);
+    knowledgeDirCache.delete(paths.knowledgeDir);
     return true;
   } catch {
     return false;
@@ -147,16 +166,16 @@ export async function searchKnowledge(query, paths = getRuntimePaths()) {
   if (terms.length === 0) return [];
 
   const docs = await listKnowledge(paths);
+  const fullDocs = await Promise.all(docs.map((doc) => readKnowledge(doc.name, paths)));
   const results = [];
 
-  for (const doc of docs) {
-    const full = await readKnowledge(doc.name, paths);
+  for (const full of fullDocs) {
     if (!full) continue;
     const haystack = `${full.title}\n${full.tags.join(' ')}\n${full.content}`.toLowerCase();
     let score = 0;
     let firstMatchIdx = -1;
     for (const term of terms) {
-      let idx = haystack.indexOf(term);
+      const idx = haystack.indexOf(term);
       if (idx !== -1) {
         score += full.title.toLowerCase().includes(term) ? 3 : 1;
         const bodyIdx = full.content.toLowerCase().indexOf(term);

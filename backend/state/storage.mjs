@@ -6,6 +6,7 @@ import { getRuntimePaths } from './paths.mjs';
 const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$/;
 const writeQueues = new Map();
 const sessionSummariesCache = new Map();
+const configCache = new Map();
 
 export const DEFAULT_CONFIG = {
   provider: 'ollama',
@@ -26,15 +27,32 @@ function sanitizeId(id, label = 'id') {
   return id;
 }
 
-function toSessionSummary(data) {
+function buildSearchableMessages(messages = []) {
+  const out = [];
+  for (const m of messages) {
+    if (!m || m.role === 'system' || typeof m.content !== 'string' || !m.content) continue;
+    out.push({
+      role: m.role,
+      content: m.content,
+      lower: m.content.toLowerCase(),
+    });
+  }
+  return out;
+}
+
+function toSessionCacheEntry(data) {
   return {
-    id: data.id,
-    title: data.title || 'Untitled Task',
-    source: data.source || 'interactive',
-    provider: data.provider || 'ollama',
-    model: data.model || 'qwen3.5:9b',
-    updatedAt: data.updatedAt || '',
-    messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
+    summary: {
+      id: data.id,
+      title: data.title || 'Untitled Task',
+      source: data.source || 'interactive',
+      provider: data.provider || 'ollama',
+      model: data.model || 'qwen3.5:9b',
+      updatedAt: data.updatedAt || '',
+      messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
+    },
+    titleLower: String(data.title || '').toLowerCase(),
+    searchableMessages: buildSearchableMessages(data.messages),
   };
 }
 
@@ -72,16 +90,26 @@ export async function readJsonSafe(filePath, fallback) {
 }
 
 export async function loadConfig(paths = getRuntimePaths()) {
-  const saved = await readJsonSafe(paths.configFile, {});
-  const merged = {
-    ...DEFAULT_CONFIG,
-    ...(saved && typeof saved === 'object' ? saved : {}),
-    apiKeys: {
-      ...DEFAULT_CONFIG.apiKeys,
-      ...(saved?.apiKeys && typeof saved.apiKeys === 'object' ? saved.apiKeys : {}),
-    },
-  };
-  return merged;
+  try {
+    const st = await fs.stat(paths.configFile);
+    const cached = configCache.get(paths.configFile);
+    if (cached && cached.mtimeMs === st.mtimeMs) {
+      return structuredClone(cached.data);
+    }
+    const saved = await readJsonSafe(paths.configFile, {});
+    const merged = {
+      ...DEFAULT_CONFIG,
+      ...(saved && typeof saved === 'object' ? saved : {}),
+      apiKeys: {
+        ...DEFAULT_CONFIG.apiKeys,
+        ...(saved?.apiKeys && typeof saved.apiKeys === 'object' ? saved.apiKeys : {}),
+      },
+    };
+    configCache.set(paths.configFile, { mtimeMs: st.mtimeMs, data: merged });
+    return structuredClone(merged);
+  } catch {
+    return structuredClone(DEFAULT_CONFIG);
+  }
 }
 
 export async function saveConfig(patch, paths = getRuntimePaths()) {
@@ -95,7 +123,13 @@ export async function saveConfig(patch, paths = getRuntimePaths()) {
     },
   };
   await atomicWriteJson(paths.configFile, next, 0o600);
-  return next;
+  try {
+    const st = await fs.stat(paths.configFile);
+    configCache.set(paths.configFile, { mtimeMs: st.mtimeMs, data: next });
+  } catch {
+    configCache.delete(paths.configFile);
+  }
+  return structuredClone(next);
 }
 
 export async function saveSession(session, paths = getRuntimePaths()) {
@@ -109,9 +143,11 @@ export async function saveSession(session, paths = getRuntimePaths()) {
   };
   await atomicWriteJson(path.join(paths.sessionsDir, `${id}.json`), normalized, 0o600);
   let dirCache = sessionSummariesCache.get(paths.sessionsDir);
-  if (dirCache) {
-    dirCache.set(id, toSessionSummary(normalized));
+  if (!dirCache) {
+    dirCache = new Map();
+    sessionSummariesCache.set(paths.sessionsDir, dirCache);
   }
+  dirCache.set(id, toSessionCacheEntry(normalized));
   return normalized;
 }
 
@@ -120,36 +156,47 @@ export async function loadSession(id, paths = getRuntimePaths()) {
   return readJsonSafe(path.join(paths.sessionsDir, `${safeId}.json`), null);
 }
 
+async function ensureSessionCachePopulated(paths = getRuntimePaths()) {
+  const entries = await fs.readdir(paths.sessionsDir, { withFileTypes: true });
+  const jsonFiles = entries.filter((e) => e.isFile() && e.name.endsWith('.json'));
+  let dirCache = sessionSummariesCache.get(paths.sessionsDir);
+  if (!dirCache) {
+    dirCache = new Map();
+    sessionSummariesCache.set(paths.sessionsDir, dirCache);
+  }
+
+  const activeIds = new Set();
+  const missingEntries = [];
+
+  for (const entry of jsonFiles) {
+    const idFromFile = entry.name.slice(0, -5);
+    activeIds.add(idFromFile);
+    if (!dirCache.has(idFromFile)) {
+      missingEntries.push(entry.name);
+    }
+  }
+
+  if (missingEntries.length > 0) {
+    const loaded = await Promise.all(
+      missingEntries.map((fileName) => readJsonSafe(path.join(paths.sessionsDir, fileName), null))
+    );
+    for (const data of loaded) {
+      if (!data?.id) continue;
+      dirCache.set(data.id, toSessionCacheEntry(data));
+    }
+  }
+
+  for (const cachedId of dirCache.keys()) {
+    if (!activeIds.has(cachedId)) dirCache.delete(cachedId);
+  }
+
+  return dirCache;
+}
+
 export async function listSessions(paths = getRuntimePaths()) {
   try {
-    const entries = await fs.readdir(paths.sessionsDir, { withFileTypes: true });
-    const jsonFiles = entries.filter((e) => e.isFile() && e.name.endsWith('.json'));
-    let dirCache = sessionSummariesCache.get(paths.sessionsDir);
-    if (!dirCache) {
-      dirCache = new Map();
-      sessionSummariesCache.set(paths.sessionsDir, dirCache);
-    }
-
-    const activeIds = new Set();
-    const summaries = [];
-    for (const entry of jsonFiles) {
-      const idFromFile = entry.name.slice(0, -5);
-      activeIds.add(idFromFile);
-      if (dirCache.has(idFromFile)) {
-        summaries.push(dirCache.get(idFromFile));
-        continue;
-      }
-      const data = await readJsonSafe(path.join(paths.sessionsDir, entry.name), null);
-      if (!data?.id) continue;
-      const sum = toSessionSummary(data);
-      dirCache.set(data.id, sum);
-      summaries.push(sum);
-    }
-
-    for (const cachedId of dirCache.keys()) {
-      if (!activeIds.has(cachedId)) dirCache.delete(cachedId);
-    }
-
+    const dirCache = await ensureSessionCachePopulated(paths);
+    const summaries = [...dirCache.values()].map((entry) => entry.summary);
     summaries.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     return summaries;
   } catch {
@@ -169,7 +216,7 @@ export async function deleteSession(id, paths = getRuntimePaths()) {
 }
 
 /**
- * Full-text search across stored conversations, returning a matching snippet per session.
+ * Full-text search across stored conversations using the in-memory index, returning a matching snippet per session.
  */
 export async function searchSessions(query, paths = getRuntimePaths(), { limit = 30 } = {}) {
   const terms = String(query || '')
@@ -178,27 +225,26 @@ export async function searchSessions(query, paths = getRuntimePaths(), { limit =
     .filter((term) => term.length >= 2);
   if (terms.length === 0) return [];
 
-  const summaries = await listSessions(paths);
+  let dirCache;
+  try {
+    dirCache = await ensureSessionCachePopulated(paths);
+  } catch {
+    return [];
+  }
+
   const results = [];
 
-  for (const summary of summaries) {
-    const data = await readJsonSafe(path.join(paths.sessionsDir, `${summary.id}.json`), null);
-    if (!data) continue;
-
-    const title = String(data.title || '').toLowerCase();
-    const titleScore = terms.reduce((n, term) => n + (title.includes(term) ? 1 : 0), 0);
-    const messages = Array.isArray(data.messages) ? data.messages : [];
+  for (const entry of dirCache.values()) {
+    const titleScore = terms.reduce((n, term) => n + (entry.titleLower.includes(term) ? 1 : 0), 0);
 
     let bestMessage = null;
     let bestScore = 0;
     let bestIndex = 0;
-    for (const message of messages) {
-      if (message.role === 'system' || typeof message.content !== 'string') continue;
-      const text = message.content.toLowerCase();
+    for (const message of entry.searchableMessages) {
       let score = 0;
       let firstIndex = -1;
       for (const term of terms) {
-        const found = text.indexOf(term);
+        const found = message.lower.indexOf(term);
         if (found !== -1) {
           score += 1;
           if (firstIndex === -1) firstIndex = found;
@@ -217,7 +263,7 @@ export async function searchSessions(query, paths = getRuntimePaths(), { limit =
       ? String(bestMessage.content).slice(Math.max(0, bestIndex - 60), Math.max(0, bestIndex - 60) + 220)
       : '';
     results.push({
-      ...summary,
+      ...entry.summary,
       score: titleScore * 2 + bestScore,
       matchRole: bestMessage?.role || 'title',
       snippet: snippetSource.replace(/\s+/g, ' ').trim(),

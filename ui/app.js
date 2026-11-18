@@ -362,10 +362,10 @@ function buildDisplayItemHtml(item, idx) {
     <div class="msg-row" ${item.isStreaming ? 'id="live-assistant-row"' : ''}>
       <div class="msg-assistant">
         ${liveStatusHtml}
-        ${thinkingHtml}
-        ${toolsHtml}
-        ${selfImprovedHtml}
-        ${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}
+        <div class="live-thinking-slot">${thinkingHtml}</div>
+        <div class="live-tools-slot">${toolsHtml}</div>
+        <div class="live-self-improved-slot">${selfImprovedHtml}</div>
+        <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}</div>
         ${actionsHtml}
       </div>
     </div>`;
@@ -407,42 +407,117 @@ function renderMessages(forceScroll = false) {
 
 /**
  * Coalesced 60fps partial DOM update for the active streaming assistant bubble only,
- * preserving any in-progress command approval input so clicks and edits never lag or drop.
+ * updating sub-slots granularly so text streaming never re-decodes tool images or resets inputs.
  */
 function scheduleLiveUpdate() {
   if (state.rafPending) return;
   state.rafPending = true;
   requestAnimationFrame(() => {
     state.rafPending = false;
-    if (!state.liveAssistantMsg) return;
+    const item = state.liveAssistantMsg;
+    if (!item) return;
     const slot = $('#chat-live-slot');
     if (!slot) {
       renderMessages();
       return;
     }
 
-    // Preserve any user-edited command text and focus before updating the live slot
-    const activeEdit = slot.querySelector('.approval-cmd-edit');
-    const focusedToolId =
-      document.activeElement && document.activeElement.classList.contains('approval-cmd-edit')
-        ? document.activeElement.dataset.toolId
-        : null;
-    if (activeEdit && activeEdit.dataset.toolId) {
-      const targetTool = state.liveAssistantMsg.tools.find((t) => t.id === activeEdit.dataset.toolId);
-      if (targetTool?.approval) {
-        targetTool.approval.editedValue = activeEdit.value;
+    const liveRow = slot.querySelector('#live-assistant-row');
+    if (!liveRow) {
+      const idx = Math.max(0, state.displayedItems.length - 1);
+      slot.innerHTML = buildDisplayItemHtml(item, idx);
+      scrollToBottomIfPinned(false);
+      return;
+    }
+
+    const phaseEl = liveRow.querySelector('#live-status-phase');
+    if (phaseEl) {
+      phaseEl.textContent =
+        item.thinking?.length > 0 && !item.content && item.tools?.length === 0
+          ? 'Deep thinking'
+          : item.tools?.some((t) => t.status === 'wait')
+            ? 'Waiting for your approval'
+            : item.tools?.some((t) => t.status === 'running')
+              ? 'Running tools'
+              : !item.content
+                ? `Running ${state.config?.model || 'model'}`
+                : 'Streaming reply';
+    }
+
+    const thinkingCombined = (item.thinking || []).join('').trim();
+    if (item._lastThinkingRendered !== thinkingCombined) {
+      item._lastThinkingRendered = thinkingCombined;
+      const thinkSlot = liveRow.querySelector('.live-thinking-slot');
+      if (thinkSlot) {
+        const existingDetails = thinkSlot.querySelector('details.thinking-box');
+        if (existingDetails && thinkingCombined) {
+          const contentDiv = existingDetails.querySelector('.thinking-content');
+          if (contentDiv) contentDiv.textContent = thinkingCombined;
+        } else {
+          thinkSlot.innerHTML = thinkingCombined
+            ? `<details class="thinking-box" ${!item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
+            : '';
+        }
       }
     }
 
-    const idx = Math.max(0, state.displayedItems.length - 1);
-    slot.innerHTML = buildDisplayItemHtml(state.liveAssistantMsg, idx);
+    const toolsSig = JSON.stringify(
+      (item.tools || []).map((t) => [t.id, t.status, t.output?.length || 0, t.diff?.length || 0, t.images?.length || 0, Boolean(t.approval)])
+    );
+    if (item._lastToolsSig !== toolsSig) {
+      item._lastToolsSig = toolsSig;
+      const toolsSlot = liveRow.querySelector('.live-tools-slot');
+      if (toolsSlot) {
+        const activeEdit = toolsSlot.querySelector('.approval-cmd-edit');
+        const focusedToolId =
+          document.activeElement && document.activeElement.classList.contains('approval-cmd-edit')
+            ? document.activeElement.dataset.toolId
+            : null;
+        if (activeEdit && activeEdit.dataset.toolId) {
+          const targetTool = item.tools.find((t) => t.id === activeEdit.dataset.toolId);
+          if (targetTool?.approval) {
+            targetTool.approval.editedValue = activeEdit.value;
+          }
+        }
 
-    if (focusedToolId) {
-      const restoredInput = slot.querySelector(`.approval-cmd-edit[data-tool-id="${CSS.escape(focusedToolId)}"]`);
-      if (restoredInput) {
-        restoredInput.focus();
-        const len = restoredInput.value.length;
-        restoredInput.setSelectionRange(len, len);
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = buildDisplayItemHtml(item, 0);
+        const nextToolsHtml = tempContainer.querySelector('.live-tools-slot')?.innerHTML || '';
+        toolsSlot.innerHTML = nextToolsHtml;
+
+        if (focusedToolId) {
+          const restoredInput = toolsSlot.querySelector(`.approval-cmd-edit[data-tool-id="${CSS.escape(focusedToolId)}"]`);
+          if (restoredInput) {
+            restoredInput.focus();
+            const len = restoredInput.value.length;
+            restoredInput.setSelectionRange(len, len);
+          }
+        }
+      }
+    }
+
+    const lessonsSig = (item.selfImprovedLessons || []).join('|');
+    if (item._lastLessonsSig !== lessonsSig) {
+      item._lastLessonsSig = lessonsSig;
+      const selfSlot = liveRow.querySelector('.live-self-improved-slot');
+      if (selfSlot) {
+        selfSlot.innerHTML =
+          item.selfImprovedLessons?.length > 0
+            ? `<div class="self-improved-card">
+                <div class="self-improved-head">Self-Programmed Lesson (Saved to LEARNED_FIXES.md)</div>
+                <ul class="self-improved-list">
+                  ${item.selfImprovedLessons.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}
+                </ul>
+              </div>`
+            : '';
+      }
+    }
+
+    if (item._lastContentRendered !== item.content) {
+      item._lastContentRendered = item.content;
+      const mdSlot = liveRow.querySelector('.live-md-slot');
+      if (mdSlot) {
+        mdSlot.innerHTML = item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : '';
       }
     }
 

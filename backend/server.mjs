@@ -71,6 +71,7 @@ const MIME_TYPES = {
 
 let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
+const uiAssetCache = new Map();
 
 function sendJson(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -223,7 +224,15 @@ export function createAgentServer({ authToken, paths = getRuntimePaths(), fetchF
           return;
         }
         try {
-          const data = await fs.readFile(resolved);
+          const st = await fs.stat(resolved);
+          const cachedAsset = uiAssetCache.get(resolved);
+          let data;
+          if (cachedAsset && cachedAsset.mtimeMs === st.mtimeMs) {
+            data = cachedAsset.data;
+          } else {
+            data = await fs.readFile(resolved);
+            uiAssetCache.set(resolved, { mtimeMs: st.mtimeMs, data });
+          }
           const ext = path.extname(resolved).toLowerCase();
           res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
           res.end(data);

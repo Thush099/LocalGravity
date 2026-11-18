@@ -3,6 +3,8 @@ import path from 'node:path';
 import { getRuntimePaths, getStarterSkillsDir } from './state/paths.mjs';
 
 const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+let cachedStarterNames = null;
+const skillsListCache = new Map();
 
 /**
  * Validate a skill directory slug against traversal and invalid characters.
@@ -122,6 +124,18 @@ async function listRelativeFiles(dir, prefix = '') {
   return files;
 }
 
+async function getStarterNamesSet() {
+  if (cachedStarterNames) return cachedStarterNames;
+  const starterDir = getStarterSkillsDir();
+  try {
+    const starters = await fs.readdir(starterDir, { withFileTypes: true });
+    cachedStarterNames = new Set(starters.filter((e) => e.isDirectory()).map((e) => e.name));
+  } catch {
+    cachedStarterNames = new Set();
+  }
+  return cachedStarterNames;
+}
+
 /**
  * Copy missing starter skills into the user's skills directory once per starter slug so user deletions stay deleted.
  */
@@ -171,43 +185,46 @@ export async function syncStarterSkills(paths = getRuntimePaths()) {
   if (markerDirty) {
     await fs.mkdir(paths.root, { recursive: true });
     await fs.writeFile(seededMarkerPath, JSON.stringify([...seededSet], null, 2) + '\n', 'utf8');
+    skillsListCache.delete(paths.skillsDir);
   }
   return synced;
 }
 
 export async function listSkills(paths = getRuntimePaths()) {
   await fs.mkdir(paths.skillsDir, { recursive: true });
-  const starterDir = getStarterSkillsDir();
-  let starterNames = new Set();
-  try {
-    const starters = await fs.readdir(starterDir, { withFileTypes: true });
-    starterNames = new Set(starters.filter((e) => e.isDirectory()).map((e) => e.name));
-  } catch {
-    starterNames = new Set();
+  if (skillsListCache.has(paths.skillsDir)) {
+    return skillsListCache.get(paths.skillsDir);
   }
 
-  const entries = await fs.readdir(paths.skillsDir, { withFileTypes: true });
-  const skills = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const skillMdPath = path.join(paths.skillsDir, entry.name, 'SKILL.md');
-    try {
-      const raw = await fs.readFile(skillMdPath, 'utf8');
-      const parsed = parseFrontmatter(raw);
-      skills.push({
-        name: parsed.name || entry.name,
-        slug: entry.name,
-        description: parsed.description || 'No description provided.',
-        triggers: parsed.triggers,
-        source: parsed.source || '',
-        sourcePath: skillMdPath,
-        isStarter: starterNames.has(entry.name),
-      });
-    } catch {
-      // Skip folders missing SKILL.md
-    }
-  }
-  skills.sort((a, b) => a.slug.localeCompare(b.slug));
+  const [starterNames, entries] = await Promise.all([
+    getStarterNamesSet(),
+    fs.readdir(paths.skillsDir, { withFileTypes: true }),
+  ]);
+
+  const dirEntries = entries.filter((e) => e.isDirectory());
+  const loaded = await Promise.all(
+    dirEntries.map(async (entry) => {
+      const skillMdPath = path.join(paths.skillsDir, entry.name, 'SKILL.md');
+      try {
+        const raw = await fs.readFile(skillMdPath, 'utf8');
+        const parsed = parseFrontmatter(raw);
+        return {
+          name: parsed.name || entry.name,
+          slug: entry.name,
+          description: parsed.description || 'No description provided.',
+          triggers: parsed.triggers,
+          source: parsed.source || '',
+          sourcePath: skillMdPath,
+          isStarter: starterNames.has(entry.name),
+        };
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const skills = loaded.filter(Boolean).sort((a, b) => a.slug.localeCompare(b.slug));
+  skillsListCache.set(paths.skillsDir, skills);
   return skills;
 }
 
@@ -279,6 +296,7 @@ export async function saveSkill(input, paths = getRuntimePaths()) {
     }
   }
 
+  skillsListCache.delete(paths.skillsDir);
   return { slug, path: skillMdPath };
 }
 
@@ -288,6 +306,7 @@ export async function deleteSkill(name, paths = getRuntimePaths()) {
   try {
     await fs.access(skillDir);
     await fs.rm(skillDir, { recursive: true, force: true });
+    skillsListCache.delete(paths.skillsDir);
     return true;
   } catch {
     return false;
@@ -336,6 +355,7 @@ export async function importExternalSkills(sourceDir, names, paths = getRuntimeP
     await copyDirMissingOnly(srcSkillDir, destSkillDir);
     imported.push(slug);
   }
+  skillsListCache.delete(paths.skillsDir);
   return imported;
 }
 

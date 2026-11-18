@@ -35,7 +35,7 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
       const req = new EventEmitter();
       req.method = options.method || 'GET';
       req.url = parsed.pathname + parsed.search;
-      req.headers = {};
+      req.headers = { host: parsed.host };
       for (const [k, v] of Object.entries(options.headers || {})) {
         req.headers[k.toLowerCase()] = v;
       }

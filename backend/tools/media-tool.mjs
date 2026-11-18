@@ -10,6 +10,25 @@ const execFileAsync = promisify(execFile);
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.heic', '.gif', '.tiff', '.bmp']);
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi']);
+const mediaInspectionCache = new Map();
+const MAX_MEDIA_CACHE_ENTRIES = 24;
+
+function getCachedMedia(key) {
+  if (!mediaInspectionCache.has(key)) return null;
+  const val = mediaInspectionCache.get(key);
+  mediaInspectionCache.delete(key);
+  mediaInspectionCache.set(key, val);
+  return val;
+}
+
+function setCachedMedia(key, val) {
+  if (mediaInspectionCache.has(key)) mediaInspectionCache.delete(key);
+  mediaInspectionCache.set(key, val);
+  if (mediaInspectionCache.size > MAX_MEDIA_CACHE_ENTRIES) {
+    const oldestKey = mediaInspectionCache.keys().next().value;
+    if (oldestKey !== undefined) mediaInspectionCache.delete(oldestKey);
+  }
+}
 
 async function probeImage(resolvedPath) {
   const { stdout } = await execFileAsync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', '-g', 'format', resolvedPath]);
@@ -42,6 +61,7 @@ async function probeVideo(resolvedPath) {
 
 /**
  * Inspect an image or extract a video frame / contact sheet so multimodal models can view media cleanly.
+ * Uses an MTime-validated LRU cache so previewing + attaching the same file does not spawn duplicate sips/ffmpeg processes.
  */
 export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edge = 1280 }) {
   const resolved = expandUserPath(mediaPath);
@@ -49,17 +69,25 @@ export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edg
   const tmpPng = path.join(os.tmpdir(), `localgravity-inspect-${crypto.randomUUID()}.png`);
 
   try {
-    await fs.access(resolved);
+    const st = await fs.stat(resolved);
+    const cacheKey = `${resolved}:${st.mtimeMs}:${st.size}:${timestamp_sec ?? 'auto'}:${max_edge}`;
+    const cached = getCachedMedia(cacheKey);
+    if (cached) return cached;
+
     if (IMAGE_EXTS.has(ext)) {
-      const meta = await probeImage(resolved);
-      await execFileAsync('sips', ['-s', 'format', 'png', '-Z', String(max_edge), resolved, '--out', tmpPng]);
+      const [meta] = await Promise.all([
+        probeImage(resolved),
+        execFileAsync('sips', ['-s', 'format', 'png', '-Z', String(max_edge), resolved, '--out', tmpPng]),
+      ]);
       const base64 = (await fs.readFile(tmpPng)).toString('base64');
-      return {
+      const result = {
         ok: true,
         output: `Image: ${resolved} (${meta.width}x${meta.height}, format=${meta.format}). Attached visual frame for inspection.`,
         images: [base64],
         meta,
       };
+      setCachedMedia(cacheKey, result);
+      return result;
     }
 
     if (VIDEO_EXTS.has(ext)) {
@@ -83,12 +111,14 @@ export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edg
         tmpPng,
       ]);
       const base64 = (await fs.readFile(tmpPng)).toString('base64');
-      return {
+      const result = {
         ok: true,
         output: `Video: ${resolved} (${meta.width}x${meta.height}, codec=${meta.codec}, duration=${meta.duration.toFixed(2)}s). Extracted frame at ${seekSec}s for visual inspection.`,
         images: [base64],
         meta,
       };
+      setCachedMedia(cacheKey, result);
+      return result;
     }
 
     return { ok: false, output: `Unsupported media extension "${ext}" for ${resolved}` };
