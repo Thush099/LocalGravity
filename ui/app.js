@@ -2,8 +2,11 @@ import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } 
 import { escapeHtml, renderMarkdown } from './lib/markdown.js';
 import { buildPaletteItems } from './lib/palette.js';
 
+const SIDEBAR_STORAGE_KEY = 'lg-sidebar-collapsed';
+
 const state = {
   view: 'agent',
+  sidebarCollapsed: false,
   subtab: 'skills',
   health: null,
   config: null,
@@ -48,6 +51,45 @@ function formatBytes(bytes) {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return '';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 45) return 'now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function setSidebarCollapsed(collapsed, persist = true) {
+  state.sidebarCollapsed = Boolean(collapsed);
+  const shell = $('#app-shell');
+  const sidebar = $('.sidebar');
+  const btn = $('#sidebar-toggle');
+  if (shell) shell.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+  if (sidebar) sidebar.inert = state.sidebarCollapsed;
+  if (btn) {
+    btn.setAttribute('aria-expanded', String(!state.sidebarCollapsed));
+    btn.title = `${state.sidebarCollapsed ? 'Show' : 'Hide'} sidebar (⌘\\)`;
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, state.sidebarCollapsed ? '1' : '0');
+    } catch {
+      // Storage can be unavailable; the in-memory state still works.
+    }
+  }
+}
+
+function toggleSidebar() {
+  setSidebarCollapsed(!state.sidebarCollapsed);
 }
 
 function estimateTokens(messages = []) {
@@ -184,7 +226,10 @@ function renderSessionsList() {
           ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
         </span>
         ${s.source === 'scheduled' ? '<span class="session-badge">Auto</span>' : ''}
-        <button type="button" class="session-del-btn" data-del="${escapeHtml(s.id)}" title="Delete session">×</button>
+        <span class="session-meta">
+          <span class="session-time">${escapeHtml(formatRelativeTime(s.updatedAt))}</span>
+          <button type="button" class="session-del-btn" data-del="${escapeHtml(s.id)}" title="Delete session">×</button>
+        </span>
       </div>`
     )
     .join('');
@@ -1752,6 +1797,7 @@ const PALETTE_ACTION_ITEMS = [
   { label: 'Go to Skills & Knowledge', hint: 'Manage skills, memory, and docs', keywords: 'view skills knowledge', run: () => switchView('skills') },
   { label: 'Go to Automations', hint: 'Saved workflows and schedules', keywords: 'view jobs launchd', run: () => switchView('automations') },
   { label: 'Go to Models & Settings', hint: 'Providers, models, runtime', keywords: 'view settings config', run: () => switchView('settings') },
+  { label: 'Toggle sidebar', hint: 'Hide or show task history for a focused chat', keywords: 'sidebar collapse expand focus layout', run: () => toggleSidebar() },
   { label: 'Import skill from GitHub', hint: 'Paste a SKILL.md or GitHub link', keywords: 'skill install github url', run: () => openImportUrlModal() },
   { label: 'Open Skill Library', hint: 'Copy skills installed on this Mac', keywords: 'skills import library', run: () => openSkillLibraryModal() },
   { label: 'Create new skill', hint: 'Write a reusable SKILL.md', keywords: 'skills teach new', run: () => openSkillModal(null) },
@@ -1908,6 +1954,7 @@ function toggleCommandPalette() {
 function openShortcutsModal() {
   const rows = [
     ['Command palette', ['⌘', 'K']],
+    ['Toggle sidebar', ['⌘', '\\']],
     ['Send message', ['⌘', '↵']],
     ['Export conversation', ['⌘', '⇧', 'E']],
     ['Keyboard shortcuts', ['⌘', '/']],
@@ -2001,6 +2048,7 @@ function wireEvents() {
   });
 
   $('#new-task-btn').addEventListener('click', createNewTask);
+  $('#sidebar-toggle').addEventListener('click', toggleSidebar);
   let sessionSearchTimer = null;
   $('#session-search').addEventListener('input', (e) => {
     const query = e.target.value.trim();
@@ -2267,6 +2315,11 @@ function wireEvents() {
       toggleCommandPalette();
       return;
     }
+    if (mod && key === '\\') {
+      e.preventDefault();
+      toggleSidebar();
+      return;
+    }
     if (mod && key === '/') {
       e.preventDefault();
       if (state.paletteOpen) closeCommandPalette();
@@ -2311,6 +2364,11 @@ function wireEvents() {
 }
 
 async function init() {
+  try {
+    setSidebarCollapsed(localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1', false);
+  } catch {
+    setSidebarCollapsed(false, false);
+  }
   wireEvents();
   await Promise.all([refreshHealth(), loadSessions()]);
   renderMessages(true);

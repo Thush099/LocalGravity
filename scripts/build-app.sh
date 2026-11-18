@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="LocalGravity"
 DEFAULT_BUNDLE="/Applications/${APP_NAME}.app"
 FALLBACK_BUNDLE="${REPO_ROOT}/build/${APP_NAME}.app"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 if [ -n "${APP_BUNDLE_OVERRIDE:-}" ]; then
   APP_BUNDLE="${APP_BUNDLE_OVERRIDE}"
@@ -13,6 +14,17 @@ elif mkdir -p "/Applications/.lg_write_test_$$" 2>/dev/null; then
   APP_BUNDLE="${DEFAULT_BUNDLE}"
 else
   APP_BUNDLE="${FALLBACK_BUNDLE}"
+fi
+
+# A previous fallback build can leave a second, older copy registered with
+# LaunchServices. That makes Launchpad show LocalGravity twice, so prune it
+# whenever we are installing the canonical /Applications bundle.
+if [ "${APP_BUNDLE}" != "${FALLBACK_BUNDLE}" ] && [ -d "${FALLBACK_BUNDLE}" ]; then
+  echo "Removing stale duplicate bundle: ${FALLBACK_BUNDLE}"
+  if [ -x "${LSREGISTER}" ]; then
+    "${LSREGISTER}" -u "${FALLBACK_BUNDLE}" 2>/dev/null || true
+  fi
+  rm -rf "${FALLBACK_BUNDLE}"
 fi
 
 CONTENTS="${APP_BUNDLE}/Contents"
@@ -85,7 +97,6 @@ PLIST
 echo -n "APPL????" > "${CONTENTS}/PkgInfo"
 codesign --force --deep --sign - "${APP_BUNDLE}" || true
 
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [ -x "${LSREGISTER}" ]; then
   "${LSREGISTER}" -f "${APP_BUNDLE}" 2>/dev/null || true
 fi
