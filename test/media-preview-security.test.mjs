@@ -35,6 +35,13 @@ test('media preview endpoint blocks system paths and non-files (trust boundary)'
     assert.ok(!notMedia.includes('secret contents'), 'file contents must not be returned');
     await fs.rm(tmpFile, { force: true });
 
+    // A symlink inside an allowed folder must not escape the user-content roots.
+    const linkPath = path.join(tmpHome, 'system-link.png');
+    await fs.symlink('/etc/passwd', linkPath);
+    res = await fetch(`${base}/api/media/preview?path=${encodeURIComponent(linkPath)}`, { headers });
+    assert.equal(res.status, 400);
+    await fs.rm(linkPath, { force: true });
+
     // Unauthorized request is rejected before any path handling.
     res = await fetch(`${base}/api/media/preview?path=${encodeURIComponent('/etc/passwd')}`);
     assert.equal(res.status, 401);

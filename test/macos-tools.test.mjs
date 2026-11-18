@@ -7,6 +7,8 @@ import {
   runShortcutTool,
   setReminderTool,
   showNotificationTool,
+  buildReminderInvocation,
+  appendBoundedOutput,
 } from '../backend/tools/macos-tool.mjs';
 import { evaluateToolSafety } from '../backend/tools/registry.mjs';
 
@@ -30,6 +32,28 @@ test('clipboard and notification tools validate empty input', async () => {
 test('set_reminder rejects invalid delays', async () => {
   const bad = await setReminderTool({ seconds: -5, message: 'x' });
   assert.equal(bad.ok, false);
+});
+
+test('subprocess output capture is bounded per stream', () => {
+  const existing = 'x'.repeat(60 * 1024);
+  const next = appendBoundedOutput(existing, 'y'.repeat(20 * 1024));
+
+  assert.equal(next.length, 64 * 1024);
+  assert.ok(next.startsWith(existing));
+  assert.equal(appendBoundedOutput(next, 'ignored').length, 64 * 1024);
+});
+
+test('reminder messages are passed as positional arguments, never interpolated into shell source', () => {
+  const attack = 'hello $(touch /tmp/pwned) `whoami`; echo $HOME';
+  const invocation = buildReminderInvocation(60, attack);
+
+  assert.equal(invocation.bin, '/bin/zsh');
+  assert.equal(invocation.args[0], '-c');
+  assert.equal(invocation.args[1], 'sleep "$1"; exec /usr/bin/osascript -e "$2"');
+  assert.equal(invocation.args[2], 'localgravity-reminder');
+  assert.equal(invocation.args[3], '60');
+  assert.equal(invocation.args[4], attack);
+  assert.ok(!invocation.args[1].includes('/tmp/pwned'));
 });
 
 test('harmless macOS actions are allowed interactively but gated in headless audit mode', () => {

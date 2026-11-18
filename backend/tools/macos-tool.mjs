@@ -1,17 +1,26 @@
 import { spawn } from 'node:child_process';
 
 const MAX_CLIPBOARD_CHARS = 200000;
+const MAX_PROCESS_OUTPUT_CHARS = 64 * 1024;
 const MAX_REMINDER_SECONDS = 86400;
 
 /**
  * Run a binary directly (never through a shell) so arguments cannot trigger shell injection.
  * Optional `input` is piped to stdin. Returns { ok, code, stdout, stderr }.
  */
+export function appendBoundedOutput(current, chunk, limit = MAX_PROCESS_OUTPUT_CHARS) {
+  const remaining = Math.max(0, limit - current.length);
+  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  return remaining > 0 ? current + text.slice(0, remaining) : current;
+}
+
 function runBinary(bin, args, { input, timeout = 15000 } = {}) {
   return new Promise((resolve) => {
     const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let settled = false;
 
     const timer = setTimeout(() => {
@@ -22,18 +31,29 @@ function runBinary(bin, args, { input, timeout = 15000 } = {}) {
       }
     }, timeout);
 
-    child.stdout.on('data', (d) => {
-      stdout += d.toString('utf8');
+    child.stdout.on('data', (chunk) => {
+      const next = appendBoundedOutput(stdout, chunk);
+      stdoutTruncated ||= next.length < stdout.length + chunk.toString('utf8').length;
+      stdout = next;
     });
-    child.stderr.on('data', (d) => {
-      stderr += d.toString('utf8');
+    child.stderr.on('data', (chunk) => {
+      const next = appendBoundedOutput(stderr, chunk);
+      stderrTruncated ||= next.length < stderr.length + chunk.toString('utf8').length;
+      stderr = next;
     });
 
     const finish = (ok, code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ok, code, stdout, stderr: stderr.trim() });
+      const stdoutNote = stdoutTruncated ? '\n[stdout truncated at 64 KB]' : '';
+      const stderrNote = stderrTruncated ? '\n[stderr truncated at 64 KB]' : '';
+      resolve({
+        ok,
+        code,
+        stdout: `${stdout}${stdoutNote}`,
+        stderr: `${stderr}${stderrNote}`.trim(),
+      });
     };
 
     child.on('error', (err) => finish(false, null));
@@ -125,6 +145,13 @@ export async function runShortcutTool({ name, input }) {
  * Schedule a one-shot macOS notification reminder after N seconds. Runs as a detached
  * background process so it fires even after this tool call returns.
  */
+export function buildReminderInvocation(seconds, message) {
+  return {
+    bin: '/bin/zsh',
+    args: ['-c', 'sleep "$1"; exec /usr/bin/osascript -e "$2"', 'localgravity-reminder', String(seconds), String(message)],
+  };
+}
+
 export async function setReminderTool({ seconds, message }) {
   const raw = Number(seconds);
   if (!Number.isFinite(raw) || raw <= 0) {
@@ -133,7 +160,8 @@ export async function setReminderTool({ seconds, message }) {
   const delay = Math.min(Math.floor(raw), MAX_REMINDER_SECONDS);
   const msg = String(message ?? `Reminder from LocalGravity (${delay}s)`).trim();
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder" sound name "Glass"`;
-  const child = spawn('nohup', ['zsh', '-c', `sleep ${delay}; osascript -e ${JSON.stringify(script)}`], {
+  const invocation = buildReminderInvocation(delay, script);
+  const child = spawn('nohup', [invocation.bin, ...invocation.args], {
     detached: true,
     stdio: 'ignore',
   });

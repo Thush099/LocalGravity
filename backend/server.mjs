@@ -825,9 +825,16 @@ export function createAgentServer({
         // Trust boundary: this path arrives from the UI. Restrict previews to real media
         // files inside user-content roots (home, external volumes, temp) so a forged
         // request cannot probe system paths like /etc or /System.
-        const resolved = path.resolve(expandUserPath(targetPath));
+        const requestedPath = path.resolve(expandUserPath(targetPath));
+        const resolved = await fs.realpath(requestedPath).catch(() => null);
+        if (!resolved) {
+          return sendJson(res, 404, { ok: false, error: 'Not a readable file' });
+        }
         const previewRoots = [os.homedir(), '/Volumes', os.tmpdir()];
-        const inPreviewRoot = previewRoots.some(
+        const canonicalRoots = (await Promise.all(
+          previewRoots.map((root) => fs.realpath(root).catch(() => null))
+        )).filter(Boolean);
+        const inPreviewRoot = canonicalRoots.some(
           (root) => resolved === root || resolved.startsWith(root + path.sep)
         );
         if (!inPreviewRoot) {

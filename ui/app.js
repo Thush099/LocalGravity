@@ -1,5 +1,6 @@
 import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } from './lib/api.js';
 import { escapeHtml, renderMarkdown } from './lib/markdown.js';
+import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { buildPaletteItems } from './lib/palette.js';
 
 const SIDEBAR_STORAGE_KEY = 'lg-sidebar-collapsed';
@@ -701,8 +702,13 @@ function scheduleLiveUpdate() {
       }
     }
 
-    if (item._lastContentRendered !== item.content) {
+    const now = performance.now();
+    if (
+      item._lastContentRendered !== item.content &&
+      shouldRenderStreamingMarkdown(item._lastMarkdownRenderAt, now)
+    ) {
       item._lastContentRendered = item.content;
+      item._lastMarkdownRenderAt = now;
       const mdSlot = liveRow.querySelector('.live-md-slot');
       if (mdSlot) {
         mdSlot.innerHTML = item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : '';

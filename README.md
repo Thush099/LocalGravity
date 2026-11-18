@@ -2,15 +2,30 @@
 
 [![CI](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml/badge.svg)](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements-macos-apple-silicon)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements)
 
-**A lightweight, native macOS Launchpad AI agent desktop app** powered by local [Ollama](https://ollama.com) models on Apple Silicon (`qwen3.5:9b`, `gemma4:12b`) and optional Cloud Boost providers (OpenRouter, Groq, Google Gemini, Anthropic Claude, OpenAI / ChatGPT)—with autonomous tools, vision inspection, self-teaching `SKILL.md` skills, a persistent Knowledge Base, and scheduled `launchd` automations.
+LocalGravity is a native macOS desktop app for running an AI agent against files and tools on your Mac. Use a local [Ollama](https://ollama.com) model, or configure a supported cloud provider. The app includes a Swift and WebKit shell, a dependency-free Node.js runtime, a tool approval flow, reusable skills, a local knowledge base, and scheduled `launchd` automations.
 
-Built to run fast inside **16 GB Unified Memory** (~**1.1 MB** installed Swift `WKWebView` bundle vs. 600+ MB Electron apps) so you can run daily Mac organization, photo/video editing, writing rewrites, and automation tasks offline or with free endpoints while reserving cloud quotas for heavy work.
+This guide explains how to build and run the app, choose a model provider, and understand what its tools can access. Local models keep prompts on your Mac; cloud providers receive the data you send them, subject to their own policies.
 
 ---
 
-## Key Features
+## Quick start
+
+Build LocalGravity on a supported Apple Silicon Mac with macOS 14 or later, Node.js 22 or later, and Xcode Command Line Tools. The app has no npm dependencies to install.
+
+```bash
+git clone https://github.com/Thush099/LocalGravity.git
+cd LocalGravity
+npm run check
+npm run build:app
+```
+
+The build script installs `/Applications/LocalGravity.app` when it can write to `/Applications`; otherwise, it creates `build/LocalGravity.app` in the repository. See [Build and install](#build-and-install) for details.
+
+To use a local model, install Ollama, start its service, and download a model supported by your machine. `ffmpeg` and ImageMagick enable optional video and image workflows; the core app can run without them.
+
+## Key features
 
 - **Native macOS Launchpad App (`/Applications/LocalGravity.app`):** Compiled `arm64` Swift `WKWebView` host that manages an isolated, token-authenticated Node.js v26 agent server on `127.0.0.1` and shuts it down cleanly on quit.
 - **Hybrid Model Switcher:**
@@ -23,7 +38,7 @@ Built to run fast inside **16 GB Unified Memory** (~**1.1 MB** installed Swift `
   - **Safe Calculator (`calculate`):** Exact arithmetic (`+ - * / % ^`, parentheses, `sqrt`/`abs`/`log`, `pi`/`e`) via an injection-safe parser — no `eval`, no shell.
   - **AppleScript Automation (`run_applescript`):** Deep macOS automation via `osascript` (Finder, Notes, Safari, System Events) run from a temp file through `execFile` (never a shell), always gated as a mutating action.
   - **Visual Media Inspection (`inspect_media`):** Extracts video keyframes via `ffmpeg` or scales photos via `sips` and passes them directly to the vision model so the agent can visually verify edits before and after running commands.
-  - **Safety Policies:** Interactive **Ask** mode pauses mutating commands, AppleScript, and external file edits with an editable command preview and **Approve / Deny** controls. Catastrophic commands (`rm -rf /`, `rm -rf ~`, disk erasure, fork bombs) are permanently blocked even in **Auto** mode.
+  - **Safety policies:** **Ask** mode pauses supported mutating tools for approval. The safety checks block known catastrophic shell-command patterns, but they are not a sandbox. Review commands and file changes before approving them.
 - **Self-Teaching Skills & Knowledge Base:**
   - Uses modular `SKILL.md` skills (`~/.localgravity/skills/`) with lightweight index loading so local models stay fast and sharp.
   - Includes **28 Starter Skills** across engineering, macOS automation, media production, research, writing, data, DevOps, accessibility, and study coaching: `coding-engineer`, `systematic-debugger`, `test-driven-developer`, `project-planner`, `frontend-architect`, `api-designer`, `security-reviewer`, `devops-engineer`, `macos-automator`, `mac-organizer`, `image-batch-processor`, `video-producer`, `photo-editor`, `video-editor`, `data-analyst`, `data-visualizer`, `presentation-builder`, `technical-writer`, `humanizer`, `academic-researcher`, `literature-reviewer`, `citation-manager`, `research-assistant`, `study-coach`, `accessibility-auditor`, `skill-scout`, `self-upgrade`, and `skill-creator`.
@@ -85,24 +100,32 @@ Every turn is a live, steerable run: watch the task plan tick off step-by-step, 
 
 ---
 
-## Requirements (macOS Apple Silicon)
+## Requirements
 
-- **macOS 14+** (Apple Silicon `arm64`, tested on M4 16 GB)
-- **Xcode Command Line Tools** (`swiftc`)
-- **Node.js >= 22** (tested on `v26.13.1`)
-- **Homebrew packages:**
-  ```bash
-  brew install ollama ffmpeg imagemagick
-  ```
-- **Recommended local model:**
-  ```bash
-  ollama serve
-  ollama pull qwen3.5:9b
-  ```
+- macOS 14 or later on Apple Silicon (`arm64`)
+- Node.js 22 or later
+- Xcode Command Line Tools, including `swiftc`, to build the native app
+- Ollama, if you want local model inference
+- `ffmpeg` and ImageMagick, if you want the optional media workflows
+
+Install optional tools with Homebrew:
+
+```bash
+brew install ollama ffmpeg imagemagick
+```
+
+Start Ollama and download a model that fits your Mac:
+
+```bash
+ollama serve
+ollama pull qwen3.5:9b
+```
+
+You can also configure a supported cloud provider in **Models & Settings**. Provider API keys are stored locally in `~/.localgravity/config.json` with owner-only file permissions.
 
 ---
 
-## Build & Install to Launchpad
+## Build and install
 
 ```bash
 git clone https://github.com/Thush099/LocalGravity.git
@@ -111,11 +134,17 @@ npm run check
 npm run build:app
 ```
 
-This builds **`/Applications/LocalGravity.app`**, signs it ad-hoc, and registers it with macOS LaunchServices so you can launch **LocalGravity** immediately from **Launchpad** or **Spotlight** (`Cmd + Space`).
+The script compiles the Swift host, copies the backend and UI into the app bundle, applies ad-hoc signing, and registers the bundle with LaunchServices. It installs to `/Applications/LocalGravity.app` when that directory is writable. Otherwise, it builds `build/LocalGravity.app` inside the repository. Launch the installed app from Launchpad or Spotlight.
 
 ---
 
-## Checks & CI
+## Data access and safety
+
+LocalGravity starts its authenticated Node.js server on the loopback interface (`127.0.0.1`). The server requires a per-launch token for API requests. Local model requests go to Ollama; when you choose a cloud provider, prompts and attached content are sent to that provider for processing.
+
+The agent can read and modify files, run commands, and invoke macOS automation tools. Approval controls reduce accidental changes, but they do not isolate the agent from your account or replace a backup. Use **Ask** mode when reviewing a new workflow, inspect proposed commands, and only approve actions you trust. Choose cloud providers only when their handling of your data meets your needs.
+
+## Checks and CI
 
 Run the full local check suite (tests plus JavaScript and shell syntax):
 
@@ -123,7 +152,7 @@ Run the full local check suite (tests plus JavaScript and shell syntax):
 npm run check
 ```
 
-GitHub Actions runs the same checks on every push and pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+GitHub Actions runs the same checks on every push and pull request through [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 Unit and integration tests cover atomic JSON state & concurrency, `SKILL.md` & Knowledge Base traversal safety, starter-skill upgrade tracking, local skill-library discovery and import, shell-chaining bypass detection, `inspect_media` frame/image extraction, SSE/NDJSON provider normalization, transient provider retry, ReAct loop tool execution & compaction, and authenticated HTTP APIs.
 
