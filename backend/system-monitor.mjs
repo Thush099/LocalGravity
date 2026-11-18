@@ -173,18 +173,25 @@ export function partitionDisks(disks) {
 /**
  * Parse `ps -Aceo pid,pcpu,pmem,rss,comm -r` output (first line is the header).
  */
+// Transient processes from our own sampling batch; they show up in `ps`
+// output only because the samplers run concurrently with it.
+export const SAMPLER_PROCESS_NAMES = new Set(['ps', 'pmset', 'ioreg', 'vm_stat', 'sysctl', 'df']);
+
 export function parsePs(text) {
   const rows = [];
   const lines = String(text || '').split('\n').slice(1);
   for (const line of lines) {
     const m = line.trim().match(/^(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(.+)$/);
     if (!m) continue;
+    const command = m[5].trim();
+    const base = command.replace(/^\(|\)$/g, '').split('/').pop();
+    if (SAMPLER_PROCESS_NAMES.has(base)) continue;
     rows.push({
       pid: Number(m[1]),
       cpuPercent: Number(m[2]),
       memPercent: Number(m[3]),
       rssBytes: Number(m[4]) * 1024,
-      command: m[5].trim(),
+      command,
     });
     if (rows.length >= 12) break;
   }

@@ -86,6 +86,21 @@ test('parsePs reads top process rows and caps the list', () => {
   assert.equal(procs[0].rssBytes, 2048 * 1024);
 });
 
+test('parsePs hides transient sampler processes from the list', () => {
+  const header = '  PID %CPU %MEM    RSS COMM\n';
+  const rows =
+    '  10  90.0  0.5   2048 ioreg\n' +
+    '  11  80.0  0.5   2048 (ioreg)\n' +
+    '  12  70.0  0.5   2048 ps\n' +
+    '  13  60.0  0.5   2048 /usr/bin/pmset\n' +
+    '  14  50.0  1.0   2048 WindowServer\n';
+  const procs = parsePs(header + rows);
+  assert.deepEqual(
+    procs.map((p) => p.command),
+    ['WindowServer']
+  );
+});
+
 test('cpuPercentFromPs sums per-process CPU and normalizes by core count', () => {
   const header = '  PID %CPU %MEM    RSS COMM\n';
   const rows = ' 1  50.0  1.0   2048 a\n 2  30.0  1.0   2048 b\n';
