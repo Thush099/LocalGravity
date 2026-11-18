@@ -19,7 +19,7 @@ fi
 # A previous fallback build can leave a second, older copy registered with
 # LaunchServices. That makes Launchpad show LocalGravity twice, so prune it
 # whenever we are installing the canonical /Applications bundle.
-if [ "${APP_BUNDLE}" != "${FALLBACK_BUNDLE}" ] && [ -d "${FALLBACK_BUNDLE}" ]; then
+if [ "${APP_BUNDLE}" = "${DEFAULT_BUNDLE}" ] && [ -d "${FALLBACK_BUNDLE}" ]; then
   echo "Removing stale duplicate bundle: ${FALLBACK_BUNDLE}"
   if [ -x "${LSREGISTER}" ]; then
     "${LSREGISTER}" -u "${FALLBACK_BUNDLE}" 2>/dev/null || true
