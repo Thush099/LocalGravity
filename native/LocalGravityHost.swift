@@ -66,6 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         appMenu.addItem(withTitle: "Quit LocalGravity", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
 
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "New Task", action: #selector(triggerNewTask), keyEquivalent: "n")
+        let exportItem = NSMenuItem(title: "Export Conversation…", action: #selector(triggerExport), keyEquivalent: "e")
+        exportItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(exportItem)
+        fileMenuItem.submenu = fileMenu
+
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "Edit")
@@ -81,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let viewMenuItem = NSMenuItem()
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(withTitle: "Command Palette", action: #selector(triggerPalette), keyEquivalent: "k")
+        viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(withTitle: "Reload", action: #selector(reloadWebView), keyEquivalent: "r")
         viewMenuItem.submenu = viewMenu
 
@@ -92,6 +103,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         windowMenuItem.submenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func triggerNewTask() {
+        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('newTask');")
+    }
+
+    @objc private func triggerExport() {
+        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('export');")
+    }
+
+    @objc private func triggerPalette() {
+        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('palette');")
     }
 
     @objc private func reloadWebView() {
@@ -279,6 +302,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 if response == .OK {
                     self?.sendFilesToJS(panel.urls.map { $0.path })
                 }
+            }
+        } else if type == "pickFolder" {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "Select Project Folder"
+            panel.beginSheetModal(for: window) { [weak self] response in
+                if response == .OK, let folderUrl = panel.url,
+                   let data = try? JSONSerialization.data(withJSONObject: folderUrl.path),
+                   let json = String(data: data, encoding: .utf8) {
+                    self?.webView.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
+                }
+            }
+        } else if type == "setTheme", let theme = body["theme"] as? String {
+            if theme == "light" {
+                window.appearance = NSAppearance(named: .aqua)
+                window.backgroundColor = NSColor(srgbRed: 0.961, green: 0.969, blue: 0.984, alpha: 1.0)
+            } else if theme == "dark" {
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
+            } else {
+                window.appearance = nil
+                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
             }
         } else if type == "openExternal", let urlStr = body["url"] as? String, let url = URL(string: urlStr) {
             NSWorkspace.shared.open(url)

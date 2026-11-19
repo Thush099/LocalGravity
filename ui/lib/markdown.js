@@ -64,9 +64,73 @@ export function highlightCode(rawCode, lang = '') {
   return out;
 }
 
+const MATH_SYMBOLS = {
+  alpha: 'α',
+  beta: 'β',
+  gamma: 'γ',
+  delta: 'δ',
+  epsilon: 'ε',
+  theta: 'θ',
+  lambda: 'λ',
+  mu: 'μ',
+  pi: 'π',
+  sigma: 'σ',
+  phi: 'φ',
+  omega: 'ω',
+  Delta: 'Δ',
+  Sigma: 'Σ',
+  Omega: 'Ω',
+  Pi: 'Π',
+  infty: '∞',
+  pm: '±',
+  times: '×',
+  cdot: '·',
+  div: '÷',
+  le: '≤',
+  leq: '≤',
+  ge: '≥',
+  geq: '≥',
+  ne: '≠',
+  neq: '≠',
+  approx: '≈',
+  to: '→',
+  rightarrow: '→',
+  leftarrow: '←',
+  Rightarrow: '⇒',
+  sum: '∑',
+  prod: '∏',
+  int: '∫',
+  partial: '∂',
+  nabla: '∇',
+  forall: '∀',
+  exists: '∃',
+  in: '∈',
+  notin: '∉',
+};
+
+/**
+ * Render basic LaTeX math expressions cleanly and XSS-safely with zero external dependencies.
+ */
+export function renderMathHtml(expr, display = false) {
+  let s = escapeHtml(String(expr || '').trim());
+  s = s.replace(/\\text\{([^{}]+)\}/g, '<span class="math-text">$1</span>');
+  s = s.replace(
+    /\\frac\{([^{}]+)\}\{([^{}]+)\}/g,
+    '<span class="math-frac"><span class="math-num">$1</span><span class="math-den">$2</span></span>'
+  );
+  s = s.replace(/\\sqrt\{([^{}]+)\}/g, '<span class="math-sqrt">&radic;<span class="math-radicand">$1</span></span>');
+  s = s.replace(/\\([A-Za-z]+)\b/g, (full, cmd) => MATH_SYMBOLS[cmd] || full);
+  s = s.replace(/\^\{([^{}]+)\}/g, '<sup>$1</sup>').replace(/\^([A-Za-z0-9+-]+)/g, '<sup>$1</sup>');
+  s = s.replace(/_\{([^{}]+)\}/g, '<sub>$1</sub>').replace(/_([A-Za-z0-9+-]+)/g, '<sub>$1</sub>');
+
+  return display
+    ? `<div class="math-block">${s}</div>`
+    : `<span class="math-inline">${s}</span>`;
+}
+
 function renderInline(text) {
   let out = escapeHtml(text);
-  // Protect inline code spans first
+  // Protect inline code spans, links, and valid inline LaTeX math first
   const slots = [];
   const stash = (html) => {
     const idx = slots.length;
@@ -75,6 +139,22 @@ function renderInline(text) {
   };
 
   out = out.replace(/`([^`]+)`/g, (_m, code) => stash(`<code class="inline-code">${code}</code>`));
+
+  // Inline LaTeX $...$ (excludes plain currency prices like $100 or $4.99)
+  out = out.replace(
+    /(^|[\s(])\$([^\s$][^$\n]*?[^\s$]|[^\s$\d])\$(?=$|[\s.,;:!?)\]])/g,
+    (full, prefix, inner) => {
+      if (/^\d[\d,.\s]*(?:k|m|b|to|-)?$/i.test(inner)) return full;
+      const decodedInner = inner
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'");
+      return `${prefix}${stash(renderMathHtml(decodedInner, false))}`;
+    }
+  );
+
   out = out.replace(
     /\[([^\]]+)\]\(((?:https?:\/\/|file:\/\/)[^\s)]+)\)/g,
     (_m, label, url) => stash(`<a href="${url}" class="md-link" target="_blank" rel="noopener noreferrer">${label}</a>`)
@@ -113,12 +193,39 @@ function parseTableAlignments(line) {
 }
 
 function renderCodeBlock(rawCode, codeLang) {
-  const highlighted = highlightCode(rawCode, codeLang);
-  return `<div class="code-block"><div class="code-header"><span>${escapeHtml(codeLang)}</span><button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></div><pre><code>${highlighted}</code></pre></div>`;
+  const lang = String(codeLang || 'text').toLowerCase();
+  const highlighted = highlightCode(rawCode, lang);
+  const lineCount = String(rawCode || '').split('\n').length;
+  const isPreviewable = lang === 'html' || lang === 'htm' || lang === 'svg';
+  const isArtifact = isPreviewable || lineCount >= 4;
+  const canvasBtn = isArtifact
+    ? `<button type="button" class="open-artifact-btn" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(rawCode)}">${isPreviewable ? 'Preview in Canvas' : 'Open in Canvas'}</button>`
+    : '';
+  const artifactPill = isPreviewable
+    ? `<button type="button" class="artifact-card-trigger open-artifact-btn" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(rawCode)}"><span><strong>${lang === 'svg' ? 'SVG Vector Graphic' : 'Interactive HTML Artifact'}</strong> · Isolated Sandbox</span><span>Open Canvas ↗</span></button>`
+    : '';
+  return `<div class="code-block"><div class="code-header"><span>${escapeHtml(lang)}</span><span class="code-header-actions">${canvasBtn}<button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></span></div><pre><code>${highlighted}</code></pre>${artifactPill}</div>`;
+}
+
+function renderQuoteOrCallout(bqLines) {
+  if (!bqLines || bqLines.length === 0) return '';
+  const calloutMatch = bqLines[0].match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
+  if (calloutMatch) {
+    const kind = calloutMatch[1].toLowerCase();
+    const label = calloutMatch[1].toUpperCase();
+    const bodyLines = [];
+    if (calloutMatch[2]) bodyLines.push(calloutMatch[2]);
+    for (let k = 1; k < bqLines.length; k++) {
+      if (bqLines[k]) bodyLines.push(bqLines[k]);
+    }
+    const bodyHtml = bodyLines.map((l) => `<p class="md-p">${renderInline(l)}</p>`).join('');
+    return `<div class="md-callout md-callout-${kind}"><div class="md-callout-title">${label}</div><div class="md-callout-body">${bodyHtml}</div></div>`;
+  }
+  return `<blockquote class="md-quote">${bqLines.map((l) => renderInline(l)).join('<br />')}</blockquote>`;
 }
 
 /**
- * Render Markdown safely to HTML with copyable syntax-highlighted code blocks, GFM tables, and task lists.
+ * Render Markdown safely to HTML with syntax-highlighted code blocks, artifacts, math, callouts, GFM tables, and task lists.
  */
 export function renderMarkdown(markdown) {
   const src = String(markdown || '');
@@ -164,6 +271,30 @@ export function renderMarkdown(markdown) {
 
     if (!line.trim()) {
       closeList();
+      continue;
+    }
+
+    // Display math blocks $$ ... $$ (single-line or multi-line)
+    if (line.trim().startsWith('$$')) {
+      closeList();
+      const singleLine = line.trim().match(/^\$\$(.+)\$\$$/);
+      if (singleLine) {
+        html.push(renderMathHtml(singleLine[1], true));
+        continue;
+      }
+      const mathLines = [];
+      const firstRest = line.trim().slice(2).trim();
+      if (firstRest) mathLines.push(firstRest);
+      i++;
+      while (i < lines.length && !lines[i].trim().endsWith('$$')) {
+        mathLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) {
+        const lastPart = lines[i].trim().slice(0, -2).trim();
+        if (lastPart) mathLines.push(lastPart);
+      }
+      html.push(renderMathHtml(mathLines.join(' '), true));
       continue;
     }
 
@@ -222,7 +353,14 @@ export function renderMarkdown(markdown) {
     const bqMatch = line.match(/^>\s?(.*)$/);
     if (bqMatch) {
       closeList();
-      html.push(`<blockquote class="md-quote">${renderInline(bqMatch[1])}</blockquote>`);
+      const bqLines = [bqMatch[1]];
+      while (i + 1 < lines.length) {
+        const nextBq = lines[i + 1].match(/^>\s?(.*)$/);
+        if (!nextBq) break;
+        bqLines.push(nextBq[1]);
+        i++;
+      }
+      html.push(renderQuoteOrCallout(bqLines));
       continue;
     }
 

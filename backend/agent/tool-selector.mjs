@@ -59,12 +59,29 @@ const DOMAIN_TOOL_GROUPS = [
  */
 export function selectToolsForTurn(
   allTools = [],
-  { provider = 'ollama', userMessage = '', sessionMessages = [], attachments = [] } = {}
+  { provider = 'ollama', userMessage = '', sessionMessages = [], attachments = [], mode = 'auto' } = {}
 ) {
   if (!Array.isArray(allTools) || allTools.length === 0) return [];
   if (provider !== 'ollama') return allTools;
 
   const selected = new Set(CORE_LOCAL_TOOLS);
+
+  if (mode === 'researcher') {
+    for (const name of ['search_web', 'fetch_url', 'open_url']) selected.add(name);
+  } else if (mode === 'macops') {
+    for (const name of [
+      'spotlight_search',
+      'manage_notes',
+      'open_app',
+      'run_shortcut',
+      'list_schedule_items',
+      'add_schedule_item',
+    ]) {
+      selected.add(name);
+    }
+  } else if (mode === 'writer') {
+    for (const name of ['copy_to_clipboard', 'paste_from_clipboard', 'manage_notes']) selected.add(name);
+  }
 
   // Keep any tool already invoked in this session active for KV-cache & multi-turn continuity
   const recentTextParts = [String(userMessage || '')];

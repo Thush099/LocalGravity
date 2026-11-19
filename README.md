@@ -27,10 +27,11 @@ Most AI tools force a compromise: browser chats are siloed from your Mac and cha
 | Capability | Browser AI Chat | Terminal CLI | LocalGravity |
 | --- | --- | --- | --- |
 | **Zero-subscription local models** | No | Sometimes | **Yes** (Ollama tuned for 16 GB Apple Silicon + 1-click RAM unload) |
-| **Native Mac control (34 tools)** | None | Shell only | **Files, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
+| **Live split-pane Artifact Canvas** | Cloud-only | None | **Side-by-side HTML/SVG preview in an isolated sandbox + Save/Copy** |
+| **Native Mac control (34 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
+| **Full conversation control & modes** | Varies | Rare | **Inline Edit & re-run, Branch, Pin/Rename, Engineer/Researcher/Writer/Mac Ops modes** |
 | **Live hardware & schedule visibility** | None | None | **Real-time SVG CPU/RAM/GPU graphs, Memory donut & Timetable** |
-| **Visual inspection & safety gate** | Uploads only | Text-only | **Video/screen vision inspection, syntax diffs & Ask-mode approval** |
-| **Persistent skills & auto-learning** | Locked in cloud | Manual flags | **30 starter `SKILL.md` playbooks, GitHub imports & `LEARNED_FIXES.md`** |
+| **Voice, LaTeX & persistent skills** | Paid / online | Flags only | **Offline macOS Read Aloud, zero-dep LaTeX math, callouts, 30+ `SKILL.md` & `LEARNED_FIXES.md`** |
 
 ---
 
@@ -40,33 +41,39 @@ Most AI tools force a compromise: browser chats are siloed from your Mac and cha
   <tr>
     <td width="50%">
       <strong>Command Center Welcome</strong><br />
-      <sub>Clear capabilities strip, categorized task starters, one-click Screen &amp; Clipboard composer buttons, and <code>/</code> slash command autocomplete.</sub>
+      <sub>Categorized task starters, Agent Modes (<code>Auto</code>, <code>Engineer</code>, <code>Researcher</code>, <code>Writer</code>, <code>Mac Ops</code>), project workspace folder picker, microphone dictation, and <code>/</code> slash command autocomplete.</sub>
       <br /><br />
       <img src="docs/screenshots/agent-welcome.png" alt="LocalGravity Command Center Welcome" width="100%" />
     </td>
     <td width="50%">
-      <strong>Agent Workspace</strong><br />
-      <sub>Live task plans, collapsible multi-tool summaries, syntax-highlighted code blocks, GFM tables, turn speed telemetry, and follow-up chips.</sub>
+      <strong>Editorial Agent Workspace</strong><br />
+      <sub>Pinned/Recent sidebar groups, live task plans, collapsible multi-tool summaries, GitHub callouts, zero-dependency LaTeX math, GFM tables, and inline Edit/Regenerate/Branch/Read Aloud actions.</sub>
       <br /><br />
       <img src="docs/screenshots/agent-workspace.png" alt="LocalGravity Agent Workspace" width="100%" />
     </td>
   </tr>
   <tr>
     <td width="50%">
+      <strong>Live Split-Pane Artifact Canvas</strong><br />
+      <sub>Preview HTML/SVG widgets side-by-side in a sandboxed iframe (<code>sandbox="allow-scripts"</code> with isolated origin), toggle to highlighted Code view, Copy, or Save via native macOS dialog.</sub>
+      <br /><br />
+      <img src="docs/screenshots/artifact-canvas.png" alt="LocalGravity Split-Pane Artifact Canvas" width="100%" />
+    </td>
+    <td width="50%">
       <strong>System Monitor &amp; Live SVG Graphs</strong><br />
       <sub>60-sample CPU/Memory/GPU telemetry curve with filter tabs, Unified Memory composition donut, swap &amp; Ollama VRAM monitor, and CPU/Memory process sort.</sub>
       <br /><br />
       <img src="docs/screenshots/system-monitor.png" alt="LocalGravity System Monitor with Telemetry Chart and Memory Donut" width="100%" />
     </td>
+  </tr>
+  <tr>
     <td width="50%">
       <strong>Timetable &amp; Focus Analytics</strong><br />
       <sub>Weekly focus-hour SVG distribution bar chart, recurring weekly blocks, one-off dated reminders, and 5-minute macOS notifications.</sub>
       <br /><br />
       <img src="docs/screenshots/timetable.png" alt="LocalGravity Timetable and Weekly Focus Allocation Chart" width="100%" />
     </td>
-  </tr>
-  <tr>
-    <td colspan="2">
+    <td width="50%">
       <strong>Skills &amp; Knowledge Base</strong><br />
       <sub>30 starter <code>SKILL.md</code> playbooks, local library browser, GitHub URL import/refresh, self-learned mistake rules (<code>LEARNED_FIXES.md</code>), persistent <code>MEMORY.md</code>, and Obsidian Dark / Porcelain Light themes.</sub>
       <br /><br />
@@ -106,23 +113,22 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 ## Key capabilities
 
 ### Engine & Performance on 16 GB Macs
-- **61% lower Turn-0 overhead on Ollama:** Turn-aware tool routing (`backend/agent/tool-selector.mjs`) sends a focused 10-tool core on local models and activates domain tool groups (web search, Spotlight, screenshots, Apple Notes, media, schedule, knowledge) on demand while keeping them sticky across a session for KV-cache reuse. Combined with compact local skill indexing, Turn-0 fixed overhead drops from ~6,002 tokens to ~2,328 tokens.
+- **Turn-0 local overhead under 2,200 tokens:** Turn-aware tool routing (`backend/agent/tool-selector.mjs`) sends a focused 10-tool core in `Auto` mode on local Ollama models and activates domain tool groups on demand (or switches cleanly when you select `Engineer`, `Researcher`, `Writer`, or `Mac Ops`), keeping Turn-0 overhead under 2,200 tokens even with all 30 starter skills installed.
 - **Zero mid-turn `terminated` timeouts:** Local Ollama streams over a dedicated `node:http` socket (`setTimeout(0)`, `TCP_NODELAY`) rather than hitting `undici`'s 5-minute cutoff, paired with 15-second SSE keepalives and automatic retry on transient local disconnects.
 - **One-click GPU RAM recovery:** Both the Dashboard and System Monitor show resident Ollama GPU memory and swap pressure, with an **Unload model (Free RAM)** action (`keep_alive: 0`) that frees unified memory immediately.
 - **Fast mode vs. Deep Think:** Toggle **Deep Think: Off / On** directly in the header, and track exact context window usage across the `8K` / `16K` / `32K` budget with automatic compaction at 70%.
 
-### 34 Built-In Tools & Everyday Workflows
-- **Files, Code & Search:** `list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, **`spotlight_search`** (`mdfind` index lookup across the entire Mac), and `run_command`.
-- **Live Web & Knowledge:** **`search_web`** (API-key-free public DuckDuckGo search), `fetch_url`, **`open_url`**, and full CRUD/search over `MEMORY.md` and Knowledge Base documents.
-- **Vision, Screen & Media:** **`take_screenshot`** (silent macOS capture scaled for model vision) and `inspect_media` (extracts keyframes via `ffmpeg` or resizes photos via `sips`).
-- **macOS Native Actions:** **`manage_notes`** (list, search, read, or create Apple Notes via argument-isolated AppleScript), `copy_to_clipboard` / `paste_from_clipboard`, `show_notification`, `open_app`, `run_shortcut`, `run_applescript`, `set_reminder`, `calculate` (injection-safe math parser), `update_plan`, `system_stats`, and timetable CRUD (`add_schedule_item`, `list_schedule_items`, `remove_schedule_item`).
-- **World-Class Chat UX:** Type `/` for instant **slash-command & skill autocomplete** (`/health`, `/brief`, `/screenshot`, `/clipboard`, `/clean`, `/web`, `/spotlight`, `/notes`, `/compact`, `/export`, `/unload`, plus all 30+ installed skills). Use composer buttons to capture screenshots or insert clipboard text in one click, queue multiple follow-up messages while streaming, inspect collapsible multi-tool summaries and syntax-highlighted code blocks, track per-turn `tok/s` telemetry, click context-aware follow-up chips, or switch between **Auto / Obsidian Dark / Porcelain Light** themes.
+### Split-Pane Artifact Canvas, Workspaces & Chat UX
+- **Live Split-Pane Artifact Canvas:** Any HTML or SVG block renders live next to the conversation inside `/preview-sandbox/:id` with an isolated `<iframe sandbox="allow-scripts">` origin and zero parent DOM or API access. Switch between Preview and syntax-highlighted Code views, browse multiple artifacts from a single chat, copy source, or export to disk via macOS Save panel.
+- **Per-Chat Project Folders & Conversation Control:** Pick any local directory from the workspace header (`NSOpenPanel` in the Mac app) to scope tools cleanly to that repository. Inline **Edit & re-run** truncates and replays from that prompt, **Regenerate** reruns clean from the previous turn, **Branch** forks the conversation into a separate session up to any message, and sidebar **Pin / Rename** keeps key threads at the top.
+- **Agent Modes, Scientific Markdown, Dictation & Offline Voice:** Tailor behavior per chat (`Auto`, `Engineer`, `Researcher`, `Writer`, `Mac Ops`); render `$$...$$` display math, inline `$...$` formulas (without misfiring on prices like `$149.00`), and GitHub `[!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]` callouts; dictate prompts from the microphone; or listen to replies offline via macOS `say` (`Read aloud` / `Stop reading`).
+- **34 Built-In Mac & Web Tools:** Files (`list_dir`, `read_file`, `write_file`, `edit_file`, `search_files`, `spotlight_search`, `run_command`), web & knowledge (`search_web`, `fetch_url`, `open_url`, `MEMORY.md` & Knowledge CRUD), media & screen (`take_screenshot`, `inspect_media`), and macOS automation (`manage_notes`, clipboard, notifications, apps, Shortcuts, AppleScript, reminders, calculator, plan updates, system stats, and timetable CRUD).
 
 ### Security & Runtime Hardening
-- **Authenticated loopback API:** Fresh 32-byte per-launch `X-Auth-Token` bound strictly to `127.0.0.1` on an ephemeral port.
-- **Browser & CSRF defenses:** Mutating routes reject foreign `Origin` headers; UI enforces `script-src 'self'` CSP alongside `nosniff` and `DENY`.
+- **Authenticated loopback API:** Fresh 32-byte per-launch `X-Auth-Token` bound strictly to `127.0.0.1` on an ephemeral port (also required on `/api/artifacts/stage`, `/api/chat/speak`, and session mutations).
+- **Isolated Artifact Sandbox & CSRF defenses:** Mutating routes reject foreign `Origin` headers. The main UI enforces strict `script-src 'self'; frame-src 'self'` CSP, while `/preview-sandbox/:id` enforces `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'` so previewed widgets cannot read parent state or local endpoints.
 - **Unified SSRF & redirect protection (`backend/net-guard.mjs`):** Blocks loopback, RFC1918, CGNAT, link-local/cloud metadata (`169.254.169.254`), `.local`/`.internal`, and IPv6 private/IPv4-mapped hosts, and validates every `3xx` redirect hop manually across `search_web`, `fetch_url`, skill URL imports, and knowledge URL imports.
-- **Approval gate & child supervision:** **Ask** mode pauses mutating tools (file writes outside managed state, shell commands, AppleScript, Shortcuts, creating Apple Notes) for user approval, and known catastrophic command chains are blocked. Swift supervises the Node server via `stdin` pipe + `LOCALGRAVITY_PARENT_PID` so the backend exits immediately when the app quits.
+- **Approval gate & child supervision:** **Ask** mode pauses mutating tools for user approval with editable previews, and known catastrophic command chains are blocked. Swift supervises the Node server via `stdin` pipe + `LOCALGRAVITY_PARENT_PID` and cleans up any active `/usr/bin/say` child on exit.
 
 ---
 
@@ -130,14 +136,15 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘K` | Open Command Palette (tasks, skills, knowledge, theme, RAM actions) |
+| `⌘K` | Open Command Palette (also in View menu) |
+| `⌘N` | Create New Task (also in File menu) |
 | `⌘1` – `⌘4` | Switch between Dashboard, Agent, System Monitor, and Timetable |
 | `⌘\` | Toggle collapsible sidebar (floating expand button appears when hidden) |
 | `⌘↵` | Send message (or queue follow-up while a run is active) |
 | `⌘⇧E` | Export current conversation to Markdown via native Save dialog |
 | `/` (in composer) | Open interactive Slash Command & Skill autocomplete menu |
 | `⌘/` | Show keyboard shortcuts sheet |
-| `Esc` | Close active slash menu, dialog, palette, or overlay |
+| `Esc` | Close active slash menu, Artifact Canvas, dialog, palette, or overlay |
 
 ---
 

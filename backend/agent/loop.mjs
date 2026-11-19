@@ -158,6 +158,7 @@ export async function runAgentTurn({
   requestApproval,
   abortSignal,
   persistSession = true,
+  mode = 'auto',
   cwd,
 }) {
   const turnStartedAt = Date.now();
@@ -215,6 +216,7 @@ export async function runAgentTurn({
     isHeadless,
     allowAutoRun,
     compact: isLocalOllama,
+    mode,
     cwd,
   });
 
@@ -223,6 +225,7 @@ export async function runAgentTurn({
     userMessage: fullUserText,
     sessionMessages: session.messages,
     attachments,
+    mode,
   });
   const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
   const systemTokens = Math.ceil(systemPrompt.length / 3.5) + 8;

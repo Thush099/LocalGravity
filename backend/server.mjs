@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -101,11 +101,87 @@ const UI_CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob:",
   "connect-src 'self'",
   "font-src 'self'",
+  "frame-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
 ].join('; ');
+
+const ARTIFACT_SANDBOX_CSP = [
+  'sandbox allow-scripts',
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  'img-src data: blob:',
+  'font-src data:',
+  "frame-ancestors 'self'",
+].join('; ');
+
+const ALLOWED_SESSION_MODES = new Set(['auto', 'engineer', 'researcher', 'writer', 'macops']);
+
+function formatSmartTitle(raw) {
+  const cleaned = String(raw || '')
+    .replace(/^\/[a-z0-9_-]+\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'New Task';
+  const capped = cleaned.length > 52 ? `${cleaned.slice(0, 49).trimEnd()}...` : cleaned;
+  return capped.charAt(0).toUpperCase() + capped.slice(1);
+}
+
+function stripMarkdownForSpeech(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' (code snippet omitted) ')
+    .replace(/\$\$[\s\S]*?\$\$/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[`*_>#~|-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 3000);
+}
+
+function buildSandboxArtifactHtml({ code = '', lang = 'html', title = 'Artifact Preview' } = {}) {
+  const raw = String(code || '');
+  const lowerLang = String(lang || 'html').toLowerCase().trim();
+  const safeTitle = String(title || 'Artifact Preview').replace(/[<>&"]/g, '');
+
+  if (lowerLang === 'svg') {
+    return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${safeTitle}</title>
+<style>
+  html, body { margin: 0; padding: 16px; min-height: 100%; box-sizing: border-box; display: grid; place-items: center; background: #0b0d11; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+  svg { max-width: 100%; height: auto; display: block; }
+  @media (prefers-color-scheme: light) { html, body { background: #ffffff; color: #0f172a; } }
+</style>
+</head>
+<body>${raw}</body>
+</html>`;
+  }
+
+  if (/<html[\s>]|<!doctype/i.test(raw)) {
+    return raw;
+  }
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${safeTitle}</title>
+<style>
+  body { margin: 20px; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; line-height: 1.5; background: #0b0d11; color: #f1f5f9; }
+  @media (prefers-color-scheme: light) { body { background: #ffffff; color: #0f172a; } }
+</style>
+</head>
+<body>${raw}</body>
+</html>`;
+}
 
 let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
@@ -259,6 +335,17 @@ export function createAgentServer({
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
   const metricsHistory = [];
+  const previewArtifacts = new Map();
+  let activeSpeakProc = null;
+  const stopSpeaking = () => {
+    if (!activeSpeakProc) return;
+    try {
+      activeSpeakProc.kill('SIGTERM');
+    } catch {
+      // already dead
+    }
+    activeSpeakProc = null;
+  };
   let agendaStop = null;
   const resolveRunApprovals = (runState, reason) => {
     if (!runState?.approvals) return;
@@ -273,8 +360,26 @@ export function createAgentServer({
     const pathname = url.pathname;
 
     try {
-      // Static UI assets + bootstrap cookie
+      // Static UI assets + bootstrap cookie + sandboxed artifact iframe
       if (!pathname.startsWith('/api/')) {
+        if (pathname.startsWith('/preview-sandbox/')) {
+          const artifactId = decodeURIComponent(pathname.slice('/preview-sandbox/'.length));
+          const html = previewArtifacts.get(artifactId);
+          if (!html) {
+            res.writeHead(404).end('Artifact preview expired or not found');
+            return;
+          }
+          res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': ARTIFACT_SANDBOX_CSP,
+            'X-Content-Type-Options': 'nosniff',
+            'Referrer-Policy': 'no-referrer',
+            'Cache-Control': 'no-store',
+          });
+          res.end(html);
+          return;
+        }
+
         const queryToken = url.searchParams.get('token');
         if (pathname === '/' && queryToken && safeTokenMatch(queryToken, token)) {
           res.setHeader('Set-Cookie', `lg_auth=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`);
@@ -406,6 +511,48 @@ export function createAgentServer({
         });
       }
 
+      if (req.method === 'POST' && pathname === '/api/chat/speak') {
+        const body = await readJsonBody(req);
+        const speech = stripMarkdownForSpeech(body.text);
+        if (!speech) return sendJson(res, 400, { ok: false, error: 'Nothing to read aloud.' });
+        stopSpeaking();
+        const child = spawn('/usr/bin/say', [speech], { stdio: 'ignore' });
+        activeSpeakProc = child;
+        child.on('exit', () => {
+          if (activeSpeakProc === child) activeSpeakProc = null;
+        });
+        child.on('error', () => {
+          if (activeSpeakProc === child) activeSpeakProc = null;
+        });
+        return sendJson(res, 200, { ok: true, speaking: true });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/chat/speak/stop') {
+        stopSpeaking();
+        return sendJson(res, 200, { ok: true, speaking: false });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/artifacts/stage') {
+        const body = await readJsonBody(req);
+        const code = String(body.code ?? '');
+        if (!code.trim()) return sendJson(res, 400, { ok: false, error: 'Artifact code is empty.' });
+        if (code.length > 512 * 1024) {
+          return sendJson(res, 413, { ok: false, error: 'Artifact exceeds 512 KB preview limit.' });
+        }
+        const id = crypto.randomBytes(16).toString('hex');
+        const html = buildSandboxArtifactHtml({
+          code,
+          lang: body.lang,
+          title: body.title,
+        });
+        previewArtifacts.set(id, html);
+        if (previewArtifacts.size > 40) {
+          const oldest = previewArtifacts.keys().next().value;
+          if (oldest) previewArtifacts.delete(oldest);
+        }
+        return sendJson(res, 200, { ok: true, id, previewUrl: `/preview-sandbox/${id}` });
+      }
+
       // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)
       if (req.method === 'POST' && pathname === '/api/reminders') {
         const body = await readJsonBody(req);
@@ -481,7 +628,7 @@ export function createAgentServer({
         return sendJson(res, 200, { ok: true, results });
       }
 
-      const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(run|approve|cancel|compact))?$/);
+      const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(run|approve|cancel|compact|truncate|fork))?$/);
       if (sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]);
         const action = sessionMatch[2];
@@ -492,9 +639,85 @@ export function createAgentServer({
           return sendJson(res, 200, { ok: true, session });
         }
 
+        if (!action && req.method === 'PATCH') {
+          const body = await readJsonBody(req);
+          const session = await loadSession(sessionId, paths);
+          if (!session) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+
+          if (typeof body.title === 'string' && body.title.trim()) {
+            session.title = body.title.trim().slice(0, 80);
+          }
+          if (typeof body.pinned === 'boolean') {
+            session.pinned = body.pinned;
+          }
+          if (typeof body.mode === 'string' && ALLOWED_SESSION_MODES.has(body.mode)) {
+            session.mode = body.mode;
+          }
+          if (typeof body.provider === 'string' && body.provider.trim()) {
+            session.provider = body.provider.trim();
+          }
+          if (typeof body.model === 'string' && body.model.trim()) {
+            session.model = body.model.trim();
+          }
+          if (typeof body.cwd === 'string') {
+            const rawCwd = body.cwd.trim();
+            if (!rawCwd) {
+              session.cwd = '';
+            } else {
+              const expanded = expandUserPath(rawCwd);
+              const st = await fs.stat(expanded).catch(() => null);
+              if (!st || !st.isDirectory()) {
+                return sendJson(res, 400, { ok: false, error: `Folder not found: ${expanded}` });
+              }
+              session.cwd = expanded;
+            }
+          }
+          const saved = await saveSession(session, paths);
+          return sendJson(res, 200, { ok: true, session: saved });
+        }
+
         if (!action && req.method === 'DELETE') {
           const deleted = await deleteSession(sessionId, paths);
           return sendJson(res, 200, { ok: true, deleted });
+        }
+
+        if (action === 'truncate' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const session = await loadSession(sessionId, paths);
+          if (!session) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+          const msgs = Array.isArray(session.messages) ? session.messages : [];
+          const keepCount = Math.max(0, Math.min(msgs.length, Math.floor(Number(body.keepCount) || 0)));
+          session.messages = msgs.slice(0, keepCount);
+          const saved = await saveSession(session, paths);
+          return sendJson(res, 200, { ok: true, session: saved });
+        }
+
+        if (action === 'fork' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const source = await loadSession(sessionId, paths);
+          if (!source) return sendJson(res, 404, { ok: false, error: 'Session not found' });
+          const msgs = Array.isArray(source.messages) ? source.messages : [];
+          const upTo =
+            body.upToIndex !== undefined
+              ? Math.max(0, Math.min(msgs.length, Math.floor(Number(body.upToIndex) || 0)))
+              : msgs.length;
+          const branchId = `task-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+          const baseTitle = String(source.title || 'Untitled').replace(/ \(Branch\)$/, '');
+          const forked = await saveSession(
+            {
+              id: branchId,
+              title: `${baseTitle.slice(0, 44)} (Branch)`,
+              source: 'interactive',
+              provider: source.provider,
+              model: source.model,
+              cwd: source.cwd || '',
+              mode: source.mode || 'auto',
+              pinned: false,
+              messages: structuredClone(msgs.slice(0, upTo)),
+            },
+            paths
+          );
+          return sendJson(res, 200, { ok: true, session: forked });
         }
 
         if (action === 'approve' && req.method === 'POST') {
@@ -552,18 +775,22 @@ export function createAgentServer({
           if (!session) {
             session = {
               id: sessionId,
-              title: String(body.message || 'New Task').slice(0, 48) || 'New Task',
+              title: formatSmartTitle(body.message),
               source: 'interactive',
               provider: body.provider || cfg.provider,
               model: body.model || cfg.model,
+              cwd: typeof body.cwd === 'string' ? expandUserPath(body.cwd.trim()) : '',
+              mode: typeof body.mode === 'string' && ALLOWED_SESSION_MODES.has(body.mode) ? body.mode : 'auto',
               messages: [],
             };
           } else if (session.title === 'New Task' && body.message) {
-            session.title = String(body.message).replace(/\s+/g, ' ').slice(0, 48);
+            session.title = formatSmartTitle(body.message);
           }
 
           if (body.provider) session.provider = body.provider;
           if (body.model) session.model = body.model;
+          if (typeof body.mode === 'string' && ALLOWED_SESSION_MODES.has(body.mode)) session.mode = body.mode;
+          if (typeof body.cwd === 'string') session.cwd = body.cwd.trim() ? expandUserPath(body.cwd.trim()) : '';
 
           res.writeHead(200, {
             'Content-Type': 'text/event-stream; charset=utf-8',
@@ -616,6 +843,8 @@ export function createAgentServer({
               attachments: Array.isArray(body.attachments) ? body.attachments : [],
               paths,
               providerConfig: effectiveConfig,
+              mode: body.mode || session.mode || 'auto',
+              cwd: session.cwd || undefined,
               onEvent: emitSse,
               abortSignal: abortController.signal,
               requestApproval: (approvalReq) =>
@@ -1015,6 +1244,7 @@ export function createAgentServer({
       return { port: addr.port, authToken: token };
     },
     async stop() {
+      stopSpeaking();
       agendaStop?.();
       agendaStop = null;
       for (const runState of activeRuns.values()) {

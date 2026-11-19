@@ -1,5 +1,16 @@
 import os from 'node:os';
 
+const MODE_DIRECTIVES = {
+  engineer:
+    'Active Mode (Engineer): Inspect relevant files before editing, keep diffs clean and tested, and run real checks before reporting success.',
+  researcher:
+    'Active Mode (Researcher): Use search_web and fetch_url to verify live facts, synthesize cleanly with tables, and cite clickable URLs.',
+  writer:
+    'Active Mode (Writer): Write natural, direct prose with zero AI clichés, no filler openers, and clear structure preserving the user voice.',
+  macops:
+    'Active Mode (Mac Ops): Prefer native macOS tools (system_stats, spotlight_search, manage_notes, timetable, shortcuts, clipboard) directly.',
+};
+
 /**
  * Build a concise, high-signal system prompt tailored for fast, decisive execution across local and cloud models.
  */
@@ -14,6 +25,7 @@ export function buildSystemPrompt({
   isHeadless = false,
   allowAutoRun = false,
   compact = false,
+  mode = 'auto',
   cwd,
 }) {
   const skillLines =
@@ -52,9 +64,12 @@ export function buildSystemPrompt({
       ? 'Mode: Interactive Auto-Run (catastrophic commands permanently blocked).'
       : 'Mode: Interactive Ask-before-risky (mutating commands and external file edits prompt user approval).';
 
+  const modeDirective = MODE_DIRECTIVES[mode] || '';
+
   if (compact) {
     return [
       `You are LocalGravity, a fast autonomous macOS agent (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}). ${modeLine}`,
+      ...(modeDirective ? [modeDirective] : []),
       '',
       '## Rules',
       '1. Act directly with tools—do not call `list_skills`/`list_knowledge` unless you modified them. Read a skill (`read_skill(name)`) only when it clearly matches.',
@@ -81,6 +96,7 @@ export function buildSystemPrompt({
     `You are LocalGravity, a smart autonomous macOS agent running on Apple Silicon (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}).`,
     '',
     modeLine,
+    ...(modeDirective ? ['', modeDirective] : []),
     '',
     '## Core Operating Rules',
     '1. **Act decisively without wasted steps:** All installed skills and knowledge docs are ALREADY listed below. Do NOT call `list_skills` or `list_knowledge` unless you just created/modified one. Read ONLY the specific matching skill (`read_skill(name)`) or doc (`read_knowledge(name)`) you need, then act immediately.',

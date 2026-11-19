@@ -1,5 +1,5 @@
 import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } from './lib/api.js';
-import { escapeHtml, renderMarkdown } from './lib/markdown.js';
+import { escapeHtml, highlightCode, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
@@ -215,6 +215,13 @@ const state = {
   schedule: [],
   scheduleToday: [],
   monitorTimer: null,
+  activeArtifact: null,
+  artifactsList: [],
+  artifactDrawerOpen: false,
+  editingMessageIndex: null,
+  speakingMessageIndex: null,
+  voiceRecognition: null,
+  isListening: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -261,6 +268,9 @@ function applyTheme(mode = 'auto', persist = true) {
   if (btn) {
     btn.textContent = valid === 'dark' ? 'Dark' : valid === 'light' ? 'Light' : 'Auto';
     btn.title = `Theme: ${btn.textContent} (click to switch)`;
+  }
+  if (hasSwiftBridge()) {
+    postSwiftAction('setTheme', { theme: valid });
   }
   if (persist) {
     try {
@@ -389,6 +399,16 @@ window.__lgSetToken = (token) => setAuthToken(token);
 window.__lgFileSaved = (savedPath) => {
   const base = String(savedPath || '').split('/').pop() || 'file';
   showToast(`Saved ${base}`);
+};
+window.__lgFolderPicked = async (folderPath) => {
+  if (folderPath) {
+    await setSessionWorkspaceCwd(folderPath).catch((err) => showToast(err.message));
+  }
+};
+window.__lgMenuAction = (action) => {
+  if (action === 'newTask') createNewTask();
+  else if (action === 'export') exportActiveConversation();
+  else if (action === 'palette') openCommandPalette();
 };
 window.__lgReceiveFiles = async (filePaths) => {
   if (!Array.isArray(filePaths)) return;
@@ -925,6 +945,338 @@ function renderSidebarStatus() {
     system.freeDiskGb !== null ? `SSD: ${system.freeDiskGb} GB free` : 'Disk info unavailable';
 }
 
+function syncSessionToolbar() {
+  const cwdLabel = $('#workspace-cwd-label');
+  const cwdBtn = $('#workspace-cwd-btn');
+  const cwd = state.activeSession?.cwd || '';
+  if (cwdLabel) {
+    if (!cwd) {
+      cwdLabel.textContent = 'Home (~)';
+    } else {
+      const parts = cwd.split('/').filter(Boolean);
+      cwdLabel.textContent = parts.pop() || cwd;
+    }
+  }
+  if (cwdBtn) {
+    cwdBtn.title = cwd
+      ? `Working folder: ${cwd} (click to change)`
+      : 'Select project working folder for this chat';
+  }
+  const modeSelect = $('#composer-mode-select');
+  if (modeSelect) {
+    modeSelect.value = state.activeSession?.mode || 'auto';
+  }
+}
+
+async function ensureActiveSession(defaultTitle = 'New Task') {
+  if (state.activeSession?.id) return state.activeSession;
+  const created = await apiRequest('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: defaultTitle,
+      mode: $('#composer-mode-select')?.value || 'auto',
+    }),
+  });
+  state.activeSession = created.session;
+  syncSessionToolbar();
+  await loadSessions().catch(() => {});
+  return state.activeSession;
+}
+
+async function setSessionWorkspaceCwd(cwd) {
+  const session = await ensureActiveSession();
+  const res = await apiRequest(`/api/sessions/${encodeURIComponent(session.id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ cwd: cwd || '' }),
+  });
+  state.activeSession = res.session;
+  syncSessionToolbar();
+  await loadSessions().catch(() => {});
+  showToast(res.session.cwd ? `Workspace folder: ${res.session.cwd}` : 'Workspace reset to Home (~)');
+}
+
+function pickWorkspaceFolder() {
+  if (hasSwiftBridge()) {
+    postSwiftAction('pickFolder');
+    return;
+  }
+  openModal(
+    'Project Working Folder',
+    `
+    <div class="form-field">
+      <label>Absolute folder path</label>
+      <input id="m-cwd-input" class="text-input" value="${escapeHtml(state.activeSession?.cwd || '')}" placeholder="/Users/you/Projects/my-app" />
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button type="button" id="m-cwd-reset" class="secondary-btn">Use Home (~)</button>
+      <button type="button" id="m-cwd-save" class="primary-btn">Set Folder</button>
+    </div>`
+  );
+  $('#m-cwd-input')?.focus();
+  $('#m-cwd-reset')?.addEventListener('click', async () => {
+    try {
+      await setSessionWorkspaceCwd('');
+      closeModal();
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+  $('#m-cwd-save')?.addEventListener('click', async () => {
+    try {
+      const nextCwd = ($('#m-cwd-input')?.value || '').trim();
+      await setSessionWorkspaceCwd(nextCwd);
+      closeModal();
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+}
+
+function openRenameSessionModal(session) {
+  if (!session?.id) return;
+  openModal(
+    'Rename Conversation',
+    `
+    <div class="form-field">
+      <label>Title</label>
+      <input id="m-session-title" class="text-input" value="${escapeHtml(session.title || '')}" placeholder="Conversation title" />
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button type="button" id="m-rename-cancel" class="secondary-btn">Cancel</button>
+      <button type="button" id="m-rename-save" class="primary-btn">Save</button>
+    </div>`
+  );
+  const input = $('#m-session-title');
+  input?.focus();
+  input?.select();
+  $('#m-rename-cancel')?.addEventListener('click', closeModal);
+  const saveRename = async () => {
+    const title = (input?.value || '').trim();
+    if (!title) return;
+    try {
+      const res = await apiRequest(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      });
+      if (state.activeSession?.id === session.id) {
+        state.activeSession = res.session;
+      }
+      await loadSessions();
+      closeModal();
+      showToast('Conversation renamed');
+    } catch (err) {
+      showToast(err.message);
+    }
+  };
+  $('#m-rename-save')?.addEventListener('click', saveRename);
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveRename();
+    }
+  });
+}
+
+function isPreviewableArtifactLang(lang = '') {
+  const norm = String(lang || '').trim().toLowerCase();
+  return norm === 'html' || norm === 'htm' || norm === 'svg';
+}
+
+function setArtifactTab(tab = 'preview') {
+  const active = state.activeArtifact;
+  const resolved = tab === 'preview' && active?.isPreviewable ? 'preview' : 'code';
+  if (active) active.tab = resolved;
+  $$('.artifact-view-tab').forEach((btn) => {
+    const isThis = btn.dataset.tab === resolved;
+    btn.classList.toggle('active', isThis);
+    if (btn.dataset.tab === 'preview') {
+      btn.disabled = !active?.isPreviewable;
+    }
+  });
+  $('#artifact-preview-pane')?.classList.toggle('active', resolved === 'preview');
+  $('#artifact-code-pane')?.classList.toggle('active', resolved === 'code');
+}
+
+function renderArtifactSwitcher() {
+  const container = $('#artifact-switcher');
+  if (!container) return;
+  container.innerHTML = state.artifactsList
+    .map(
+      (art, index) => `
+      <button type="button" class="artifact-switch-pill${art.id === state.activeArtifact?.id ? ' active' : ''}" data-art-idx="${index}">
+        ${escapeHtml(art.title)}
+      </button>`
+    )
+    .join('');
+}
+
+async function openArtifactInCanvas({ code = '', lang = 'text', title = '' }) {
+  const normLang = String(lang || 'text').trim().toLowerCase() || 'text';
+  const rawCode = String(code || '');
+  if (!rawCode) return;
+
+  let entry = state.artifactsList.find((a) => a.code === rawCode && a.lang === normLang);
+  if (!entry) {
+    const isPreviewable = isPreviewableArtifactLang(normLang);
+    const num = state.artifactsList.length + 1;
+    entry = {
+      id: `art-${Date.now()}-${num}`,
+      title: title || `${normLang === 'svg' ? 'Vector SVG' : normLang === 'html' || normLang === 'htm' ? 'HTML Widget' : `${normLang.toUpperCase()} Snippet`} #${num}`,
+      lang: normLang,
+      code: rawCode,
+      isPreviewable,
+      previewUrl: null,
+      tab: isPreviewable ? 'preview' : 'code',
+    };
+    state.artifactsList.push(entry);
+  }
+
+  state.activeArtifact = entry;
+  state.artifactDrawerOpen = true;
+  $('#agent-split')?.classList.add('canvas-open');
+  $('#artifact-title').textContent = entry.title;
+  $('#artifact-lang-badge').textContent = entry.lang;
+  $('#artifact-code-body').innerHTML = highlightCode(entry.code);
+  renderArtifactSwitcher();
+  setArtifactTab(entry.isPreviewable ? entry.tab || 'preview' : 'code');
+
+  if (entry.isPreviewable) {
+    const iframe = $('#artifact-iframe');
+    if (!entry.previewUrl) {
+      if (iframe) iframe.src = 'about:blank';
+      try {
+        const res = await apiRequest('/api/artifacts/stage', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: entry.title,
+            lang: entry.lang,
+            code: entry.code,
+          }),
+        });
+        entry.previewUrl = res.previewUrl;
+      } catch (err) {
+        showToast(err.message || 'Could not stage sandbox preview');
+        setArtifactTab('code');
+        return;
+      }
+    }
+    if (iframe && state.activeArtifact?.id === entry.id && entry.previewUrl) {
+      iframe.src = entry.previewUrl;
+    }
+  }
+}
+
+function closeArtifactCanvas() {
+  state.artifactDrawerOpen = false;
+  $('#agent-split')?.classList.remove('canvas-open');
+}
+
+async function stopSpeakAudio() {
+  state.speakingMessageIndex = null;
+  await apiRequest('/api/chat/speak/stop', { method: 'POST' }).catch(() => {});
+  renderMessages(false);
+}
+
+async function toggleSpeakMessage(idx, rawText) {
+  if (state.speakingMessageIndex === idx) {
+    await stopSpeakAudio();
+    return;
+  }
+  const clean = String(rawText || '').trim();
+  if (!clean) return;
+  state.speakingMessageIndex = idx;
+  renderMessages(false);
+  try {
+    await apiRequest('/api/chat/speak', {
+      method: 'POST',
+      body: JSON.stringify({ text: clean }),
+    });
+    showToast('Reading reply aloud via macOS voice');
+  } catch (err) {
+    state.speakingMessageIndex = null;
+    renderMessages(false);
+    showToast(err.message || 'Could not speak reply');
+  }
+}
+
+function toggleVoiceDictation() {
+  const btn = $('#composer-voice-btn');
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    showToast('Speech recognition is unavailable in this browser');
+    return;
+  }
+  if (state.isListening && state.voiceRecognition) {
+    state.isListening = false;
+    btn?.classList.remove('listening');
+    try {
+      state.voiceRecognition.stop();
+    } catch {
+      // ignore stop error
+    }
+    return;
+  }
+  try {
+    const rec = new SpeechRec();
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+    const input = $('#prompt-input');
+    const baseText = input ? input.value.trim() : '';
+
+    rec.onresult = (event) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i += 1) {
+        transcript += event.results[i][0]?.transcript || '';
+      }
+      if (input && transcript.trim()) {
+        input.value = baseText ? `${baseText} ${transcript.trim()}` : transcript.trim();
+        input.style.height = 'auto';
+        input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+      }
+    };
+    rec.onerror = () => {
+      state.isListening = false;
+      btn?.classList.remove('listening');
+      showToast('Voice dictation stopped or denied');
+    };
+    rec.onend = () => {
+      state.isListening = false;
+      btn?.classList.remove('listening');
+    };
+
+    state.voiceRecognition = rec;
+    state.isListening = true;
+    btn?.classList.add('listening');
+    rec.start();
+    showToast('Listening for voice input…');
+  } catch (err) {
+    state.isListening = false;
+    btn?.classList.remove('listening');
+    showToast(err.message || 'Could not start microphone');
+  }
+}
+
+function renderSessionItemHtml(s) {
+  return `
+    <div class="session-item ${state.activeSession?.id === s.id ? 'active' : ''}${s.pinned ? ' is-pinned' : ''}" data-id="${escapeHtml(s.id)}">
+      ${state.isRunning && state.runningSessionId === s.id ? '<span class="session-running-dot" title="Running"></span>' : ''}
+      <span class="session-title-wrap">
+        <span class="session-title" title="${escapeHtml(s.title)}">${s.pinned ? '<span class="session-pin-badge" title="Pinned">📌</span>' : ''}${escapeHtml(s.title)}</span>
+        ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
+      </span>
+      ${s.source === 'scheduled' ? '<span class="session-badge">Auto</span>' : ''}
+      <span class="session-meta">
+        <span class="session-time">${escapeHtml(formatRelativeTime(s.updatedAt))}</span>
+        <span class="session-actions">
+          <button type="button" class="session-action-icon session-pin-btn" data-pin="${escapeHtml(s.id)}" title="${s.pinned ? 'Unpin conversation' : 'Pin conversation'}">${s.pinned ? '★' : '☆'}</button>
+          <button type="button" class="session-action-icon session-rename-btn" data-rename="${escapeHtml(s.id)}" title="Rename conversation">✎</button>
+          <button type="button" class="session-del-btn" data-del="${escapeHtml(s.id)}" title="Delete session">×</button>
+        </span>
+      </span>
+    </div>`;
+}
+
 function renderSessionsList() {
   const q = ($('#session-search').value || '').toLowerCase().trim();
   const listEl = $('#sessions-list');
@@ -940,28 +1292,48 @@ function renderSessionsList() {
     return;
   }
 
-  listEl.innerHTML = filtered
-    .map(
-      (s) => `
-      <div class="session-item ${state.activeSession?.id === s.id ? 'active' : ''}" data-id="${escapeHtml(s.id)}">
-        ${state.isRunning && state.runningSessionId === s.id ? '<span class="session-running-dot" title="Running"></span>' : ''}
-        <span class="session-title-wrap">
-          <span class="session-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
-          ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
-        </span>
-        ${s.source === 'scheduled' ? '<span class="session-badge">Auto</span>' : ''}
-        <span class="session-meta">
-          <span class="session-time">${escapeHtml(formatRelativeTime(s.updatedAt))}</span>
-          <button type="button" class="session-del-btn" data-del="${escapeHtml(s.id)}" title="Delete session">×</button>
-        </span>
-      </div>`
-    )
-    .join('');
+  const pinned = filtered.filter((s) => s.pinned);
+  const recent = filtered.filter((s) => !s.pinned);
+
+  if (!searchMode && pinned.length > 0) {
+    listEl.innerHTML =
+      `<div class="session-group-label">Pinned</div>` +
+      pinned.map(renderSessionItemHtml).join('') +
+      (recent.length > 0 ? `<div class="session-group-label">Recent</div>` + recent.map(renderSessionItemHtml).join('') : '');
+  } else {
+    listEl.innerHTML = filtered.map(renderSessionItemHtml).join('');
+  }
 
   listEl.querySelectorAll('.session-item').forEach((el) => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.session-del-btn')) return;
+      if (e.target.closest('.session-del-btn, .session-pin-btn, .session-rename-btn')) return;
       openSession(el.dataset.id);
+    });
+  });
+  listEl.querySelectorAll('.session-pin-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.pin;
+      const target = state.sessions.find((s) => s.id === id);
+      if (!target) return;
+      try {
+        const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ pinned: !target.pinned }),
+        });
+        if (state.activeSession?.id === id) state.activeSession = res.session;
+        await loadSessions();
+        showToast(res.session.pinned ? 'Conversation pinned' : 'Conversation unpinned');
+      } catch (err) {
+        showToast(err.message);
+      }
+    });
+  });
+  listEl.querySelectorAll('.session-rename-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = state.sessions.find((s) => s.id === btn.dataset.rename);
+      if (target) openRenameSessionModal(target);
     });
   });
   listEl.querySelectorAll('.session-del-btn').forEach((btn) => {
@@ -971,6 +1343,7 @@ function renderSessionsList() {
       await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (state.activeSession?.id === id) {
         state.activeSession = null;
+        syncSessionToolbar();
         renderMessages();
       }
       await loadSessions();
@@ -1009,18 +1382,21 @@ function groupMessagesForDisplay(messages = []) {
   const items = [];
   let currentAssistant = null;
 
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
     if (msg.role === 'user') {
       if (msg.isCompactionSummary) {
-        items.push({ type: 'compaction', content: msg.content });
+        items.push({ type: 'compaction', content: msg.content, rawStartIndex: i, rawEndIndex: i });
       } else {
         currentAssistant = null;
-        items.push({ type: 'user', msg });
+        items.push({ type: 'user', msg, rawStartIndex: i, rawEndIndex: i });
       }
     } else if (msg.role === 'assistant') {
       if (!currentAssistant) {
         currentAssistant = {
           type: 'assistant',
+          rawStartIndex: i,
+          rawEndIndex: i,
           thinking: [],
           tools: [],
           content: '',
@@ -1030,6 +1406,8 @@ function groupMessagesForDisplay(messages = []) {
           isError: false,
         };
         items.push(currentAssistant);
+      } else {
+        currentAssistant.rawEndIndex = i;
       }
       if (msg.thinking) currentAssistant.thinking.push(msg.thinking);
       if (Array.isArray(msg.toolCalls)) {
@@ -1051,6 +1429,7 @@ function groupMessagesForDisplay(messages = []) {
       if (msg.usage) currentAssistant.usage = msg.usage;
       if (msg.isError) currentAssistant.isError = true;
     } else if (msg.role === 'tool' && currentAssistant) {
+      currentAssistant.rawEndIndex = i;
       const toolEntry = currentAssistant.tools.find((t) => t.id === msg.toolCallId);
       if (toolEntry) {
         toolEntry.output = msg.content || '';
@@ -1257,7 +1636,10 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
         ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
         : '';
     const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
-    return `<div class="msg-row"><div class="msg-user-wrap"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div><div class="user-msg-actions"><button type="button" class="msg-action-btn user-copy-btn" data-idx="${idx}">Copy</button><button type="button" class="msg-action-btn user-edit-btn" data-idx="${idx}">Reuse prompt</button></div></div></div>`;
+    if (state.editingMessageIndex === idx) {
+      return `<div class="msg-row"><div class="msg-user-wrap"><div class="user-inline-edit"><textarea id="user-inline-edit-input" data-idx="${idx}">${escapeHtml(textOnly)}</textarea><div class="user-inline-edit-actions"><button type="button" class="secondary-btn user-edit-cancel-btn">Cancel</button><button type="button" class="primary-btn user-edit-save-btn" data-idx="${idx}">Save &amp; Run</button></div></div></div></div>`;
+    }
+    return `<div class="msg-row"><div class="msg-user-wrap"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div><div class="user-msg-actions"><button type="button" class="msg-action-btn user-copy-btn" data-idx="${idx}">Copy</button><button type="button" class="msg-action-btn user-edit-btn" data-idx="${idx}">Edit &amp; re-run</button><button type="button" class="msg-action-btn user-fork-btn" data-idx="${idx}">Branch</button></div></div></div>`;
   }
 
   const thinkingCombined = (item.thinking || []).join('').trim();
@@ -1286,13 +1668,20 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
         </div>`
       : '';
 
+  const modelLabel = item.usage?.model || state.config?.model || 'LocalGravity';
+  const provKey = item.usage?.provider || state.config?.provider || 'ollama';
+  const provLabel = provKey === 'ollama' ? 'Local' : state.presets?.[provKey]?.label?.split(' ')[0] || provKey;
+  const isSpeaking = state.speakingMessageIndex === idx;
+
   const showActions = (!item.isStreaming && item.content) || item.isError;
   const actionsHtml = showActions
     ? `<div class="msg-actions">
-        <button type="button" class="msg-action-btn retry-turn-btn" data-idx="${idx}">Retry turn</button>
+        <button type="button" class="msg-action-btn retry-turn-btn" data-idx="${idx}">Regenerate</button>
         ${
           !item.isStreaming && item.content
-            ? `<button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
+            ? `<button type="button" class="msg-action-btn speak-reply-btn${isSpeaking ? ' speaking' : ''}" data-idx="${idx}">${isSpeaking ? 'Stop reading' : 'Read aloud'}</button>
+               <button type="button" class="msg-action-btn copy-reply-btn" data-idx="${idx}">Copy reply</button>
+               <button type="button" class="msg-action-btn fork-turn-btn" data-idx="${idx}">Branch</button>
                <button type="button" class="msg-action-btn teach-skill-btn" data-idx="${idx}">Teach as skill</button>
                <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>`
             : ''
@@ -1321,6 +1710,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
     <div class="msg-row" ${item.isStreaming ? 'id="live-assistant-row"' : ''}>
       <div class="msg-assistant${item.isError ? ' error' : ''}">
         ${liveStatusHtml}
+        <div class="assistant-identity"><span class="assistant-avatar" aria-hidden="true">L</span><span>${escapeHtml(modelLabel)}</span><span class="assistant-provider-tag">${escapeHtml(provLabel)}</span></div>
         <div class="live-plan-slot">${buildPlanHtml(item)}</div>
         <div class="live-thinking-slot">${thinkingHtml}</div>
         <div class="live-tools-slot">${toolsSummaryHtml}${toolsHtml}</div>
@@ -1556,11 +1946,19 @@ async function openSession(id) {
   const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`);
   state.sessionSearchQuery = '';
   state.collapsedToolGroups.clear();
+  state.editingMessageIndex = null;
+  if (state.activeSession?.id !== id) {
+    closeArtifactCanvas();
+    state.artifactsList = [];
+    state.activeArtifact = null;
+    renderArtifactSwitcher();
+  }
   const searchInput = $('#session-search');
   if (searchInput) searchInput.value = '';
   state.activeSession = res.session;
   state.contextTokens = estimateTokens(state.activeSession.messages || []);
   updateContextMeter(state.contextTokens, state.config?.numCtx);
+  syncSessionToolbar();
   switchView('agent');
   await loadSessions();
   renderMessages(true);
@@ -1569,13 +1967,22 @@ async function openSession(id) {
 async function createNewTask() {
   const res = await apiRequest('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ title: 'New Task' }),
+    body: JSON.stringify({
+      title: 'New Task',
+      mode: $('#composer-mode-select')?.value || 'auto',
+    }),
   });
   state.activeSession = res.session;
   state.collapsedToolGroups.clear();
+  state.editingMessageIndex = null;
+  closeArtifactCanvas();
+  state.artifactsList = [];
+  state.activeArtifact = null;
+  renderArtifactSwitcher();
   if (!state.isRunning) state.liveAssistantMsg = null;
   state.contextTokens = 0;
   updateContextMeter(0, state.config?.numCtx);
+  syncSessionToolbar();
   await loadSessions();
   switchView('agent');
   renderMessages(true);
@@ -1715,9 +2122,13 @@ async function sendPrompt(overridePayload = null) {
   if (!state.activeSession) {
     const created = await apiRequest('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ title: text.slice(0, 48) || 'New Task' }),
+      body: JSON.stringify({
+        title: text.slice(0, 48) || 'New Task',
+        mode: $('#composer-mode-select')?.value || 'auto',
+      }),
     });
     state.activeSession = created.session;
+    syncSessionToolbar();
   }
 
   const runSessionId = state.activeSession.id;
@@ -1774,6 +2185,8 @@ async function sendPrompt(overridePayload = null) {
         model: state.config?.model,
         thinking: state.config?.thinking,
         safetyMode: state.config?.safetyMode,
+        cwd: state.activeSession?.cwd || undefined,
+        mode: $('#composer-mode-select')?.value || state.activeSession?.mode || 'auto',
       },
       (evt) => {
         if (!state.liveAssistantMsg) return;
@@ -1854,7 +2267,7 @@ async function sendPrompt(overridePayload = null) {
     state.runningSessionId = null;
     state.runAbort = null;
     state.liveAssistantMsg = null;
-    $('#send-btn').textContent = 'Run';
+    $('#send-btn').textContent = 'Send';
     $('#stop-btn').classList.add('hidden');
     renderSidebarBadges();
 
@@ -1863,6 +2276,7 @@ async function sendPrompt(overridePayload = null) {
         const refreshed = await apiRequest(`/api/sessions/${encodeURIComponent(runSessionId)}`);
         if (state.activeSession?.id === runSessionId) {
           state.activeSession = refreshed.session;
+          syncSessionToolbar();
         }
       } catch {
         // Keep current messages if reload fails
@@ -3240,17 +3654,87 @@ function wireEvents() {
       return;
     }
 
+    const openArtBtn = e.target.closest('.open-artifact-btn');
+    if (openArtBtn) {
+      await openArtifactInCanvas({
+        code: openArtBtn.dataset.code || '',
+        lang: openArtBtn.dataset.lang || 'text',
+      });
+      return;
+    }
+
     const userEditBtn = e.target.closest('.user-edit-btn');
     if (userEditBtn) {
-      const target = state.displayedItems[Number(userEditBtn.dataset.idx)];
-      const raw = String(target?.msg?.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
-      const pi = $('#prompt-input');
-      if (pi) {
-        pi.value = raw;
-        pi.style.height = 'auto';
-        pi.style.height = `${Math.min(pi.scrollHeight, 180)}px`;
-        pi.focus();
+      const idx = Number(userEditBtn.dataset.idx);
+      state.editingMessageIndex = idx;
+      renderMessages(false);
+      const editInput = $('#user-inline-edit-input');
+      if (editInput) {
+        editInput.focus();
+        editInput.setSelectionRange(editInput.value.length, editInput.value.length);
       }
+      return;
+    }
+
+    const userEditCancelBtn = e.target.closest('.user-edit-cancel-btn');
+    if (userEditCancelBtn) {
+      state.editingMessageIndex = null;
+      renderMessages(false);
+      return;
+    }
+
+    const userEditSaveBtn = e.target.closest('.user-edit-save-btn');
+    if (userEditSaveBtn) {
+      const idx = Number(userEditSaveBtn.dataset.idx);
+      const target = state.displayedItems[idx];
+      const newText = ($('#user-inline-edit-input')?.value || '').trim();
+      if (!newText) return;
+      if (state.activeSession?.id && Number.isInteger(target?.rawStartIndex)) {
+        try {
+          const trunc = await apiRequest(
+            `/api/sessions/${encodeURIComponent(state.activeSession.id)}/truncate`,
+            {
+              method: 'POST',
+              body: JSON.stringify({ keepCount: target.rawStartIndex }),
+            }
+          );
+          state.activeSession = trunc.session;
+        } catch (err) {
+          showToast(err.message || 'Could not edit prompt');
+          return;
+        }
+      }
+      state.editingMessageIndex = null;
+      await sendPrompt({ text: newText, attachments: target?.msg?.attachments || [] });
+      return;
+    }
+
+    const forkBtn = e.target.closest('.user-fork-btn, .fork-turn-btn');
+    if (forkBtn) {
+      const idx = Number(forkBtn.dataset.idx);
+      const target = state.displayedItems[idx];
+      if (!state.activeSession?.id || !Number.isInteger(target?.rawEndIndex)) return;
+      try {
+        const forked = await apiRequest(
+          `/api/sessions/${encodeURIComponent(state.activeSession.id)}/fork`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ upToIndex: target.rawEndIndex + 1 }),
+          }
+        );
+        await openSession(forked.session.id);
+        showToast('Conversation branched');
+      } catch (err) {
+        showToast(err.message || 'Could not branch conversation');
+      }
+      return;
+    }
+
+    const speakBtn = e.target.closest('.speak-reply-btn');
+    if (speakBtn) {
+      const idx = Number(speakBtn.dataset.idx);
+      const target = state.displayedItems[idx];
+      await toggleSpeakMessage(idx, target?.content || '');
       return;
     }
 
@@ -3285,6 +3769,31 @@ function wireEvents() {
 
     const retryBtn = e.target.closest('.retry-turn-btn');
     if (retryBtn) {
+      const idx = Number(retryBtn.dataset.idx);
+      let userItem = null;
+      for (let i = idx - 1; i >= 0; i -= 1) {
+        if (state.displayedItems[i]?.type === 'user') {
+          userItem = state.displayedItems[i];
+          break;
+        }
+      }
+      if (userItem && state.activeSession?.id && Number.isInteger(userItem.rawStartIndex)) {
+        const cleanUserText = String(userItem.msg?.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
+        try {
+          const trunc = await apiRequest(
+            `/api/sessions/${encodeURIComponent(state.activeSession.id)}/truncate`,
+            {
+              method: 'POST',
+              body: JSON.stringify({ keepCount: userItem.rawStartIndex }),
+            }
+          );
+          state.activeSession = trunc.session;
+          await sendPrompt({ text: cleanUserText, attachments: userItem.msg?.attachments || [] });
+        } catch (err) {
+          showToast(err.message || 'Could not regenerate turn');
+        }
+        return;
+      }
       const lastUser = [...(state.activeSession?.messages || [])].reverse().find((m) => m.role === 'user');
       if (lastUser?.content) {
         $('#prompt-input').value = lastUser.content;
@@ -3477,6 +3986,86 @@ function wireEvents() {
   });
 
   $('#send-btn').addEventListener('click', () => sendPrompt());
+  $('#workspace-cwd-btn')?.addEventListener('click', pickWorkspaceFolder);
+  $('#composer-mode-select')?.addEventListener('change', async (e) => {
+    const mode = e.target.value || 'auto';
+    if (state.activeSession?.id) {
+      try {
+        const res = await apiRequest(
+          `/api/sessions/${encodeURIComponent(state.activeSession.id)}`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({ mode }),
+          }
+        );
+        state.activeSession = res.session;
+      } catch (err) {
+        showToast(err.message || 'Could not update mode');
+        return;
+      }
+    }
+    showToast(e.target.options[e.target.selectedIndex]?.text || `Mode: ${mode}`);
+  });
+  $('#composer-voice-btn')?.addEventListener('click', toggleVoiceDictation);
+  $('#artifact-close-btn')?.addEventListener('click', closeArtifactCanvas);
+  $$('.artifact-view-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setArtifactTab(btn.dataset.tab));
+  });
+  $('#artifact-copy-btn')?.addEventListener('click', () => {
+    if (!state.activeArtifact?.code) return;
+    navigator.clipboard.writeText(state.activeArtifact.code);
+    showToast('Artifact code copied');
+  });
+  $('#artifact-save-btn')?.addEventListener('click', () => {
+    const art = state.activeArtifact;
+    if (!art?.code) return;
+    const extMap = {
+      html: 'html',
+      htm: 'html',
+      svg: 'svg',
+      js: 'js',
+      javascript: 'js',
+      ts: 'ts',
+      typescript: 'ts',
+      py: 'py',
+      python: 'py',
+      css: 'css',
+      json: 'json',
+      md: 'md',
+      markdown: 'md',
+      sh: 'sh',
+      bash: 'sh',
+      yaml: 'yaml',
+      yml: 'yml',
+    };
+    const ext = extMap[art.lang] || 'txt';
+    const base = String(art.title || 'artifact')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 48) || 'artifact';
+    const filename = `${base}.${ext}`;
+    if (hasSwiftBridge()) {
+      postSwiftAction('saveFile', { filename, content: art.code });
+      return;
+    }
+    const blob = new Blob([art.code], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast(`Saved ${filename}`);
+  });
+  $('#artifact-switcher')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.artifact-switch-pill[data-art-idx]');
+    if (!pill) return;
+    const target = state.artifactsList[Number(pill.dataset.artIdx)];
+    if (target) openArtifactInCanvas(target);
+  });
   $('#stop-btn').addEventListener('click', async () => {
     state.runAbort?.abort();
     const targetId = state.runningSessionId || state.activeSession?.id;
@@ -3700,6 +4289,11 @@ function wireEvents() {
       if (!$('#modal-backdrop').classList.contains('hidden')) {
         e.preventDefault();
         closeModal();
+        return;
+      }
+      if (state.artifactDrawerOpen) {
+        e.preventDefault();
+        closeArtifactCanvas();
       }
     }
   });
@@ -3730,6 +4324,7 @@ async function init() {
   tickClock();
   setInterval(tickClock, 1000);
   await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);
+  syncSessionToolbar();
   renderMessages(true);
   switchView('dashboard');
 }

@@ -38,6 +38,41 @@ test('renderMarkdown highlights code syntax safely without introducing XSS', () 
   assert.doesNotMatch(html, /<script>/i);
 });
 
+test('renderMarkdown renders LaTeX math blocks & inline formulas while leaving plain currency prices intact', () => {
+  const md = [
+    'This tier costs $0 local or $20 per month compared to $4.99 API credits.',
+    '',
+    'Energy scales cleanly with $E = mc^2$ and throughput $\\frac{tokens}{sec}$.',
+    '',
+    '$$T_{total} = \\frac{P + G}{B} + \\sqrt{N}$$',
+  ].join('\n');
+
+  const html = renderMarkdown(md);
+  assert.match(html, /\$0 local or \$20 per month compared to \$4\.99/);
+  assert.match(html, /class="math-inline">E = mc<sup>2<\/sup><\/span>/);
+  assert.match(html, /class="math-frac"><span class="math-num">tokens<\/span><span class="math-den">sec<\/span><\/span>/);
+  assert.match(html, /<div class="math-block">T<sub>total<\/sub>/);
+  assert.match(html, /class="math-sqrt">/);
+});
+
+test('renderMarkdown renders GitHub callouts and artifact canvas buttons safely', () => {
+  const md = [
+    '> [!TIP] Keep Deep Think Off for quick local tool loops.',
+    '> Swap stays low when under 8k context.',
+    '',
+    '```html',
+    '<div>Hello &amp; <script>bad()</script></div>',
+    '```',
+  ].join('\n');
+
+  const html = renderMarkdown(md);
+  assert.match(html, /class="md-callout md-callout-tip"/);
+  assert.match(html, /class="md-callout-title">TIP<\/div>/);
+  assert.match(html, /class="open-artifact-btn" data-lang="html"/);
+  assert.match(html, /class="artifact-card-trigger open-artifact-btn"/);
+  assert.doesNotMatch(html, /<script>bad/i);
+});
+
 test('renderMarkdown renders task list checkboxes, file:// links, and auto-linked URLs safely', () => {
   const md = [
     '- [x] Completed task with [Local File](file:///Users/test/notes.md)',

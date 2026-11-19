@@ -50,6 +50,9 @@ function toSessionCacheEntry(data) {
       source: data.source || 'interactive',
       provider: data.provider || 'ollama',
       model: data.model || 'qwen3.5:4b',
+      pinned: Boolean(data.pinned),
+      cwd: data.cwd || '',
+      mode: data.mode || 'auto',
       updatedAt: data.updatedAt || '',
       messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
     },
@@ -199,7 +202,11 @@ export async function listSessions(paths = getRuntimePaths()) {
   try {
     const dirCache = await ensureSessionCachePopulated(paths);
     const summaries = [...dirCache.values()].map((entry) => entry.summary);
-    summaries.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    summaries.sort(
+      (a, b) =>
+        Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+        (b.updatedAt || '').localeCompare(a.updatedAt || '')
+    );
     return summaries;
   } catch {
     return [];
