@@ -12,6 +12,14 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
   const paths = getRuntimePaths(tmpHome);
   const authToken = 'warmup-test-token';
   let resolveWarm;
+  let resolveWarmStarted;
+  let resolveAborted;
+  let warmStarted = new Promise((resolve) => {
+    resolveWarmStarted = resolve;
+  });
+  const aborted = new Promise((resolve) => {
+    resolveAborted = resolve;
+  });
   let warmCall;
   let warmSignal;
   let ensureCalls = 0;
@@ -19,9 +27,17 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
   const warmModelFn = (model, options) => {
     warmSignal = options.signal;
     warmCall = { model, options: { numCtx: options.numCtx } };
+    resolveWarmStarted();
     return new Promise((resolve) => {
       resolveWarm = resolve;
-      options.signal.addEventListener('abort', () => resolve({ status: 'aborted' }), { once: true });
+      options.signal.addEventListener(
+        'abort',
+        () => {
+          resolveAborted();
+          resolve({ status: 'aborted' });
+        },
+        { once: true }
+      );
     });
   };
   const srv = createAgentServer({
@@ -57,6 +73,7 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
     const concurrent = await request();
     assert.equal(first.status, 202);
     assert.equal(concurrent.status, 202);
+    await warmStarted;
     assert.deepEqual(warmCall, { model: 'qwen3.5:9b', options: { numCtx: 4096 } });
     assert.equal(ensureCalls, 1);
 
@@ -65,12 +82,12 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
       headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
       body: JSON.stringify({ message: 'quick message' }),
     });
-    await new Promise((resolve) => setImmediate(resolve));
+    const chatResponse = await chat;
+    assert.equal(chatResponse.status, 200);
     assert.deepEqual(runCalls, []);
 
     resolveWarm({ status: 'loaded' });
-    const chatResponse = await chat;
-    assert.equal(chatResponse.status, 200);
+    await chatResponse.text();
     assert.deepEqual(runCalls, ['quick message']);
 
     await fs.writeFile(
@@ -88,9 +105,12 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
       JSON.stringify({ provider: 'ollama', model: 'qwen3.5:9b', numCtx: 4096 }),
       'utf8'
     );
+    warmStarted = new Promise((resolve) => {
+      resolveWarmStarted = resolve;
+    });
     const pendingWarm = await request();
     assert.equal(pendingWarm.status, 202);
-    await new Promise((resolve) => setImmediate(resolve));
+    await warmStarted;
     assert.equal(warmSignal.aborted, false);
 
     const unload = fetch(`${base}/api/models/ollama/unload`, {
@@ -98,7 +118,7 @@ test('model warm-up endpoint schedules only the configured Ollama model and coal
       headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
       body: '{}',
     });
-    await new Promise((resolve) => setImmediate(resolve));
+    await aborted;
     assert.equal(warmSignal.aborted, true);
     assert.deepEqual(runCalls, ['quick message']);
     resolveWarm({ status: 'loaded' });

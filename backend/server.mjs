@@ -804,6 +804,7 @@ export function createAgentServer({
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive',
           });
+          res.flushHeaders();
 
           const emitSse = (event) => {
             if (!res.writableEnded) {
