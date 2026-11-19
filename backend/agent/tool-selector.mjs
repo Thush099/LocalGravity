@@ -1,19 +1,31 @@
-const CORE_LOCAL_TOOLS = new Set([
-  'list_dir',
-  'read_file',
-  'write_file',
-  'edit_file',
-  'search_files',
-  'run_command',
-  'read_skill',
-  'save_skill',
-  'update_plan',
-  'system_stats',
-]);
-
 const MEDIA_EXT_RE = /\.(?:png|jpe?g|webp|heic|gif|tiff?|bmp|mp4|mov|mkv|webm|m4v|avi)$/i;
 
 const DOMAIN_TOOL_GROUPS = [
+  {
+    tools: ['list_dir'],
+    pattern: /\b(?:list|show)\b.{0,60}\b(?:files?|folders?|directories|paths|contents|entries)\b|\b(?:directory|folder)\s+(?:contents|listing|entries)\b/i,
+  },
+  {
+    tools: ['read_file', 'search_files'],
+    pattern: /\b(?:read|search|inspect|find|look\s+at)\b.{0,60}\b(?:files?|folders?|directories|paths|documents?|source|code)\b|\b(?:file|folder|directory|document|source\s+code)\b/i,
+  },
+  {
+    tools: ['read_file', 'write_file', 'edit_file', 'search_files'],
+    pattern:
+      /\b(?:fix|debug|refactor|implement|edit|modify|rewrite|create|generate|update)\b.{0,80}\b(?:bug|issue|code|script|app|project|repo|file|component|function|module|website|page)\b|\b(?:bug|issue)\s+(?:in|with)\b|\b(?:[\w-]+\.(?:m?js|tsx?|jsx?|py|go|rs|swift|html|css|json))\b/i,
+  },
+  {
+    tools: ['run_command'],
+    pattern: /\b(?:run|execute|test|build|compile|install|npm|node|git|shell|terminal|command)\b/i,
+  },
+  {
+    tools: ['update_plan'],
+    pattern: /\b(?:plan|roadmap|checklist|break\s+down|multi[- ]step|then\s+(?:run|check|verify|fix|edit|test))\b/i,
+  },
+  {
+    tools: ['system_stats'],
+    pattern: /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b/i,
+  },
   {
     tools: ['inspect_media', 'take_screenshot'],
     pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|screen|display|desktop|on my screen|what'?s on|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
@@ -39,7 +51,7 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:open\s+[a-z]|launch\s+[a-z]|shortcut|shortcuts|applescript|osascript|finder|safari|notes|apple notes|my notes|note titled|save.*note|create.*note|mail|music|calendar|system events|automate)\b/i,
   },
   {
-    tools: ['search_knowledge', 'read_knowledge', 'save_knowledge', 'self_improve'],
+    tools: ['search_knowledge', 'read_knowledge', 'save_knowledge', 'read_skill', 'save_skill', 'self_improve'],
     pattern: /\b(?:knowledge|memory|remember|preference|preferences|note|guide|learn|mistake|improve|self[- ]?improve|reprogram|install|upgrade|skill|workflow|teach)\b/i,
   },
   {
@@ -54,8 +66,8 @@ const DOMAIN_TOOL_GROUPS = [
 
 /**
  * Select the optimal set of tool definitions for the current turn.
- * Cloud providers receive the full catalog; local Ollama models receive a lean core set
- * plus any domain groups relevant to the conversation or already used in the session.
+ * Cloud providers receive the full catalog; local Ollama models receive only tools relevant
+ * to the current request or already used in the session.
  */
 export function selectToolsForTurn(
   allTools = [],
@@ -64,7 +76,7 @@ export function selectToolsForTurn(
   if (!Array.isArray(allTools) || allTools.length === 0) return [];
   if (provider !== 'ollama') return allTools;
 
-  const selected = new Set(CORE_LOCAL_TOOLS);
+  const selected = new Set();
 
   if (mode === 'researcher') {
     for (const name of ['search_web', 'fetch_url', 'open_url']) selected.add(name);

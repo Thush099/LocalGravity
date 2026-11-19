@@ -5,7 +5,43 @@ import { compactToolDefinitions, selectToolsForTurn } from '../backend/agent/too
 import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { compactConversation, estimateToolsTokens } from '../backend/agent/compactor.mjs';
 
-test('selectToolsForTurn returns all tools for cloud providers and focused core+domain subset for local Ollama', () => {
+test('selectToolsForTurn keeps general local conversation tool-free and adds only task-relevant tools', () => {
+  const general = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Explain why sleep matters.',
+  });
+  assert.deepEqual(general, []);
+
+  const listing = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'List three top-level project paths.',
+  });
+  assert.deepEqual(listing.map((tool) => tool.function.name), ['list_dir']);
+
+  const directoryEntries = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Show only the first three entries in the current project directory.',
+  });
+  assert.ok(directoryEntries.some((tool) => tool.function.name === 'list_dir'));
+
+  const multiStep = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Check the code, then run the tests and fix any issue.',
+  });
+  assert.ok(multiStep.some((tool) => tool.function.name === 'update_plan'));
+
+  const coding = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Fix the bug in server.mjs and run the tests.',
+  });
+  const codingNames = new Set(coding.map((tool) => tool.function.name));
+  assert.ok(codingNames.has('read_file'));
+  assert.ok(codingNames.has('edit_file'));
+  assert.ok(codingNames.has('run_command'));
+  assert.ok(!codingNames.has('system_stats'));
+});
+
+test('selectToolsForTurn returns all tools for cloud providers and focused relevant tools for local Ollama', () => {
   const cloudTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'anthropic',
     userMessage: 'hello there',
@@ -14,13 +50,14 @@ test('selectToolsForTurn returns all tools for cloud providers and focused core+
 
   const genericLocal = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',
-    userMessage: 'Refactor server.mjs to clean up error handling',
+    userMessage: 'Refactor server.mjs to clean up error handling and run the tests',
   });
   const genericNames = new Set(genericLocal.map((t) => t.function.name));
-  assert.ok(genericLocal.length <= 12, `Expected lean core subset for generic coding prompt, got ${genericLocal.length}`);
+  assert.ok(genericLocal.length <= 6, `Expected focused tools for coding prompt, got ${genericLocal.length}`);
   assert.ok(genericNames.has('read_file'));
   assert.ok(genericNames.has('edit_file'));
   assert.ok(genericNames.has('run_command'));
+  assert.ok(!genericNames.has('system_stats'));
   assert.ok(!genericNames.has('add_schedule_item'));
   assert.ok(!genericNames.has('inspect_media'));
 
