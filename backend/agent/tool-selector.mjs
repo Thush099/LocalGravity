@@ -15,8 +15,12 @@ const MEDIA_EXT_RE = /\.(?:png|jpe?g|webp|heic|gif|tiff?|bmp|mp4|mov|mkv|webm|m4
 
 const DOMAIN_TOOL_GROUPS = [
   {
-    tools: ['inspect_media'],
-    pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
+    tools: ['inspect_media', 'take_screenshot'],
+    pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|screen|display|desktop|on my screen|what'?s on|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
+  },
+  {
+    tools: ['spotlight_search'],
+    pattern: /\b(?:spotlight|mdfind|find my|locate|where is my|pdf|keynote|pages|numbers|invoice|resume|receipt|downloads)\b/i,
   },
   {
     tools: ['list_schedule_items', 'add_schedule_item', 'remove_schedule_item'],
@@ -31,8 +35,8 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:notify|notification|alert|remind|reminder|timer|alarm|nudge|in \d+\s*(?:sec|second|min|minute|hour|hr)s?)\b/i,
   },
   {
-    tools: ['open_app', 'run_shortcut', 'run_applescript'],
-    pattern: /\b(?:open\s+[a-z]|launch\s+[a-z]|shortcut|shortcuts|applescript|osascript|finder|safari|notes|mail|music|calendar|system events|automate)\b/i,
+    tools: ['open_app', 'run_shortcut', 'run_applescript', 'manage_notes'],
+    pattern: /\b(?:open\s+[a-z]|launch\s+[a-z]|shortcut|shortcuts|applescript|osascript|finder|safari|notes|apple notes|my notes|note titled|save.*note|create.*note|mail|music|calendar|system events|automate)\b/i,
   },
   {
     tools: ['search_knowledge', 'read_knowledge', 'save_knowledge', 'self_improve'],
@@ -43,8 +47,8 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:calculate|calc|compute|math|sum|percent|percentage|average|mean|convert|equation|sqrt|log)\b|\d+\s*[+\-*/^%]\s*\d+/i,
   },
   {
-    tools: ['fetch_url'],
-    pattern: /https?:\/\/|\b(?:fetch|url|website|webpage|web page|docs|github|article|link|scrape)\b/i,
+    tools: ['search_web', 'fetch_url', 'open_url'],
+    pattern: /https?:\/\/|\b(?:search\s+the\s+web|web\s+search|google|internet|online|latest|news|look\s+up|lookup|fetch|url|website|webpage|web page|docs|github|article|link|scrape)\b/i,
   },
 ];
 

@@ -11,10 +11,10 @@
       <aside class="sidebar">
         <div class="brand-row">
           <div class="brand-mark" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
-              <circle cx="12" cy="12" r="3.5" fill="currentColor" />
-              <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.9" />
+              <circle cx="12" cy="12" r="3" fill="currentColor" />
+              <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>
           </div>
           <div class="brand-meta">
@@ -24,17 +24,66 @@
         </div>
 
         <button id="new-task-btn" class="primary-action-btn" type="button">
-          <span>+ New task</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <span>New task</span>
         </button>
 
         <nav class="main-nav" aria-label="Primary">
-          <button type="button" class="nav-btn active" data-view="dashboard">Dashboard</button>
-          <button type="button" class="nav-btn" data-view="agent">Agent</button>
-          <button type="button" class="nav-btn" data-view="monitor">System Monitor</button>
-          <button type="button" class="nav-btn" data-view="schedule">Timetable</button>
-          <button type="button" class="nav-btn" data-view="skills">Skills & Knowledge</button>
-          <button type="button" class="nav-btn" data-view="automations">Automations</button>
-          <button type="button" class="nav-btn" data-view="settings">Models & Settings</button>
+          <button type="button" class="nav-btn active" data-view="dashboard">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="3" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8" />
+              <rect x="13" y="3" width="8" height="5" rx="2" stroke="currentColor" stroke-width="1.8" />
+              <rect x="13" y="10" width="8" height="11" rx="2" stroke="currentColor" stroke-width="1.8" />
+              <rect x="3" y="13" width="8" height="8" rx="2" stroke="currentColor" stroke-width="1.8" />
+            </svg>
+            <span class="nav-label">Dashboard</span>
+            <span class="nav-kbd">⌘1</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="agent">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8A2.5 2.5 0 0 1 17.5 17H9l-4.5 3.5V6.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+            </svg>
+            <span class="nav-label">Agent</span>
+            <span id="nav-agent-pulse" class="nav-pulse hidden" aria-hidden="true"></span>
+            <span class="nav-kbd">⌘2</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="monitor">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M3 12h4l2.5-6 4 12 2.5-6H21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="nav-label">System Monitor</span>
+            <span class="nav-kbd">⌘3</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="schedule">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8" />
+              <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <span class="nav-label">Timetable</span>
+            <span id="nav-agenda-badge" class="nav-count hidden">0</span>
+            <span class="nav-kbd">⌘4</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="skills">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3l2.2 5.2L19.5 10l-4.2 3.8L16.5 19.5 12 16.6l-4.5 2.9 1.2-5.7L4.5 10l5.3-1.8L12 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+            </svg>
+            <span class="nav-label">Skills &amp; Knowledge</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="automations">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M13 2.5L5 14h6l-1 7.5L19 10h-6l0-7.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+            </svg>
+            <span class="nav-label">Automations</span>
+          </button>
+          <button type="button" class="nav-btn" data-view="settings">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.8" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" stroke="currentColor" stroke-width="1.6" />
+            </svg>
+            <span class="nav-label">Models &amp; Settings</span>
+          </button>
         </nav>
 
         <div class="sessions-section">
@@ -52,9 +101,14 @@
         </div>
 
         <div class="sidebar-footer" id="sidebar-status">
-          <div class="status-row">
-            <span class="status-dot" id="ollama-dot"></span>
-            <span id="ollama-status-text">Checking Ollama...</span>
+          <div class="sidebar-footer-top">
+            <div class="status-row">
+              <span class="status-dot" id="ollama-dot"></span>
+              <span id="ollama-status-text">Checking Ollama...</span>
+            </div>
+            <button id="theme-toggle-btn" class="theme-chip-btn" type="button" title="Switch color theme (Auto / Dark / Light)">
+              Auto
+            </button>
           </div>
           <div class="status-sub" id="disk-status-text">Disk: checking...</div>
         </div>
@@ -125,7 +179,7 @@
               <button id="compact-btn" class="pill-btn" type="button" title="Summarize older messages to free context">
                 Compact
               </button>
-              <button id="export-chat-btn" class="pill-btn" type="button" title="Download this conversation as Markdown">
+              <button id="export-chat-btn" class="pill-btn" type="button" title="Save this conversation as Markdown">
                 Export
               </button>
               <button id="palette-open-btn" class="pill-btn" type="button" title="Command palette (⌘K)">
@@ -136,58 +190,49 @@
 
           <div id="chat-scroll" class="chat-scroll">
             <div id="welcome-state" class="welcome-state">
-              <div class="welcome-inner">
-                <div class="welcome-copy">
-                  <span class="welcome-eyebrow">
-                    <span class="eyebrow-pulse" aria-hidden="true"></span>
-                    Local-first AI · Apple Silicon
-                  </span>
-                  <h1>Give your Mac a second brain.</h1>
-                  <p class="welcome-lead">
-                    Ask for anything. LocalGravity plans it, uses real files and terminal tools, and shows every step — private by default, powerful on demand.
-                  </p>
-                  <div class="welcome-badges">
-                    <span class="welcome-badge"><span class="status-dot online" aria-hidden="true"></span> On-device</span>
-                    <span class="welcome-badge">Full file access</span>
-                    <span class="welcome-badge">30 starter skills</span>
-                  </div>
+              <div class="welcome-hero">
+                <span class="welcome-eyebrow">
+                  <span class="eyebrow-pulse" aria-hidden="true"></span>
+                  Native macOS Agent · On-Device or Cloud
+                </span>
+                <h1>Your Mac's private AI command center.</h1>
+                <p class="welcome-lead">
+                  LocalGravity executes real work on your Mac — searching files with Spotlight, inspecting screenshots and videos, reading Apple Notes, managing your timetable, searching the web, and editing code with live diffs under Ask-mode safety.
+                </p>
+              </div>
+
+              <div class="why-strip" aria-label="Why LocalGravity">
+                <div class="why-pill">
+                  <strong>Private &amp; Local-First</strong>
+                  <span>Run offline via Ollama with zero subscription cost</span>
                 </div>
-                <div class="welcome-orbit" aria-hidden="true">
-                  <div class="orbit-ring ring-a"></div>
-                  <div class="orbit-ring ring-b"></div>
-                  <div class="orbit-ring ring-c"></div>
-                  <div class="orbit-core"><span>LG</span></div>
-                  <span class="orbit-node node-a"></span>
-                  <span class="orbit-node node-b"></span>
-                  <span class="orbit-node node-c"></span>
+                <div class="why-pill">
+                  <strong>34 Native Mac &amp; Web Tools</strong>
+                  <span>Files, Spotlight, Notes, Clipboard, Shell, Media, Web</span>
+                </div>
+                <div class="why-pill">
+                  <strong>Live Diffs &amp; Safety Gate</strong>
+                  <span>Review or edit mutating commands before execution</span>
+                </div>
+                <div class="why-pill">
+                  <strong>30+ Self-Improving Skills</strong>
+                  <span>Records mistake fixes and reusable SKILL.md playbooks</span>
                 </div>
               </div>
-              <div class="quick-grid">
-                <button type="button" class="quick-card" data-prompt="Audit my Mac storage and show me what's taking up space in Downloads, Desktop, and safe caches (read-only dry run first).">
-                  <span class="quick-kicker">01 / Storage</span>
-                  <strong>Organize Mac storage</strong>
-                  <span>Find large files, sort Downloads, clean safe caches</span>
-                  <span class="quick-arrow" aria-hidden="true">↗</span>
-                </button>
-                <button type="button" class="quick-card" data-prompt="Help me inspect and edit a video or photo using ffmpeg/ImageMagick with visual before-and-after verification.">
-                  <span class="quick-kicker">02 / Media</span>
-                  <strong>Edit video or photo</strong>
-                  <span>Trim, reframe 9:16, compress, color polish, FCPXML</span>
-                  <span class="quick-arrow" aria-hidden="true">↗</span>
-                </button>
-                <button type="button" class="quick-card" data-prompt="Rewrite the following text so it sounds natural, direct, and genuinely human without any AI clichés: ">
-                  <span class="quick-kicker">03 / Writing</span>
-                  <strong>Humanize writing</strong>
-                  <span>Strip robotic phrasing while keeping your voice</span>
-                  <span class="quick-arrow" aria-hidden="true">↗</span>
-                </button>
-                <button type="button" class="quick-card" data-prompt="Let's teach you a new reusable skill or save a personal preference to Knowledge & Memory.">
-                  <span class="quick-kicker">04 / Skills</span>
-                  <strong>Teach a new skill</strong>
-                  <span>Turn any repeatable workflow into a saved SKILL.md</span>
-                  <span class="quick-arrow" aria-hidden="true">↗</span>
-                </button>
+
+              <div class="welcome-cat-row">
+                <div class="segmented-tabs segmented-tabs-sm" role="tablist" aria-label="Task categories">
+                  <button type="button" class="seg-btn welcome-cat-btn active" data-cat="all">All</button>
+                  <button type="button" class="seg-btn welcome-cat-btn" data-cat="mac">Mac &amp; Files</button>
+                  <button type="button" class="seg-btn welcome-cat-btn" data-cat="code">Code</button>
+                  <button type="button" class="seg-btn welcome-cat-btn" data-cat="media">Media &amp; Screen</button>
+                  <button type="button" class="seg-btn welcome-cat-btn" data-cat="write">Writing</button>
+                  <button type="button" class="seg-btn welcome-cat-btn" data-cat="daily">Daily &amp; Web</button>
+                </div>
+                <span class="status-sub">Type <code>/</code> in the box below for quick commands &amp; skills</span>
               </div>
+
+              <div id="welcome-task-grid" class="quick-grid"></div>
             </div>
             <div id="chat-messages" class="chat-messages" role="log"></div>
           </div>
@@ -198,6 +243,7 @@
 
           <div id="composer-dropzone" class="composer-wrap">
             <div id="drop-overlay" class="drop-overlay hidden">Drop photos, videos, folders, or documents to attach</div>
+            <div id="slash-menu" class="slash-menu hidden" role="listbox" aria-label="Slash commands and skills"></div>
             <div id="queued-bar" class="queued-bar hidden">
               <span id="queued-text" class="queued-text"></span>
               <div class="queued-actions">
@@ -207,21 +253,36 @@
             </div>
             <div id="attachments-bar" class="attachments-bar hidden"></div>
             <div class="composer-box">
-              <button id="attach-btn" class="icon-btn" type="button" title="Attach file, photo, video, or folder">
+              <button id="attach-btn" class="icon-btn" type="button" title="Attach file, photo, video, or folder" aria-label="Attach files">
                 +
+              </button>
+              <button id="composer-screenshot-btn" class="icon-btn icon-btn-subtle" type="button" title="Capture screen &amp; attach PNG" aria-label="Capture screenshot">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8" />
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" />
+                </svg>
+              </button>
+              <button id="composer-clipboard-btn" class="icon-btn icon-btn-subtle" type="button" title="Insert text from macOS clipboard" aria-label="Paste clipboard text">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="6" y="4.5" width="12" height="16" rx="2" stroke="currentColor" stroke-width="1.8" />
+                  <path d="M9 4.5V3.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" stroke="currentColor" stroke-width="1.8" />
+                </svg>
+              </button>
+              <button id="composer-slash-btn" class="icon-btn icon-btn-subtle" type="button" title="Browse / slash commands &amp; skills" aria-label="Open slash commands">
+                /
               </button>
               <input id="browser-file-input" type="file" multiple class="hidden" />
               <textarea
                 id="prompt-input"
                 rows="1"
-                placeholder="Ask LocalGravity to organize files, edit media, code, humanize text, or install skills..."
+                placeholder="Ask LocalGravity anything, or type / for commands &amp; skills..."
               ></textarea>
               <button id="send-btn" class="send-btn" type="button">Run</button>
               <button id="stop-btn" class="stop-btn hidden" type="button">Stop</button>
             </div>
             <div class="composer-hint">
-              <span><kbd>↵</kbd> send <span class="hint-divider">·</span> <kbd>⇧↵</kbd> newline</span>
-              <span class="composer-local"><span class="status-dot online" aria-hidden="true"></span> Local by default</span>
+              <span><kbd>↵</kbd> send <span class="hint-divider">·</span> <kbd>⇧↵</kbd> newline <span class="hint-divider">·</span> <kbd>/</kbd> commands &amp; skills <span class="hint-divider">·</span> <kbd>⌘K</kbd> palette</span>
+              <span class="composer-local" id="composer-provider-badge"><span class="status-dot online" aria-hidden="true"></span> Local by default</span>
             </div>
           </div>
         </section>
@@ -234,28 +295,142 @@
               <div id="dash-date" class="dash-date"></div>
             </div>
             <div class="dash-greeting-block">
-              <h2 id="dash-greeting">Welcome back</h2>
+              <div class="dash-greeting-top">
+                <h2 id="dash-greeting">Welcome back</h2>
+                <button id="dash-mode-pill" class="dash-mode-pill" type="button" title="Open Models &amp; Settings">
+                  <span class="status-dot online"></span>
+                  <span id="dash-mode-text">Local AI</span>
+                </button>
+              </div>
               <p id="dash-summary" class="view-sub">Loading your day…</p>
             </div>
           </header>
 
           <div id="dash-stats" class="stat-grid" aria-live="polite">
-            <div class="stat-tile"><span class="stat-label">CPU</span><span class="stat-value" id="dash-cpu">—</span><div class="usage-bar"><span id="dash-cpu-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">Memory</span><span class="stat-value" id="dash-mem">—</span><div class="usage-bar"><span id="dash-mem-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">GPU</span><span class="stat-value" id="dash-gpu">—</span><div class="usage-bar"><span id="dash-gpu-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">Storage</span><span class="stat-value" id="dash-disk">—</span><div class="usage-bar"><span id="dash-disk-bar"></span></div></div>
+            <div class="stat-tile">
+              <div class="stat-tile-head">
+                <span class="stat-label">CPU</span>
+                <div class="spark-slot" id="dash-cpu-spark"></div>
+              </div>
+              <span class="stat-value" id="dash-cpu">—</span>
+              <span class="stat-sub" id="dash-cpu-sub">Sampling…</span>
+              <div class="usage-bar"><span id="dash-cpu-bar"></span></div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-tile-head">
+                <span class="stat-label">Memory</span>
+                <div class="spark-slot" id="dash-mem-spark"></div>
+              </div>
+              <span class="stat-value" id="dash-mem">—</span>
+              <span class="stat-sub" id="dash-mem-sub">Unified RAM</span>
+              <div class="usage-bar"><span id="dash-mem-bar"></span></div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-tile-head">
+                <span class="stat-label">GPU</span>
+                <div class="spark-slot" id="dash-gpu-spark"></div>
+              </div>
+              <span class="stat-value" id="dash-gpu">—</span>
+              <span class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</span>
+              <div class="usage-bar"><span id="dash-gpu-bar"></span></div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-tile-head">
+                <span class="stat-label">Storage</span>
+                <div class="spark-slot" id="dash-disk-spark"></div>
+              </div>
+              <span class="stat-value" id="dash-disk">—</span>
+              <span class="stat-sub" id="dash-disk-sub">SSD Free</span>
+              <div class="usage-bar"><span id="dash-disk-bar"></span></div>
+            </div>
           </div>
 
           <form id="dash-quick-ask-form" class="dash-quick-ask">
+            <svg class="dash-ask-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+              <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
             <input
               id="dash-quick-ask-input"
               class="dash-quick-ask-input"
               type="text"
-              placeholder="Ask LocalGravity anything on your Mac… (press Enter to jump into Agent)"
+              placeholder="Ask LocalGravity anything on your Mac… (files, web search, code, schedule, screen)"
               aria-label="Quick ask LocalGravity"
             />
             <button class="primary-btn" type="submit">Ask Agent →</button>
           </form>
+
+          <div class="dash-card dash-superpowers">
+            <div class="dash-card-head">
+              <div>
+                <h3>One-Click Capabilities</h3>
+                <span class="status-sub">Launch common tasks immediately or prefill a workflow into the Agent workspace.</span>
+              </div>
+              <button id="dash-explore-tools-btn" class="secondary-btn" type="button">All task ideas</button>
+            </div>
+            <div class="superpowers-grid">
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="true"
+                data-prompt="Run system_stats (with top processes) and check swap pressure, GPU RAM, and disk usage. Give me 3 concrete ways to speed up this Mac right now."
+              >
+                <span class="superpower-tag">Diagnostics</span>
+                <strong>Mac Health Audit</strong>
+                <span>CPU, swap, GPU RAM &amp; top hogs</span>
+              </button>
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="true"
+                data-prompt="Check list_schedule_items (today_only: true) and system_stats, then give me a crisp morning briefing for the rest of today."
+              >
+                <span class="superpower-tag">Daily</span>
+                <strong>Morning Briefing</strong>
+                <span>Agenda timeline + battery &amp; load</span>
+              </button>
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="true"
+                data-prompt="Inspect ~/Downloads and propose a clean folder grouping by file type and age (read-only audit first, do not move or delete anything without asking)."
+              >
+                <span class="superpower-tag">Files</span>
+                <strong>Clean Downloads Plan</strong>
+                <span>Read-only clutter audit by size</span>
+              </button>
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="true"
+                data-prompt="Take a screenshot of my screen right now using take_screenshot and explain what you see, or highlight anything useful."
+              >
+                <span class="superpower-tag">Vision</span>
+                <strong>Inspect My Screen</strong>
+                <span>Capture display &amp; analyze visuals</span>
+              </button>
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="true"
+                data-prompt="Read my macOS clipboard using paste_from_clipboard, improve the writing so it sounds clear, direct, and human, and copy the improved text back with copy_to_clipboard."
+              >
+                <span class="superpower-tag">Writing</span>
+                <strong>Polish Clipboard</strong>
+                <span>Rewrite &amp; humanize copied text</span>
+              </button>
+              <button
+                type="button"
+                class="superpower-card"
+                data-autorun="false"
+                data-prompt="Use search_web to research the following topic and summarize the key points with clickable links: "
+              >
+                <span class="superpower-tag">Web Search</span>
+                <strong>Web Research Brief</strong>
+                <span>Live DuckDuckGo search + cited notes</span>
+              </button>
+            </div>
+          </div>
 
           <div class="dash-columns">
             <div class="dash-card">
@@ -308,7 +483,7 @@
           <header class="view-header">
             <div>
               <h2>System Monitor</h2>
-              <p class="view-sub">Live CPU, memory, GPU, storage, and top processes for this Mac. Read-only sampling.</p>
+              <p class="view-sub">Live CPU, memory, GPU, swap, storage, and process telemetry for this Mac.</p>
             </div>
             <div class="toolbar-actions">
               <label class="field-inline"><input id="monitor-autorefresh" type="checkbox" checked /> Auto-refresh</label>
@@ -326,18 +501,41 @@
             <div class="stat-tile"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
           </div>
 
+          <div class="dash-card monitor-telemetry-card">
+            <div class="dash-card-head">
+              <div>
+                <h3>Live Performance Telemetry</h3>
+                <div id="monitor-telemetry-stats" class="telemetry-stats-strip">Sampling history…</div>
+              </div>
+              <div class="segmented-tabs segmented-tabs-sm" role="group" aria-label="Filter chart series">
+                <button type="button" class="seg-btn mon-series-btn active" data-series="all">All</button>
+                <button type="button" class="seg-btn mon-series-btn" data-series="cpu">CPU</button>
+                <button type="button" class="seg-btn mon-series-btn" data-series="mem">Memory</button>
+                <button type="button" class="seg-btn mon-series-btn" data-series="gpu">GPU</button>
+              </div>
+            </div>
+            <div id="monitor-timeline-chart" class="monitor-timeline-chart"></div>
+          </div>
+
           <div class="monitor-grid">
             <div class="dash-card">
-              <div class="dash-card-head"><h3>Details</h3></div>
-              <dl id="monitor-details" class="monitor-details"></dl>
+              <div class="dash-card-head"><h3>Unified Memory Composition</h3></div>
+              <div id="monitor-memory-donut" class="donut-layout">
+                <span class="status-sub">Waiting for memory sample…</span>
+              </div>
             </div>
             <div class="dash-card">
-              <div class="dash-card-head"><h3>Storage volumes</h3></div>
-              <table class="data-table">
-                <thead><tr><th>Volume</th><th>Used</th><th>Free</th><th>Used %</th></tr></thead>
-                <tbody id="monitor-disks"></tbody>
-              </table>
+              <div class="dash-card-head"><h3>System &amp; Power Details</h3></div>
+              <dl id="monitor-details" class="monitor-details"></dl>
             </div>
+          </div>
+
+          <div class="dash-card">
+            <div class="dash-card-head"><h3>Storage volumes</h3></div>
+            <table class="data-table">
+              <thead><tr><th>Volume</th><th>Used</th><th>Free</th><th>Used %</th></tr></thead>
+              <tbody id="monitor-disks"></tbody>
+            </table>
           </div>
 
           <div class="dash-card">
@@ -360,7 +558,7 @@
           <header class="view-header">
             <div>
               <h2>Timetable</h2>
-              <p class="view-sub">Recurring weekly blocks: classes, meetings, workouts, focus time. The agent can add entries too.</p>
+              <p class="view-sub">Recurring weekly blocks and one-off dated reminders with 5-minute macOS notifications.</p>
             </div>
           </header>
 
@@ -405,12 +603,23 @@
               </label>
               <button class="primary-btn" type="submit">Save entry</button>
             </form>
-            <div class="dash-card">
-              <div class="dash-card-head">
-                <h3>Week at a glance</h3>
-                <button id="sched-refresh-btn" class="secondary-btn" type="button">Refresh</button>
+            <div class="schedule-right-stack">
+              <div class="dash-card schedule-chart-card">
+                <div class="dash-card-head">
+                  <div>
+                    <h3>Weekly Focus Allocation</h3>
+                    <div id="schedule-chart-kpis" class="telemetry-stats-strip">Calculating weekly hours…</div>
+                  </div>
+                </div>
+                <div id="schedule-week-chart"></div>
               </div>
-              <div id="schedule-week" class="schedule-week"></div>
+              <div class="dash-card">
+                <div class="dash-card-head">
+                  <h3>Week at a glance</h3>
+                  <button id="sched-refresh-btn" class="secondary-btn" type="button">Refresh</button>
+                </div>
+                <div id="schedule-week" class="schedule-week"></div>
+              </div>
             </div>
           </div>
         </section>
@@ -419,12 +628,12 @@
         <section id="view-skills" class="view">
           <header class="view-header">
             <div>
-              <h2>Skills & Knowledge</h2>
+              <h2>Skills &amp; Knowledge</h2>
               <p class="view-sub">Teach repeatable workflows (SKILL.md), inspect self-learned mistake rules, and store personal context.</p>
             </div>
             <div class="segmented-tabs">
               <button type="button" class="seg-btn active" data-subtab="skills">Skills</button>
-              <button type="button" class="seg-btn" data-subtab="knowledge">Knowledge & Memory</button>
+              <button type="button" class="seg-btn" data-subtab="knowledge">Knowledge &amp; Memory</button>
             </div>
           </header>
 
@@ -488,14 +697,14 @@
         <section id="view-settings" class="view">
           <header class="view-header">
             <div>
-              <h2>Models & Settings</h2>
+              <h2>Models &amp; Settings</h2>
               <p class="view-sub">Local Ollama models on your M4 plus optional Gemini, Claude, ChatGPT, Groq, and OpenRouter endpoints.</p>
             </div>
           </header>
 
           <div class="settings-scroll">
             <div class="settings-section">
-              <h3>Mac Resources & Runtime</h3>
+              <h3>Mac Resources &amp; Runtime</h3>
               <div id="system-stats-grid" class="stats-grid"></div>
               <div class="runtime-controls">
                 <label class="field-inline">
@@ -543,7 +752,7 @@
             </div>
 
             <div class="settings-section">
-              <h3>Cloud & Frontier Providers (Optional)</h3>
+              <h3>Cloud &amp; Frontier Providers (Optional)</h3>
               <p class="section-hint">
                 API keys are stored locally in <code>~/.localgravity/config.json</code> (mode <code>0600</code>). Leave blank to keep LocalGravity 100% local.
               </p>

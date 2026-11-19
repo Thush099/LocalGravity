@@ -1,4 +1,9 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { expandUserPath } from './safety.mjs';
 
 const MAX_CLIPBOARD_CHARS = 200000;
 const MAX_PROCESS_OUTPUT_CHARS = 64 * 1024;
@@ -171,4 +176,218 @@ export async function setReminderTool({ seconds, message }) {
     output: `Reminder set for ${delay} seconds from now: "${msg.slice(0, 120)}"`,
     fireAt: new Date(Date.now() + delay * 1000).toISOString(),
   };
+}
+
+/**
+ * Search indexed files across macOS via Spotlight (`mdfind`) without shelling out.
+ */
+export async function spotlightSearchTool({ query, folder = '', limit = 20 } = {}) {
+  const q = String(query ?? '').trim();
+  if (!q) return { ok: false, paths: [], output: 'Spotlight query is required.' };
+  const cap = Math.min(50, Math.max(1, Number(limit) || 20));
+  const args = [];
+  if (folder) {
+    args.push('-onlyin', expandUserPath(String(folder).trim()));
+  }
+  args.push(q);
+
+  const res = await runBinary('/usr/bin/mdfind', args, { timeout: 10000 });
+  if (!res.ok) {
+    return { ok: false, paths: [], output: `Spotlight search failed: ${res.stderr || 'mdfind error'}` };
+  }
+  const allPaths = res.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const shown = allPaths.slice(0, cap);
+  if (shown.length === 0) {
+    return { ok: true, paths: [], output: `No Spotlight matches for "${q}".` };
+  }
+  const extra = allPaths.length > shown.length ? `\n... (${allPaths.length - shown.length} more)` : '';
+  return {
+    ok: true,
+    paths: shown,
+    output: `Spotlight matches (${shown.length}${allPaths.length > shown.length ? ` of ${allPaths.length}` : ''}):\n${shown.join('\n')}${extra}`,
+  };
+}
+
+/**
+ * Capture the macOS screen silently into a temp PNG and return it scaled for multimodal inspection.
+ */
+export async function takeScreenshotTool({ mode = 'screen', max_edge = 1280 } = {}) {
+  const edge = Math.min(1920, Math.max(480, Number(max_edge) || 1280));
+  const stamp = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const rawPath = path.join(os.tmpdir(), `lg-shot-${stamp}.png`);
+  const scaledPath = path.join(os.tmpdir(), `lg-shot-${stamp}-scaled.png`);
+  const captureArgs = mode === 'main' ? ['-x', '-m', '-t', 'png', rawPath] : ['-x', '-t', 'png', rawPath];
+
+  const capRes = await runBinary('/usr/sbin/screencapture', captureArgs, { timeout: 10000 });
+  if (!capRes.ok) {
+    return {
+      ok: false,
+      output: `Screenshot failed (${capRes.stderr || 'grant Screen Recording access to LocalGravity in System Settings > Privacy & Security'}).`,
+    };
+  }
+
+  let readTarget = rawPath;
+  const sipsRes = await runBinary('/usr/bin/sips', ['-Z', String(edge), rawPath, '--out', scaledPath], {
+    timeout: 10000,
+  });
+  if (sipsRes.ok) readTarget = scaledPath;
+
+  try {
+    const buf = await fs.readFile(readTarget);
+    const b64 = buf.toString('base64');
+    if (readTarget !== rawPath) {
+      await fs.unlink(scaledPath).catch(() => {});
+    }
+    return {
+      ok: true,
+      path: rawPath,
+      output: `Captured macOS screenshot (${Math.round(buf.length / 1024)} KB) at ${rawPath}`,
+      images: [b64],
+    };
+  } catch (err) {
+    return { ok: false, output: `Could not read screenshot image: ${err.message}` };
+  }
+}
+
+function escapeHtmlBody(text) {
+  return String(text ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function formatNoteHtml(title, body) {
+  const safeTitle = escapeHtmlBody(title);
+  const lines = String(body ?? '').replace(/\r\n/g, '\n').split('\n');
+  const bodyHtml = lines.map((line) => (line ? `<div>${escapeHtmlBody(line)}</div>` : '<div><br></div>')).join('');
+  return `<div><b>${safeTitle}</b></div>${bodyHtml}`;
+}
+
+/**
+ * Safely list, search, read, or create Apple Notes via osascript argv (never string interpolation).
+ */
+export async function manageNotesTool({ action = 'list', title = '', body = '', query = '', limit = 10 } = {}) {
+  const act = String(action || 'list').toLowerCase().trim();
+  const cap = Math.min(30, Math.max(1, Number(limit) || 10));
+
+  if (act === 'create') {
+    const noteTitle = String(title || '').trim();
+    if (!noteTitle) return { ok: false, output: 'Note title is required when action is "create".' };
+    const htmlBody = formatNoteHtml(noteTitle, body);
+    const script = [
+      'on run argv',
+      '  set noteHtml to item 1 of argv',
+      '  tell application "Notes"',
+      '    tell default account',
+      '      set newNote to make new note at folder "Notes" with properties {body:noteHtml}',
+      '      return name of newNote',
+      '    end tell',
+      '  end tell',
+      'end run',
+    ].join('\n');
+    const res = await runBinary('/usr/bin/osascript', ['-', htmlBody], { input: script, timeout: 15000 });
+    if (!res.ok) return { ok: false, output: `Apple Notes create failed: ${res.stderr || 'permission denied or Notes unavailable'}` };
+    return { ok: true, output: `Created Apple Note "${res.stdout.trim() || noteTitle}".` };
+  }
+
+  if (act === 'read') {
+    const noteTitle = String(title || '').trim();
+    if (!noteTitle) return { ok: false, output: 'Note title is required when action is "read".' };
+    const script = [
+      'on run argv',
+      '  set targetName to item 1 of argv',
+      '  tell application "Notes"',
+      '    set foundNotes to (every note whose name is targetName)',
+      '    if (count of foundNotes) is 0 then',
+      '      set foundNotes to (every note whose name contains targetName)',
+      '    end if',
+      '    if (count of foundNotes) is 0 then return "__LG_NOT_FOUND__"',
+      '    set n to item 1 of foundNotes',
+      '    return (name of n) & linefeed & "---" & linefeed & (plaintext of n)',
+      '  end tell',
+      'end run',
+    ].join('\n');
+    const res = await runBinary('/usr/bin/osascript', ['-', noteTitle], { input: script, timeout: 15000 });
+    if (!res.ok) return { ok: false, output: `Apple Notes read failed: ${res.stderr || 'osascript error'}` };
+    const text = res.stdout.trim();
+    if (text === '__LG_NOT_FOUND__') return { ok: false, output: `No Apple Note matching "${noteTitle}".` };
+    return { ok: true, output: text.slice(0, 8000) };
+  }
+
+  if (act === 'search') {
+    const needle = String(query || title || '').trim();
+    if (!needle) return { ok: false, output: 'Search query is required when action is "search".' };
+    const script = [
+      'on run argv',
+      '  set q to item 1 of argv',
+      '  set maxItems to (item 2 of argv) as integer',
+      '  tell application "Notes"',
+      '    set hits to {}',
+      '    ignoring case',
+      '      repeat with n in every note',
+      '        if (name of n contains q) or (plaintext of n contains q) then',
+      '          set end of hits to (name of n)',
+      '          if (count of hits) >= maxItems then exit repeat',
+      '        end if',
+      '      end repeat',
+      '    end ignoring',
+      '    set AppleScript\'s text item delimiters to linefeed',
+      '    return hits as text',
+      '  end tell',
+      'end run',
+    ].join('\n');
+    const res = await runBinary('/usr/bin/osascript', ['-', needle, String(cap)], { input: script, timeout: 15000 });
+    if (!res.ok) return { ok: false, output: `Apple Notes search failed: ${res.stderr || 'osascript error'}` };
+    const text = res.stdout.trim();
+    return { ok: true, output: text ? `Matching Apple Notes:\n${text}` : `No Apple Notes matched "${needle}".` };
+  }
+
+  if (act === 'list') {
+    const script = [
+      'on run argv',
+      '  set maxItems to (item 1 of argv) as integer',
+      '  tell application "Notes"',
+      '    set allNotes to every note',
+      '    set totalCount to count of allNotes',
+      '    if totalCount < maxItems then set maxItems to totalCount',
+      '    set outLines to {}',
+      '    repeat with idx from 1 to maxItems',
+      '      set n to item idx of allNotes',
+      '      set end of outLines to ("- " & (name of n))',
+      '    end repeat',
+      '    set AppleScript\'s text item delimiters to linefeed',
+      '    return outLines as text',
+      '  end tell',
+      'end run',
+    ].join('\n');
+    const res = await runBinary('/usr/bin/osascript', ['-', String(cap)], { input: script, timeout: 15000 });
+    if (!res.ok) return { ok: false, output: `Apple Notes list failed: ${res.stderr || 'osascript error'}` };
+    const text = res.stdout.trim();
+    return { ok: true, output: text ? `Apple Notes:\n${text}` : 'No notes found in Apple Notes.' };
+  }
+
+  return { ok: false, output: `Unsupported action "${action}". Use "list", "search", "read", or "create".` };
+}
+
+/**
+ * Open a validated http(s) URL in the user's default browser.
+ */
+export async function openUrlTool({ url } = {}) {
+  const raw = String(url ?? '').trim();
+  if (!raw) return { ok: false, output: 'URL is required.' };
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, output: `Invalid URL: "${raw}"` };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, output: `Blocked URL scheme "${parsed.protocol}": only http and https URLs are allowed.` };
+  }
+  const res = await runBinary('/usr/bin/open', [parsed.href], { timeout: 10000 });
+  if (!res.ok) return { ok: false, output: `Could not open URL: ${res.stderr || 'open error'}` };
+  return { ok: true, output: `Opened ${parsed.href} in default browser.` };
 }

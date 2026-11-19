@@ -7,6 +7,63 @@ export function escapeHtml(str) {
     .replaceAll("'", '&#39;');
 }
 
+const KEYWORDS_RE =
+  /^(?:const|let|var|function|return|async|await|import|export|from|default|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|new|class|extends|true|false|null|undefined|def|elif|pass|with|as|in|not|and|or|None|True|False|func|struct|enum|guard|private|public|final|do|then|fi|done|esac|echo|cd|sudo)$/;
+
+const TOKENIZER_RE =
+  /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|(?<![\w$])#[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+
+/**
+ * Highlight fenced code safely in a single pass on raw source before escaping every fragment.
+ */
+export function highlightCode(rawCode, lang = '') {
+  const src = String(rawCode ?? '');
+  const normalizedLang = String(lang || '').toLowerCase();
+  const isJson = normalizedLang === 'json' || normalizedLang === 'jsonc';
+  const supportsHashComment = new Set(['py', 'python', 'sh', 'bash', 'zsh', 'shell', 'yaml', 'yml', 'toml', '']).has(
+    normalizedLang
+  );
+
+  let out = '';
+  let lastIdx = 0;
+  TOKENIZER_RE.lastIndex = 0;
+  let match;
+  while ((match = TOKENIZER_RE.exec(src)) !== null) {
+    if (match.index > lastIdx) {
+      out += escapeHtml(src.slice(lastIdx, match.index));
+    }
+    const token = match[0];
+    lastIdx = match.index + token.length;
+
+    if (token.startsWith('//') || token.startsWith('/*')) {
+      out += `<span class="tok-comment">${escapeHtml(token)}</span>`;
+    } else if (token.startsWith('#')) {
+      if (supportsHashComment) {
+        out += `<span class="tok-comment">${escapeHtml(token)}</span>`;
+      } else {
+        out += escapeHtml(token);
+      }
+    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
+      const rest = src.slice(lastIdx);
+      if (isJson && token.startsWith('"') && /^\s*:/.test(rest)) {
+        out += `<span class="tok-key">${escapeHtml(token)}</span>`;
+      } else {
+        out += `<span class="tok-string">${escapeHtml(token)}</span>`;
+      }
+    } else if (/^\d/.test(token)) {
+      out += `<span class="tok-number">${escapeHtml(token)}</span>`;
+    } else if (KEYWORDS_RE.test(token)) {
+      out += `<span class="tok-keyword">${escapeHtml(token)}</span>`;
+    } else {
+      out += escapeHtml(token);
+    }
+  }
+  if (lastIdx < src.length) {
+    out += escapeHtml(src.slice(lastIdx));
+  }
+  return out;
+}
+
 function renderInline(text) {
   let out = escapeHtml(text);
   // Protect inline code spans first
@@ -55,8 +112,13 @@ function parseTableAlignments(line) {
   });
 }
 
+function renderCodeBlock(rawCode, codeLang) {
+  const highlighted = highlightCode(rawCode, codeLang);
+  return `<div class="code-block"><div class="code-header"><span>${escapeHtml(codeLang)}</span><button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></div><pre><code>${highlighted}</code></pre></div>`;
+}
+
 /**
- * Render Markdown safely to HTML with copyable fenced code blocks, GFM tables, and task lists.
+ * Render Markdown safely to HTML with copyable syntax-highlighted code blocks, GFM tables, and task lists.
  */
 export function renderMarkdown(markdown) {
   const src = String(markdown || '');
@@ -87,10 +149,7 @@ export function renderMarkdown(markdown) {
         codeLang = fenceMatch[1] || 'text';
         codeLines = [];
       } else {
-        const rawCode = codeLines.join('\n');
-        html.push(
-          `<div class="code-block"><div class="code-header"><span>${escapeHtml(codeLang)}</span><button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></div><pre><code>${escapeHtml(rawCode)}</code></pre></div>`
-        );
+        html.push(renderCodeBlock(codeLines.join('\n'), codeLang));
         inCode = false;
         codeLang = '';
         codeLines = [];
@@ -209,10 +268,7 @@ export function renderMarkdown(markdown) {
 
   closeList();
   if (inCode && codeLines.length > 0) {
-    const rawCode = codeLines.join('\n');
-    html.push(
-      `<div class="code-block"><div class="code-header"><span>${escapeHtml(codeLang)}</span><button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></div><pre><code>${escapeHtml(rawCode)}</code></pre></div>`
-    );
+    html.push(renderCodeBlock(codeLines.join('\n'), codeLang));
   }
   return html.join('');
 }

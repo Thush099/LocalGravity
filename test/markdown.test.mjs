@@ -20,6 +20,24 @@ test('renderMarkdown renders GFM tables with column alignments and inline format
   assert.match(html, /<td><del>Legacy Loop<\/del><\/td>/);
 });
 
+test('renderMarkdown highlights code syntax safely without introducing XSS', () => {
+  const md = [
+    '```js',
+    'const x = "<script>alert(1)</script>"; // unsafe string',
+    'export async function run(n) {',
+    '  return n + 42;',
+    '}',
+    '```',
+  ].join('\n');
+
+  const html = renderMarkdown(md);
+  assert.match(html, /class="tok-keyword">const<\/span>/);
+  assert.match(html, /class="tok-string">&quot;&lt;script&gt;alert\(1\)&lt;\/script&gt;&quot;<\/span>/);
+  assert.match(html, /class="tok-comment">\/\/ unsafe string<\/span>/);
+  assert.match(html, /class="tok-number">42<\/span>/);
+  assert.doesNotMatch(html, /<script>/i);
+});
+
 test('renderMarkdown renders task list checkboxes, file:// links, and auto-linked URLs safely', () => {
   const md = [
     '- [x] Completed task with [Local File](file:///Users/test/notes.md)',

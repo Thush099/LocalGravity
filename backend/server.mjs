@@ -56,7 +56,12 @@ import {
   saveSession,
 } from './state/storage.mjs';
 import { inspectMediaTool } from './tools/media-tool.mjs';
-import { setReminderTool, showNotificationTool } from './tools/macos-tool.mjs';
+import {
+  pasteFromClipboardTool,
+  setReminderTool,
+  showNotificationTool,
+  takeScreenshotTool,
+} from './tools/macos-tool.mjs';
 import { startAgendaNotifier } from './agenda-notifier.mjs';
 import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { expandUserPath } from './tools/safety.mjs';
@@ -104,9 +109,6 @@ const UI_CONTENT_SECURITY_POLICY = [
 
 let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
-let cachedMetrics = null;
-let cachedMetricsAt = 0;
-let inFlightMetrics = null;
 const uiAssetCache = new Map();
 
 function sendJson(res, status, data) {
@@ -253,6 +255,10 @@ export function createAgentServer({
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
+  let cachedMetrics = null;
+  let cachedMetricsAt = 0;
+  let inFlightMetrics = null;
+  const metricsHistory = [];
   let agendaStop = null;
   const resolveRunApprovals = (runState, reason) => {
     if (!runState?.approvals) return;
@@ -350,7 +356,7 @@ export function createAgentServer({
         return;
       }
 
-      // System metrics (read-only snapshot for the dashboard and monitor views)
+      // System metrics (read-only snapshot + bounded 60-point telemetry ring buffer)
       if (req.method === 'GET' && pathname === '/api/system/metrics') {
         const now = Date.now();
         if (!cachedMetrics || now - cachedMetricsAt > 2000) {
@@ -359,6 +365,14 @@ export function createAgentServer({
               .then((m) => {
                 cachedMetrics = m;
                 cachedMetricsAt = Date.now();
+                metricsHistory.push({
+                  t: m.timestamp,
+                  cpu: m.cpu?.percent ?? null,
+                  mem: m.memory?.usedPercent ?? null,
+                  gpu: m.gpu?.utilizationPercent ?? null,
+                  swapPct: m.memory?.swap?.usedPercent ?? 0,
+                });
+                if (metricsHistory.length > 60) metricsHistory.shift();
                 return m;
               })
               .finally(() => {
@@ -367,8 +381,29 @@ export function createAgentServer({
           }
           await inFlightMetrics;
         }
-        sendJson(res, 200, { ok: true, metrics: cachedMetrics });
+        sendJson(res, 200, { ok: true, metrics: cachedMetrics, history: metricsHistory });
         return;
+      }
+
+      // Composer quick-capture utilities (clipboard text & native screenshot)
+      if (req.method === 'GET' && pathname === '/api/chat/clipboard') {
+        const result = await pasteFromClipboardTool();
+        return sendJson(res, 200, {
+          ok: result.ok,
+          text: result.clipboard || '',
+          output: result.output,
+        });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/chat/screenshot') {
+        const result = await takeScreenshotTool({ max_edge: 1280 });
+        return sendJson(res, result.ok ? 200 : 400, {
+          ok: result.ok,
+          path: result.path || null,
+          name: result.path ? path.basename(result.path) : null,
+          previewUrl: result.images?.[0] ? `data:image/png;base64,${result.images[0]}` : null,
+          output: result.output,
+        });
       }
 
       // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)

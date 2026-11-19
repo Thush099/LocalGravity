@@ -3,6 +3,12 @@ import { escapeHtml, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
+  renderMemoryDonut,
+  renderMultiSeriesChart,
+  renderSparkline,
+  renderWeeklyScheduleChart,
+} from './lib/charts.js';
+import {
   formatClockDate,
   formatClockTime,
   formatMinutesUntil,
@@ -13,9 +19,163 @@ import {
 } from './lib/dashboard.js';
 
 const SIDEBAR_STORAGE_KEY = 'lg-sidebar-collapsed';
+const THEME_STORAGE_KEY = 'lg-theme';
+
+const TASK_STARTERS = [
+  {
+    id: 'mac-storage',
+    cat: 'mac',
+    catLabel: 'Mac & Files',
+    title: 'Organize Mac storage & caches',
+    desc: 'Inspect ~/Downloads, Desktop & heavy folders with a safe dry-run plan',
+    prompt: 'Audit my Mac storage and show me what is taking up space in ~/Downloads, ~/Desktop, and safe developer caches (read-only dry run first).',
+  },
+  {
+    id: 'spotlight-find',
+    cat: 'mac',
+    catLabel: 'Mac & Files',
+    title: 'Find files anywhere with Spotlight',
+    desc: 'Instant mdfind lookup across PDFs, decks, invoices, and projects',
+    prompt: 'Use spotlight_search to find the files I ask for next across my Mac: ',
+  },
+  {
+    id: 'memory-audit',
+    cat: 'mac',
+    catLabel: 'Mac & Files',
+    title: 'Diagnose RAM, swap & heavy apps',
+    desc: 'Snapshot CPU hogs, unified RAM pressure, and speed wins',
+    prompt: 'Run system_stats (with top processes) and check swap pressure, GPU RAM, and CPU hogs. Recommend 3 specific ways to speed up this Mac right now.',
+  },
+  {
+    id: 'review-code',
+    cat: 'code',
+    catLabel: 'Code',
+    title: 'Review git diff & catch bugs',
+    desc: 'Inspect local repository changes, run tests, and highlight risks',
+    prompt: 'Inspect the current repository git status and recent diff, check for bugs or edge cases, and run the project check command.',
+  },
+  {
+    id: 'write-tests',
+    cat: 'code',
+    catLabel: 'Code',
+    title: 'Write unit & regression tests',
+    desc: 'Follow Red-Green-Refactor cleanly with verifiable edge cases',
+    prompt: 'Read the module I point you to next and write clean regression tests covering edge cases: ',
+  },
+  {
+    id: 'screen-inspect',
+    cat: 'media',
+    catLabel: 'Media & Screen',
+    title: 'Inspect what is on my screen',
+    desc: 'Take a screenshot right now and analyze UI, errors, or layout',
+    prompt: 'Take a screenshot of my screen right now using take_screenshot and explain what you see or highlight any issues.',
+  },
+  {
+    id: 'edit-media',
+    cat: 'media',
+    catLabel: 'Media & Screen',
+    title: 'Edit video or photo with verification',
+    desc: 'Trim, reframe 9:16 for Reels/Shorts, compress, and inspect frames',
+    prompt: 'Help me inspect and edit a video or photo using ffmpeg/ImageMagick with visual before-and-after verification.',
+  },
+  {
+    id: 'humanize-clip',
+    cat: 'write',
+    catLabel: 'Writing',
+    title: 'Humanize & polish clipboard text',
+    desc: 'Read macOS clipboard, remove robotic tone, and copy back cleanly',
+    prompt: 'Read my macOS clipboard using paste_from_clipboard, rewrite it to sound natural and direct without AI clichés, and copy the improved text back with copy_to_clipboard.',
+  },
+  {
+    id: 'apple-notes',
+    cat: 'write',
+    catLabel: 'Writing',
+    title: 'Search or draft Apple Notes',
+    desc: 'Read existing notes or capture structured ideas into Apple Notes',
+    prompt: 'List my recent Apple Notes using manage_notes and help me organize or draft a note about: ',
+  },
+  {
+    id: 'web-research',
+    cat: 'daily',
+    catLabel: 'Daily & Web',
+    title: 'Research topic on the live web',
+    desc: 'Run DuckDuckGo web search + summarize sources cleanly',
+    prompt: 'Use search_web to research the following topic and present a concise summary with clickable URLs: ',
+  },
+  {
+    id: 'plan-day',
+    cat: 'daily',
+    catLabel: 'Daily & Web',
+    title: 'Plan today & schedule blocks',
+    desc: 'Read timetable, review free slots, and add deep-focus blocks',
+    prompt: 'Check list_schedule_items (today_only: true) and help me organize deep-focus blocks for today.',
+  },
+  {
+    id: 'teach-skill',
+    cat: 'code',
+    catLabel: 'Skills',
+    title: 'Teach a reusable SKILL.md',
+    desc: 'Turn any repeatable prompt or script into a permanent skill',
+    prompt: 'Let us create a new reusable SKILL.md workflow using save_skill for the task I describe next: ',
+  },
+];
+
+const SLASH_COMMANDS = [
+  { cmd: '/health', desc: 'Audit CPU, swap, GPU RAM, storage & top processes', tag: 'Run', prompt: 'Run system_stats (with top processes) and check swap pressure, GPU RAM, and disk usage. Give me 3 concrete ways to speed up this Mac right now.', autoRun: true },
+  { cmd: '/brief', desc: 'Morning briefing: today’s timetable + Mac health', tag: 'Run', prompt: 'Check list_schedule_items (today_only: true) and system_stats, then give me a crisp briefing for today.', autoRun: true },
+  { cmd: '/screenshot', desc: 'Capture screen now & ask the agent to analyze it', tag: 'Run', prompt: 'Take a screenshot of my screen right now using take_screenshot and explain what you see.', autoRun: true },
+  { cmd: '/clipboard', desc: 'Humanize & polish text currently on macOS clipboard', tag: 'Run', prompt: 'Read my macOS clipboard using paste_from_clipboard, rewrite it clearly without AI clichés, and copy the improved version back with copy_to_clipboard.', autoRun: true },
+  { cmd: '/clean', desc: 'Read-only storage clutter audit across Downloads & Desktop', tag: 'Run', prompt: 'Audit ~/Downloads and ~/Desktop by size (read-only dry run first, do not move or delete anything yet).', autoRun: true },
+  { cmd: '/web', desc: 'Search the live public web (search_web)', tag: 'Prompt', prompt: 'Use search_web to research: ', autoRun: false },
+  { cmd: '/spotlight', desc: 'Find files anywhere on Mac via Spotlight (mdfind)', tag: 'Prompt', prompt: 'Use spotlight_search to find files matching: ', autoRun: false },
+  { cmd: '/notes', desc: 'List, read, or create Apple Notes', tag: 'Prompt', prompt: 'Use manage_notes to check Apple Notes for: ', autoRun: false },
+  { cmd: '/compact', desc: 'Compact conversation history to free context window', tag: 'Action', action: () => $('#compact-btn')?.click() },
+  { cmd: '/export', desc: 'Export active conversation as Markdown', tag: 'Action', action: () => $('#export-chat-btn')?.click() },
+  { cmd: '/unload', desc: 'Unload Ollama GPU models to immediately reclaim RAM', tag: 'Action', action: () => unloadOllamaMemory() },
+  { cmd: '/clear', desc: 'Start a fresh blank task', tag: 'Action', action: () => createNewTask() },
+];
+
+const HUMAN_TOOL_META = {
+  list_dir: { label: 'List Folder', summarize: (a) => a.path || '.' },
+  read_file: { label: 'Read File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  write_file: { label: 'Write File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  edit_file: { label: 'Edit File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  search_files: { label: 'Search Files', summarize: (a) => a.query || a.root || '' },
+  spotlight_search: { label: 'Spotlight Search', summarize: (a) => a.query || '' },
+  run_command: { label: 'Shell Command', summarize: (a) => String(a.command || '').split('\n')[0].slice(0, 48) },
+  run_applescript: { label: 'AppleScript', summarize: () => 'osascript' },
+  run_shortcut: { label: 'Apple Shortcut', summarize: (a) => a.name || '' },
+  calculate: { label: 'Calculator', summarize: (a) => a.expression || '' },
+  update_plan: { label: 'Task Plan', summarize: (a) => `${a.steps?.length || 0} steps` },
+  inspect_media: { label: 'Inspect Media', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  take_screenshot: { label: 'Take Screenshot', summarize: (a) => a.mode || 'screen' },
+  search_web: { label: 'Web Search', summarize: (a) => a.query || '' },
+  fetch_url: { label: 'Fetch Page', summarize: (a) => a.url || '' },
+  open_url: { label: 'Open URL', summarize: (a) => a.url || '' },
+  copy_to_clipboard: { label: 'Copy to Clipboard', summarize: (a) => `${String(a.text || '').length} chars` },
+  paste_from_clipboard: { label: 'Read Clipboard', summarize: () => 'pbpaste' },
+  show_notification: { label: 'Notification', summarize: (a) => a.title || a.message || '' },
+  open_app: { label: 'Open App', summarize: (a) => a.name || '' },
+  manage_notes: { label: 'Apple Notes', summarize: (a) => `${a.action || 'list'}${a.title ? ` · ${a.title}` : ''}` },
+  set_reminder: { label: 'Set Reminder', summarize: (a) => `${a.seconds || 0}s` },
+  system_stats: { label: 'System Stats', summarize: () => 'CPU, RAM, GPU & Swap' },
+  add_schedule_item: { label: 'Add Timetable Block', summarize: (a) => `${a.time || ''} ${a.title || ''}`.trim() },
+  list_schedule_items: { label: 'Read Timetable', summarize: (a) => (a.today_only ? 'Today' : 'Full week') },
+  remove_schedule_item: { label: 'Remove Block', summarize: (a) => a.id || '' },
+  list_skills: { label: 'List Skills', summarize: () => '' },
+  read_skill: { label: 'Load Skill', summarize: (a) => a.name || '' },
+  save_skill: { label: 'Save Skill', summarize: (a) => a.name || '' },
+  self_improve: { label: 'Self-Improve Rule', summarize: (a) => a.skill_name || 'LEARNED_FIXES.md' },
+  list_knowledge: { label: 'List Knowledge', summarize: () => '' },
+  search_knowledge: { label: 'Search Knowledge', summarize: (a) => a.query || '' },
+  read_knowledge: { label: 'Read Knowledge', summarize: (a) => a.name || '' },
+  save_knowledge: { label: 'Save Knowledge', summarize: (a) => a.name || '' },
+};
 
 const state = {
   view: 'dashboard',
+  themeMode: 'auto',
+  welcomeCategory: 'all',
   sidebarCollapsed: false,
   subtab: 'skills',
   health: null,
@@ -38,12 +198,18 @@ const state = {
   queuedMessages: [],
   liveAssistantMsg: null,
   displayedItems: [],
+  collapsedToolGroups: new Set(),
   pendingApprovals: new Map(),
   contextTokens: 0,
   paletteOpen: false,
   paletteItems: [],
   paletteIndex: 0,
+  slashOpen: false,
+  slashItems: [],
+  slashIndex: 0,
   metrics: null,
+  metricsHistory: [],
+  monitorChartSeries: 'all',
   monitorProcessSort: 'cpu',
   scheduleFormMode: 'weekly',
   schedule: [],
@@ -83,6 +249,83 @@ function formatRelativeTime(value) {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function applyTheme(mode = 'auto', persist = true) {
+  const valid = mode === 'dark' || mode === 'light' ? mode : 'auto';
+  state.themeMode = valid;
+  if (valid === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = valid;
+
+  const btn = $('#theme-toggle-btn');
+  if (btn) {
+    btn.textContent = valid === 'dark' ? 'Dark' : valid === 'light' ? 'Light' : 'Auto';
+    btn.title = `Theme: ${btn.textContent} (click to switch)`;
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, valid);
+    } catch {
+      // ignore storage failure
+    }
+  }
+}
+
+function cycleTheme() {
+  const next = state.themeMode === 'auto' ? 'dark' : state.themeMode === 'dark' ? 'light' : 'auto';
+  applyTheme(next, true);
+  showToast(`Theme: ${next === 'auto' ? 'Auto (System)' : next === 'dark' ? 'Obsidian Dark' : 'Porcelain Light'}`);
+}
+
+function renderWelcomeTaskGrid() {
+  const grid = $('#welcome-task-grid');
+  if (!grid) return;
+  const cat = state.welcomeCategory || 'all';
+  const list =
+    cat === 'all'
+      ? TASK_STARTERS.slice(0, 6)
+      : TASK_STARTERS.filter((item) => item.cat === cat);
+
+  grid.innerHTML = list
+    .map(
+      (item) => `
+      <button type="button" class="quick-card" data-starter-id="${escapeHtml(item.id)}" data-prompt="${escapeHtml(item.prompt)}">
+        <div class="quick-card-top">
+          <span class="quick-cat">${escapeHtml(item.catLabel)}</span>
+          <span class="quick-arrow" aria-hidden="true">↗</span>
+        </div>
+        <strong>${escapeHtml(item.title)}</strong>
+        <span class="quick-card-desc">${escapeHtml(item.desc)}</span>
+      </button>`
+    )
+    .join('');
+
+  grid.querySelectorAll('.quick-card').forEach((card) => {
+    card.addEventListener('click', (e) => {
+      const promptInput = $('#prompt-input');
+      if (!promptInput) return;
+      const text = card.dataset.prompt || '';
+      promptInput.value = text;
+      promptInput.style.height = 'auto';
+      promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
+      promptInput.focus();
+      if (e.shiftKey && !text.endsWith(' ')) {
+        sendPrompt();
+      }
+    });
+  });
+}
+
+function renderSidebarBadges() {
+  $('#nav-agent-pulse')?.classList.toggle('hidden', !state.isRunning);
+  const badge = $('#nav-agenda-badge');
+  if (badge) {
+    const now = new Date();
+    const curMin = now.getHours() * 60 + now.getMinutes();
+    const remaining = (state.scheduleToday || []).filter((e) => e.startMinutes + (e.durationMin || 0) > curMin).length;
+    badge.textContent = String(remaining);
+    badge.classList.toggle('hidden', remaining <= 0);
+  }
 }
 
 function setSidebarCollapsed(collapsed, persist = true) {
@@ -225,6 +468,11 @@ function renderDashboard() {
   const mem = metrics?.memory || {};
   const gpu = metrics?.gpu;
   const disk = topDisk(metrics);
+  const hist = state.metricsHistory || [];
+  const cpuHist = hist.map((h) => h.cpu).filter((v) => v != null);
+  const memHist = hist.map((h) => h.mem).filter((v) => v != null);
+  const gpuHist = hist.map((h) => h.gpu).filter((v) => v != null);
+
   setUsageBar('#dash-cpu-bar', '#dash-cpu', metrics?.cpu?.percent);
   setUsageBar(
     '#dash-mem-bar',
@@ -240,6 +488,43 @@ function renderDashboard() {
     disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
   );
 
+  const cpuSpark = $('#dash-cpu-spark');
+  if (cpuSpark) cpuSpark.innerHTML = renderSparkline(cpuHist.length ? cpuHist : [metrics?.cpu?.percent], { color: '#38bdf8', label: 'cpu' });
+  const memSpark = $('#dash-mem-spark');
+  if (memSpark) memSpark.innerHTML = renderSparkline(memHist.length ? memHist : [mem.usedPercent], { color: '#34d399', label: 'mem' });
+  const gpuSpark = $('#dash-gpu-spark');
+  if (gpuSpark) gpuSpark.innerHTML = renderSparkline(gpuHist.length ? gpuHist : [gpu?.utilizationPercent], { color: '#f59e0b', label: 'gpu' });
+  const diskSpark = $('#dash-disk-spark');
+  if (diskSpark) {
+    diskSpark.innerHTML = disk
+      ? `<span class="stat-pct-pill">${Math.round(disk.usedPercent)}% full</span>`
+      : '';
+  }
+
+  const cpuSub = $('#dash-cpu-sub');
+  if (cpuSub) {
+    cpuSub.textContent = metrics?.loadAvg
+      ? `Load ${metrics.loadAvg[0]} · ${metrics.cpu?.cores || '?'} cores`
+      : 'CPU utilization';
+  }
+  const memSub = $('#dash-mem-sub');
+  if (memSub) {
+    memSub.textContent =
+      mem.swap?.usedBytes > 0
+        ? `Swap ${formatBytes(mem.swap.usedBytes)} / ${formatBytes(mem.swap.totalBytes)}`
+        : mem.wiredBytes != null
+          ? `Wired ${formatBytes(mem.wiredBytes)} · Zero swap`
+          : 'Unified RAM';
+  }
+  const gpuSub = $('#dash-gpu-sub');
+  if (gpuSub) {
+    gpuSub.textContent = gpu?.inUseMemoryBytes ? `${formatBytes(gpu.inUseMemoryBytes)} active GPU mem` : 'Apple Silicon GPU';
+  }
+  const diskSub = $('#dash-disk-sub');
+  if (diskSub) {
+    diskSub.textContent = disk ? `${formatBytes(disk.availableBytes)} free on volume` : 'SSD capacity';
+  }
+
   const now = new Date();
   const next = nextEntryFrom(state.scheduleToday, now);
   const remaining = state.scheduleToday.filter((e) => e.startMinutes + (e.durationMin || 0) > now.getHours() * 60 + now.getMinutes()).length;
@@ -249,6 +534,7 @@ function renderDashboard() {
       ? `${remaining} item${remaining === 1 ? '' : 's'} left today · ${next.inProgress ? `now: ${next.entry.title}` : `next: ${next.entry.title} ${formatMinutesUntil(next.minutesUntil)}`}`
       : `${remaining} item${remaining === 1 ? '' : 's'} left today · nothing else scheduled`;
   }
+  renderSidebarBadges();
 
   const snapshot = $('#dash-snapshot');
   if (snapshot) {
@@ -271,10 +557,16 @@ function renderDashboard() {
 
   const runtimeEl = $('#dash-runtime-summary');
   const unloadBtn = $('#dash-unload-ram-btn');
+  const modePill = $('#dash-mode-text');
+  const prov = state.config?.provider || 'ollama';
+  const activeModel = state.config?.model || 'qwen3.5:4b';
+  const thinkLabel = state.config?.thinking ? 'Deep Think' : 'Fast Mode';
+  if (modePill) {
+    modePill.textContent = prov === 'ollama' ? `On-Device · ${activeModel} · ${thinkLabel}` : `Cloud · ${activeModel}`;
+  }
   if (runtimeEl) {
     const running = state.health?.ollama?.runningModels || [];
-    const activeLabel = `${state.config?.model || 'qwen3.5:4b'} (${(state.config?.provider || 'ollama') === 'ollama' ? 'Local' : state.config?.provider})`;
-    const thinkLabel = state.config?.thinking ? 'Deep Think On' : 'Fast mode';
+    const activeLabel = `${activeModel} (${prov === 'ollama' ? 'Local' : prov})`;
     if (running.length > 0) {
       const totalVram = running.reduce((acc, m) => acc + (m.sizeVram || m.size || 0), 0);
       runtimeEl.textContent = `Active: ${activeLabel} · ${thinkLabel} · Loaded in GPU: ${running.map((m) => m.name).join(', ')} (${formatBytes(totalVram)})`;
@@ -335,9 +627,34 @@ function renderMonitor() {
     disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
   );
 
-  const details = $('#monitor-details');
   const runningModels = state.health?.ollama?.runningModels || [];
   const totalVram = runningModels.reduce((acc, m) => acc + (m.sizeVram || m.size || 0), 0);
+
+  const telChart = $('#monitor-timeline-chart');
+  const telStats = $('#monitor-telemetry-stats');
+  if (telChart) {
+    const chart = renderMultiSeriesChart(state.metricsHistory, { activeSeries: state.monitorChartSeries });
+    telChart.innerHTML = chart.svg;
+    if (telStats) {
+      const fmtMetric = (label, color, s) =>
+        s.current === null
+          ? `<span class="telemetry-stat-pill"><span class="telemetry-dot" style="background:${color}"></span>${label}: —</span>`
+          : `<span class="telemetry-stat-pill"><span class="telemetry-dot" style="background:${color}"></span><strong>${label}</strong> ${s.current}% · peak ${s.peak}% · avg ${s.avg}%</span>`;
+      telStats.innerHTML = [
+        fmtMetric('CPU', '#38bdf8', chart.stats.cpu),
+        fmtMetric('Memory', '#34d399', chart.stats.mem),
+        fmtMetric('GPU', '#f59e0b', chart.stats.gpu),
+      ].join('');
+    }
+  }
+
+  const donutEl = $('#monitor-memory-donut');
+  if (donutEl) {
+    const donut = renderMemoryDonut(mem, totalVram);
+    donutEl.innerHTML = `${donut.svg}<div class="donut-legend">${donut.legendHtml}</div>`;
+  }
+
+  const details = $('#monitor-details');
   if (details) {
     const rows = [
       ['CPU cores', metrics.cpu?.cores ? String(metrics.cpu.cores) : '—'],
@@ -396,7 +713,12 @@ function renderMonitor() {
           <td>${escapeHtml(d.mount)}</td>
           <td>${formatBytes(d.usedBytes)}</td>
           <td>${formatBytes(d.availableBytes)}</td>
-          <td><span class="usage-pill" data-tone="${usageTone(d.usedPercent)}">${d.usedPercent}%</span></td>
+          <td>
+            <div class="inline-meter-cell">
+              <div class="inline-meter-track"><span class="inline-meter-fill" style="width:${Math.min(100, d.usedPercent || 0)}%"></span></div>
+              <span class="usage-pill" data-tone="${usageTone(d.usedPercent)}">${d.usedPercent}%</span>
+            </div>
+          </td>
         </tr>`
       )
       .join('') || '<tr><td colspan="4">No volumes reported.</td></tr>';
@@ -408,6 +730,7 @@ function renderMonitor() {
       state.monitorProcessSort === 'memory' && Array.isArray(metrics.processesByMemory)
         ? metrics.processesByMemory
         : metrics.processes || [];
+    const maxRss = Math.max(1, ...procList.map((p) => p.rssBytes || 0));
     procsBody.innerHTML = procList
       .map(
         (p) => `<tr>
@@ -415,7 +738,12 @@ function renderMonitor() {
           <td>${p.pid}</td>
           <td><span class="usage-pill" data-tone="${usageTone(p.cpuPercent)}">${p.cpuPercent}</span></td>
           <td>${p.memPercent}</td>
-          <td>${formatBytes(p.rssBytes)}</td>
+          <td>
+            <div class="inline-meter-cell">
+              <div class="inline-meter-track"><span class="inline-meter-fill" style="width:${Math.min(100, Math.round(((p.rssBytes || 0) / maxRss) * 100))}%"></span></div>
+              <span>${formatBytes(p.rssBytes)}</span>
+            </div>
+          </td>
         </tr>`
       )
       .join('') || '<tr><td colspan="5">No processes reported.</td></tr>';
@@ -429,6 +757,17 @@ async function refreshSystemMetrics() {
   try {
     const data = await apiRequest('/api/system/metrics');
     state.metrics = data.metrics || null;
+    if (Array.isArray(data.history) && data.history.length > 0) {
+      state.metricsHistory = data.history;
+    } else if (state.metrics) {
+      state.metricsHistory.push({
+        t: state.metrics.timestamp,
+        cpu: state.metrics.cpu?.percent ?? null,
+        mem: state.metrics.memory?.usedPercent ?? null,
+        gpu: state.metrics.gpu?.utilizationPercent ?? null,
+      });
+      if (state.metricsHistory.length > 60) state.metricsHistory.shift();
+    }
     if (state.view === 'dashboard') renderDashboard();
     else if (state.view === 'monitor') renderMonitor();
   } catch {
@@ -451,12 +790,27 @@ function updateMonitorAutoRefresh() {
 }
 
 function renderScheduleWeek() {
+  const entries = state.schedule || [];
+  const today = new Date().getDay();
+
+  const chartHost = $('#schedule-week-chart');
+  const kpiHost = $('#schedule-chart-kpis');
+  if (chartHost) {
+    const chart = renderWeeklyScheduleChart(entries, today);
+    chartHost.innerHTML = chart.svg;
+    if (kpiHost) {
+      kpiHost.innerHTML = [
+        `<span class="telemetry-stat-pill"><strong>${chart.totalHours}h</strong> planned this week</span>`,
+        `<span class="telemetry-stat-pill">Busiest: <strong>${escapeHtml(chart.busiestDayLabel)}</strong></span>`,
+        `<span class="telemetry-stat-pill"><strong>${chart.totalBlocks}</strong> active blocks</span>`,
+      ].join('');
+    }
+  }
+
   const host = $('#schedule-week');
   if (!host) return;
   const order = [1, 2, 3, 4, 5, 6, 0];
   const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const today = new Date().getDay();
-  const entries = state.schedule || [];
   const oneOffs = entries
     .filter((e) => e.date)
     .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
@@ -511,6 +865,7 @@ async function loadSchedule() {
     renderAgenda();
     renderDashboard();
     renderScheduleWeek();
+    renderSidebarBadges();
   } catch {
     // Keep the last known schedule; the next view switch retries.
   }
@@ -541,6 +896,14 @@ function updateHeaderControls() {
   if (agendaLeadEl) agendaLeadEl.value = String(state.config.agendaLeadMinutes ?? 5);
   const estimatedTokens = state.contextTokens || estimateTokens(state.activeSession?.messages || []);
   updateContextMeter(estimatedTokens, ctxLimit);
+
+  const compBadge = $('#composer-provider-badge');
+  if (compBadge) {
+    const isLocal = prov === 'ollama';
+    compBadge.innerHTML = `<span class="status-dot online" aria-hidden="true"></span> ${escapeHtml(
+      isLocal ? `On-device · ${model}` : `Cloud · ${provLabel} · ${model}`
+    )}`;
+  }
 }
 
 function renderSidebarStatus() {
@@ -663,6 +1026,7 @@ function groupMessagesForDisplay(messages = []) {
           content: '',
           plan: null,
           selfImprovedLessons: [],
+          usage: null,
           isError: false,
         };
         items.push(currentAssistant);
@@ -684,6 +1048,7 @@ function groupMessagesForDisplay(messages = []) {
       if (msg.content) {
         currentAssistant.content += (currentAssistant.content ? '\n\n' : '') + msg.content;
       }
+      if (msg.usage) currentAssistant.usage = msg.usage;
       if (msg.isError) currentAssistant.isError = true;
     } else if (msg.role === 'tool' && currentAssistant) {
       const toolEntry = currentAssistant.tools.find((t) => t.id === msg.toolCallId);
@@ -770,9 +1135,22 @@ function buildToolBodyHtml(tool) {
   return `<pre class="tool-body">${escapeHtml(JSON.stringify(tool.arguments || {}, null, 2))}</pre>`;
 }
 
+function formatToolDisplayMeta(tool) {
+  const meta = HUMAN_TOOL_META[tool.name];
+  const label = meta ? meta.label : tool.name;
+  let subtitle = '';
+  try {
+    subtitle = meta?.summarize ? String(meta.summarize(tool.arguments || {}) || '').trim() : '';
+  } catch {
+    subtitle = '';
+  }
+  return { label, subtitle };
+}
+
 function buildToolsHtml(tools = []) {
   return (tools || [])
     .map((t) => {
+      const { label, subtitle } = formatToolDisplayMeta(t);
       const badgeCls = t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'fail' : t.status === 'wait' ? 'wait' : '';
       const badgeLabel =
         t.status === 'ok'
@@ -813,7 +1191,10 @@ function buildToolsHtml(tools = []) {
       return `
         <div class="tool-card" data-card-tool-id="${escapeHtml(t.id)}">
           <div class="tool-head">
-            <span class="tool-name">${escapeHtml(t.name)}</span>
+            <span class="tool-head-left">
+              <span class="tool-name">${escapeHtml(label)}</span>
+              ${subtitle ? `<span class="tool-subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</span>` : ''}
+            </span>
             <span class="tool-head-right">${durationHtml}<span class="tool-badge ${badgeCls}">${badgeLabel}</span></span>
           </div>
           ${buildToolBodyHtml(t)}
@@ -824,7 +1205,49 @@ function buildToolsHtml(tools = []) {
     .join('');
 }
 
-function buildDisplayItemHtml(item, idx) {
+function formatTelemetryBadge(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const parts = [];
+  if (Number.isFinite(usage.durationMs) && usage.durationMs > 0) {
+    parts.push(`${(usage.durationMs / 1000).toFixed(1)}s`);
+  }
+  if (Number.isFinite(usage.completionTokens) && usage.completionTokens > 0) {
+    parts.push(`${usage.completionTokens} tok`);
+    if (Number.isFinite(usage.durationMs) && usage.durationMs >= 300) {
+      const tps = (usage.completionTokens / (usage.durationMs / 1000)).toFixed(1);
+      parts.push(`${tps} tok/s`);
+    }
+  }
+  return parts.length > 0 ? `<span class="turn-telemetry">${escapeHtml(parts.join(' · '))}</span>` : '';
+}
+
+function buildFollowupChipsHtml(item, idx, isLastCompleted) {
+  if (!isLastCompleted || item.isStreaming || item.isError || !item.content) return '';
+  const chips = [
+    { label: 'Summarize in 3 bullets', prompt: 'Summarize the previous answer in 3 crisp bullet points.' },
+  ];
+  const toolNames = new Set((item.tools || []).map((t) => t.name));
+  if (toolNames.has('edit_file') || toolNames.has('write_file') || toolNames.has('run_command')) {
+    chips.push({ label: 'Verify & run tests', prompt: 'Verify the changes and run the relevant checks or tests cleanly.' });
+  } else {
+    chips.push({ label: 'Turn into a Skill', prompt: 'Distill this approach into a reusable SKILL.md using save_skill.' });
+  }
+  chips.push({
+    label: 'Copy reply to clipboard',
+    action: 'copy',
+    idx,
+  });
+
+  return `<div class="followup-chips">${chips
+    .map((c) =>
+      c.action === 'copy'
+        ? `<button type="button" class="followup-chip followup-copy-btn" data-idx="${idx}">${escapeHtml(c.label)}</button>`
+        : `<button type="button" class="followup-chip" data-prompt="${escapeHtml(c.prompt)}">${escapeHtml(c.label)}</button>`
+    )
+    .join('')}</div>`;
+}
+
+function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
   if (item.type === 'compaction') {
     return `<div class="thinking-box"><details><summary>Compacted earlier context</summary><div class="thinking-content">${escapeHtml(item.content)}</div></details></div>`;
   }
@@ -834,7 +1257,7 @@ function buildDisplayItemHtml(item, idx) {
         ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
         : '';
     const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
-    return `<div class="msg-row"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div></div>`;
+    return `<div class="msg-row"><div class="msg-user-wrap"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div><div class="user-msg-actions"><button type="button" class="msg-action-btn user-copy-btn" data-idx="${idx}">Copy</button><button type="button" class="msg-action-btn user-edit-btn" data-idx="${idx}">Reuse prompt</button></div></div></div>`;
   }
 
   const thinkingCombined = (item.thinking || []).join('').trim();
@@ -842,7 +1265,16 @@ function buildDisplayItemHtml(item, idx) {
     ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
     : '';
 
-  const toolsHtml = buildToolsHtml(item.tools);
+  const tools = item.tools || [];
+  const canFoldTools = !item.isStreaming && tools.length >= 2 && !tools.some((t) => t.status === 'wait' || t.status === 'running');
+  const isFolded = canFoldTools && state.collapsedToolGroups.has(idx);
+  const toolsSummaryHtml = canFoldTools
+    ? `<div class="tools-summary-bar">
+        <span>${tools.length} tools executed</span>
+        <button type="button" class="tools-collapse-btn" data-idx="${idx}">${isFolded ? 'Show tool details' : 'Hide tool details'}</button>
+      </div>`
+    : '';
+  const toolsHtml = isFolded ? '' : buildToolsHtml(tools);
 
   const selfImprovedHtml =
     Array.isArray(item.selfImprovedLessons) && item.selfImprovedLessons.length > 0
@@ -865,6 +1297,7 @@ function buildDisplayItemHtml(item, idx) {
                <button type="button" class="msg-action-btn save-auto-btn" data-idx="${idx}">Save automation</button>`
             : ''
         }
+        ${formatTelemetryBadge(item.usage)}
       </div>`
     : '';
 
@@ -890,10 +1323,11 @@ function buildDisplayItemHtml(item, idx) {
         ${liveStatusHtml}
         <div class="live-plan-slot">${buildPlanHtml(item)}</div>
         <div class="live-thinking-slot">${thinkingHtml}</div>
-        <div class="live-tools-slot">${toolsHtml}</div>
+        <div class="live-tools-slot">${toolsSummaryHtml}${toolsHtml}</div>
         <div class="live-self-improved-slot">${selfImprovedHtml}</div>
         <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}</div>
         ${actionsHtml}
+        ${buildFollowupChipsHtml(item, idx, isLastCompleted)}
       </div>
     </div>`;
 }
@@ -940,8 +1374,10 @@ function renderMessages(forceScroll = false) {
   const historyItems = groupMessagesForDisplay(messages);
   state.displayedItems = showLiveHere ? [...historyItems, state.liveAssistantMsg] : historyItems;
 
-  const historyHtml = historyItems.map((item, idx) => buildDisplayItemHtml(item, idx)).join('');
-  const liveHtml = showLiveHere ? buildDisplayItemHtml(state.liveAssistantMsg, historyItems.length) : '';
+  const historyHtml = historyItems
+    .map((item, idx) => buildDisplayItemHtml(item, idx, !showLiveHere && idx === historyItems.length - 1))
+    .join('');
+  const liveHtml = showLiveHere ? buildDisplayItemHtml(state.liveAssistantMsg, historyItems.length, false) : '';
 
   container.innerHTML = `<div id="chat-history-items">${historyHtml}</div><div id="chat-live-slot">${liveHtml}</div>`;
   scrollToBottomIfPinned(forceScroll);
@@ -1119,6 +1555,7 @@ async function runSessionSearch(query) {
 async function openSession(id) {
   const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`);
   state.sessionSearchQuery = '';
+  state.collapsedToolGroups.clear();
   const searchInput = $('#session-search');
   if (searchInput) searchInput.value = '';
   state.activeSession = res.session;
@@ -1135,6 +1572,7 @@ async function createNewTask() {
     body: JSON.stringify({ title: 'New Task' }),
   });
   state.activeSession = res.session;
+  state.collapsedToolGroups.clear();
   if (!state.isRunning) state.liveAssistantMsg = null;
   state.contextTokens = 0;
   updateContextMeter(0, state.config?.numCtx);
@@ -1142,6 +1580,90 @@ async function createNewTask() {
   switchView('agent');
   renderMessages(true);
   $('#prompt-input').focus();
+}
+
+function getSlashCandidates(query = '') {
+  const q = String(query || '').toLowerCase();
+  const skillItems = (state.skills || []).map((s) => ({
+    cmd: `/${s.slug}`,
+    desc: s.description || 'Installed skill playbook',
+    tag: 'Skill',
+    prompt: `Use the "${s.slug}" skill (call read_skill first) to help with: `,
+    autoRun: false,
+  }));
+  const all = [...SLASH_COMMANDS, ...skillItems];
+  return all
+    .filter((item) => !q || item.cmd.toLowerCase().includes(q) || item.desc.toLowerCase().includes(q))
+    .slice(0, 12);
+}
+
+function hideSlashMenu() {
+  state.slashOpen = false;
+  state.slashItems = [];
+  state.slashIndex = 0;
+  const menu = $('#slash-menu');
+  if (menu) {
+    menu.classList.add('hidden');
+    menu.innerHTML = '';
+  }
+}
+
+function renderSlashMenu(filter = '') {
+  const menu = $('#slash-menu');
+  if (!menu) return;
+  const items = getSlashCandidates(filter);
+  if (items.length === 0) {
+    hideSlashMenu();
+    return;
+  }
+  state.slashOpen = true;
+  state.slashItems = items;
+  if (state.slashIndex >= items.length) state.slashIndex = 0;
+  menu.classList.remove('hidden');
+  menu.innerHTML = items
+    .map(
+      (item, idx) => `<button type="button" class="slash-item${idx === state.slashIndex ? ' active' : ''}" data-idx="${idx}" role="option" aria-selected="${idx === state.slashIndex}">
+        <span class="slash-cmd">${escapeHtml(item.cmd)}</span>
+        <span class="slash-desc">${escapeHtml(item.desc)}</span>
+        <span class="slash-tag">${escapeHtml(item.tag)}</span>
+      </button>`
+    )
+    .join('');
+
+  menu.querySelectorAll('.slash-item').forEach((btn) => {
+    btn.addEventListener('click', () => selectSlashItem(Number(btn.dataset.idx)));
+  });
+  menu.querySelector('.slash-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveSlashSelection(delta) {
+  if (!state.slashOpen || state.slashItems.length === 0) return;
+  state.slashIndex = (state.slashIndex + delta + state.slashItems.length) % state.slashItems.length;
+  renderSlashMenu($('#prompt-input')?.value?.trim().slice(1) || '');
+}
+
+async function selectSlashItem(index) {
+  const item = state.slashItems[index];
+  if (!item) return;
+  hideSlashMenu();
+  const input = $('#prompt-input');
+  if (typeof item.action === 'function') {
+    if (input) {
+      input.value = '';
+      input.style.height = 'auto';
+    }
+    await item.action();
+    return;
+  }
+  if (input) {
+    input.value = item.prompt || '';
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+    input.focus();
+  }
+  if (item.autoRun) {
+    await sendPrompt();
+  }
 }
 
 function renderQueuedBar() {
@@ -1237,6 +1759,8 @@ async function sendPrompt(overridePayload = null) {
 
   $('#send-btn').textContent = 'Queue';
   $('#stop-btn').classList.remove('hidden');
+  hideSlashMenu();
+  renderSidebarBadges();
   renderSessionsList();
   renderMessages(true);
 
@@ -1332,6 +1856,7 @@ async function sendPrompt(overridePayload = null) {
     state.liveAssistantMsg = null;
     $('#send-btn').textContent = 'Run';
     $('#stop-btn').classList.add('hidden');
+    renderSidebarBadges();
 
     if (state.activeSession?.id === runSessionId) {
       try {
@@ -2286,6 +2811,7 @@ const PALETTE_ACTION_ITEMS = [
   { label: 'Go to Automations', hint: 'Saved workflows and schedules', keywords: 'view jobs launchd', run: () => switchView('automations') },
   { label: 'Go to Models & Settings', hint: 'Providers, models, runtime', keywords: 'view settings config', run: () => switchView('settings') },
   { label: 'Toggle sidebar', hint: 'Hide or show task history for a focused chat', keywords: 'sidebar collapse expand focus layout', run: () => toggleSidebar() },
+  { label: 'Switch color theme (Auto / Dark / Light)', hint: 'Cycle Obsidian Dark, Porcelain Light, or system Auto', keywords: 'theme dark light appearance mode', run: () => cycleTheme() },
   { label: 'Import skill from GitHub', hint: 'Paste a SKILL.md or GitHub link', keywords: 'skill install github url', run: () => openImportUrlModal() },
   { label: 'Open Skill Library', hint: 'Copy skills installed on this Mac', keywords: 'skills import library', run: () => openSkillLibraryModal() },
   { label: 'Create new skill', hint: 'Write a reusable SKILL.md', keywords: 'skills teach new', run: () => openSkillModal(null) },
@@ -2538,8 +3064,48 @@ function wireEvents() {
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
   $('#dash-open-settings')?.addEventListener('click', () => switchView('settings'));
+  $('#dash-mode-pill')?.addEventListener('click', () => switchView('settings'));
+  $('#dash-explore-tools-btn')?.addEventListener('click', () => createNewTask());
   $('#dash-unload-ram-btn')?.addEventListener('click', unloadOllamaMemory);
   $('#monitor-unload-btn')?.addEventListener('click', unloadOllamaMemory);
+  $('#theme-toggle-btn')?.addEventListener('click', cycleTheme);
+
+  $$('.superpower-card').forEach((card) => {
+    card.addEventListener('click', async () => {
+      const promptText = card.dataset.prompt || '';
+      if (!promptText) return;
+      if (card.dataset.autorun === 'true') {
+        await createNewTask();
+        await sendPrompt({ text: promptText, attachments: [] });
+      } else {
+        await createNewTask();
+        const pi = $('#prompt-input');
+        if (pi) {
+          pi.value = promptText;
+          pi.style.height = 'auto';
+          pi.style.height = `${Math.min(pi.scrollHeight, 180)}px`;
+          pi.focus();
+        }
+      }
+    });
+  });
+
+  $$('.welcome-cat-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.welcomeCategory = btn.dataset.cat || 'all';
+      $$('.welcome-cat-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      renderWelcomeTaskGrid();
+    });
+  });
+
+  $$('.mon-series-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.monitorChartSeries = btn.dataset.series || 'all';
+      $$('.mon-series-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      renderMonitor();
+    });
+  });
+
   $('#dash-quick-ask-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const qInput = $('#dash-quick-ask-input');
@@ -2647,15 +3213,58 @@ function wireEvents() {
     const copyCodeBtn = e.target.closest('.copy-code-btn');
     if (copyCodeBtn) {
       navigator.clipboard.writeText(copyCodeBtn.dataset.code || '');
+      const orig = copyCodeBtn.textContent;
+      copyCodeBtn.textContent = 'Copied ✓';
+      setTimeout(() => {
+        if (copyCodeBtn.isConnected) copyCodeBtn.textContent = orig || 'Copy';
+      }, 1500);
       showToast('Code copied');
       return;
     }
 
-    const copyReplyBtn = e.target.closest('.copy-reply-btn');
+    const collapseBtn = e.target.closest('.tools-collapse-btn');
+    if (collapseBtn) {
+      const idx = Number(collapseBtn.dataset.idx);
+      if (state.collapsedToolGroups.has(idx)) state.collapsedToolGroups.delete(idx);
+      else state.collapsedToolGroups.add(idx);
+      renderMessages(false);
+      return;
+    }
+
+    const userCopyBtn = e.target.closest('.user-copy-btn');
+    if (userCopyBtn) {
+      const target = state.displayedItems[Number(userCopyBtn.dataset.idx)];
+      const raw = String(target?.msg?.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
+      navigator.clipboard.writeText(raw);
+      showToast('Prompt copied');
+      return;
+    }
+
+    const userEditBtn = e.target.closest('.user-edit-btn');
+    if (userEditBtn) {
+      const target = state.displayedItems[Number(userEditBtn.dataset.idx)];
+      const raw = String(target?.msg?.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
+      const pi = $('#prompt-input');
+      if (pi) {
+        pi.value = raw;
+        pi.style.height = 'auto';
+        pi.style.height = `${Math.min(pi.scrollHeight, 180)}px`;
+        pi.focus();
+      }
+      return;
+    }
+
+    const copyReplyBtn = e.target.closest('.copy-reply-btn, .followup-copy-btn');
     if (copyReplyBtn) {
       const target = state.displayedItems[Number(copyReplyBtn.dataset.idx)];
       navigator.clipboard.writeText(target?.content || '');
-      showToast('Reply copied');
+      showToast('Reply copied to clipboard');
+      return;
+    }
+
+    const followupChip = e.target.closest('.followup-chip[data-prompt]');
+    if (followupChip) {
+      await sendPrompt({ text: followupChip.dataset.prompt || '', attachments: [] });
       return;
     }
 
@@ -2774,11 +3383,96 @@ function wireEvents() {
   promptInput.addEventListener('input', () => {
     promptInput.style.height = 'auto';
     promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
+    const val = promptInput.value;
+    if (val.startsWith('/') && !/\s/.test(val)) {
+      renderSlashMenu(val.slice(1));
+    } else if (state.slashOpen) {
+      hideSlashMenu();
+    }
   });
   promptInput.addEventListener('keydown', (e) => {
+    if (state.slashOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveSlashSelection(1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveSlashSelection(-1);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
+        e.preventDefault();
+        selectSlashItem(state.slashIndex);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        hideSlashMenu();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       sendPrompt();
+    }
+  });
+
+  $('#composer-slash-btn')?.addEventListener('click', () => {
+    if (state.slashOpen) {
+      hideSlashMenu();
+      promptInput.focus();
+      return;
+    }
+    if (!promptInput.value.startsWith('/')) {
+      promptInput.value = '/';
+    }
+    promptInput.focus();
+    renderSlashMenu(promptInput.value.slice(1));
+  });
+
+  $('#composer-clipboard-btn')?.addEventListener('click', async () => {
+    try {
+      const res = await apiRequest('/api/chat/clipboard');
+      const clip = String(res.text || '').trim();
+      if (!clip) {
+        showToast('Clipboard is empty');
+        return;
+      }
+      promptInput.value = promptInput.value ? `${promptInput.value}\n\n${clip}` : clip;
+      promptInput.style.height = 'auto';
+      promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
+      promptInput.focus();
+      showToast('Inserted clipboard text');
+    } catch (err) {
+      showToast(err.message || 'Could not read clipboard');
+    }
+  });
+
+  $('#composer-screenshot-btn')?.addEventListener('click', async () => {
+    const btn = $('#composer-screenshot-btn');
+    if (btn) btn.disabled = true;
+    try {
+      showToast('Capturing screen…');
+      const res = await apiRequest('/api/chat/screenshot', { method: 'POST', body: '{}' });
+      if (res.path && !state.attachments.some((a) => a.path === res.path)) {
+        state.attachments.push({ path: res.path, name: res.name || 'screenshot.png', previewUrl: res.previewUrl || null });
+        renderAttachments();
+      }
+      promptInput.focus();
+      showToast('Screenshot attached');
+    } catch (err) {
+      showToast(err.message || 'Could not capture screenshot');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (state.slashOpen && !e.target.closest('#slash-menu') && !e.target.closest('#composer-slash-btn') && !e.target.closest('#prompt-input')) {
+      hideSlashMenu();
     }
   });
 
@@ -2801,15 +3495,6 @@ function wireEvents() {
   $('#queued-cancel-btn').addEventListener('click', () => {
     state.queuedMessages = [];
     renderQueuedBar();
-  });
-
-  $$('.quick-card').forEach((card) => {
-    card.addEventListener('click', () => {
-      promptInput.value = card.dataset.prompt || '';
-      promptInput.style.height = 'auto';
-      promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
-      promptInput.focus();
-    });
   });
 
   $('#attach-btn').addEventListener('click', () => {
@@ -3035,13 +3720,16 @@ function wireEvents() {
 async function init() {
   try {
     setSidebarCollapsed(localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1', false);
+    applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'auto', false);
   } catch {
     setSidebarCollapsed(false, false);
+    applyTheme('auto', false);
   }
+  renderWelcomeTaskGrid();
   wireEvents();
   tickClock();
   setInterval(tickClock, 1000);
-  await Promise.all([refreshHealth(), loadSessions()]);
+  await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);
   renderMessages(true);
   switchView('dashboard');
 }

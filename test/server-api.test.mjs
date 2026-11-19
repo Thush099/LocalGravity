@@ -362,7 +362,7 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.equal(blockedSkillData.errors.length, 1);
     assert.match(blockedSkillData.errors[0].error, /blocked|private|local/i);
 
-    // System metrics endpoint exposes swap and memory-sorted processes
+    // System metrics endpoint exposes swap, memory-sorted processes, and bounded telemetry history
     const metricsRes = await fetch(`${base}/api/system/metrics`, {
       headers: { 'X-Auth-Token': authToken },
     });
@@ -371,6 +371,19 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     assert.equal(metricsData.ok, true);
     assert.ok(metricsData.metrics && typeof metricsData.metrics.memory === 'object');
     assert.ok(Array.isArray(metricsData.metrics.processesByMemory));
+    assert.ok(Array.isArray(metricsData.history) && metricsData.history.length >= 1);
+    assert.ok(typeof metricsData.history[0].t === 'string');
+
+    // Clipboard capture endpoint requires auth and responds with clean JSON
+    const unauthClip = await fetch(`${base}/api/chat/clipboard`);
+    assert.equal(unauthClip.status, 401);
+    const clipRes = await fetch(`${base}/api/chat/clipboard`, {
+      headers: { 'X-Auth-Token': authToken },
+    });
+    assert.equal(clipRes.status, 200);
+    const clipData = await clipRes.json();
+    assert.equal(typeof clipData.ok, 'boolean');
+    assert.equal(typeof clipData.text, 'string');
 
     // Unload endpoint requires auth and handles empty/idle Ollama cleanly
     const unauthUnload = await fetch(`${base}/api/models/ollama/unload`, { method: 'POST' });

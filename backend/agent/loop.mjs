@@ -160,6 +160,7 @@ export async function runAgentTurn({
   persistSession = true,
   cwd,
 }) {
+  const turnStartedAt = Date.now();
   if (!seededRoots.has(paths.root)) {
     await syncStarterSkills(paths);
     await ensureKnowledgeSeeded(paths);
@@ -332,6 +333,13 @@ export async function runAgentTurn({
         toolCalls: normalizedCalls.length > 0 ? normalizedCalls : undefined,
         createdAt: new Date().toISOString(),
       };
+      if (!assistantEntry.toolCalls || assistantEntry.toolCalls.length === 0) {
+        assistantEntry.usage = {
+          ...(response.usage || {}),
+          durationMs: Math.max(1, Date.now() - turnStartedAt),
+          model: providerConfig.model || '',
+        };
+      }
       session.messages.push(assistantEntry);
 
       if (!assistantEntry.toolCalls || assistantEntry.toolCalls.length === 0) {
@@ -346,7 +354,7 @@ export async function runAgentTurn({
         }
         session.updatedAt = new Date().toISOString();
         if (persistSession) await saveSession(session, paths);
-        onEvent?.({ type: 'done', status: 'completed', usage: response.usage || {} });
+        onEvent?.({ type: 'done', status: 'completed', usage: assistantEntry.usage });
         return { session, status: 'completed' };
       }
 
@@ -354,7 +362,9 @@ export async function runAgentTurn({
         'read_file',
         'list_dir',
         'search_files',
+        'spotlight_search',
         'inspect_media',
+        'search_web',
         'list_skills',
         'read_skill',
         'list_knowledge',

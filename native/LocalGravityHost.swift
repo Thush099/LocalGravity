@@ -112,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.center()
         window.title = "LocalGravity"
         window.minSize = NSSize(width: 920, height: 600)
-        window.backgroundColor = NSColor(srgbRed: 0.071, green: 0.082, blue: 0.106, alpha: 1.0)
+        window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
         window.isReleasedWhenClosed = false
 
         webView = GravityWebView(frame: rect, configuration: config)
@@ -254,9 +254,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     private func showStartupError(_ message: String) {
         let html = """
-        <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#12151b;color:#edf2f7;padding:40px;">
+        <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0b0d11;color:#f1f5f9;padding:40px;">
         <h2>LocalGravity could not start</h2>
-        <pre style="white-space:pre-wrap;background:#181c24;padding:16px;border-radius:8px;">\(message)</pre>
+        <pre style="white-space:pre-wrap;background:#11151d;padding:16px;border-radius:8px;">\(message)</pre>
         </body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)

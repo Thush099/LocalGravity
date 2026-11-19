@@ -11,12 +11,17 @@ import { buildCompactDiff, editFileTool, listDir, readFileTool, searchFilesTool,
 import { inspectMediaTool } from './media-tool.mjs';
 import {
   copyToClipboardTool,
+  manageNotesTool,
   openAppTool,
+  openUrlTool,
   pasteFromClipboardTool,
   runShortcutTool,
   setReminderTool,
   showNotificationTool,
+  spotlightSearchTool,
+  takeScreenshotTool,
 } from './macos-tool.mjs';
+import { searchWebTool } from './web-tool.mjs';
 import { updatePlanTool } from './plan-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
 import {
@@ -460,13 +465,92 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'search_web',
+      description: 'Search the live public web for up-to-date facts, docs, packages, and links without an API key.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query string.' },
+          max_results: { type: 'number', description: 'Max results to return (1-10, default 6).' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'spotlight_search',
+      description: 'Find files anywhere on this Mac instantly using macOS Spotlight (mdfind).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Filename, keyword, or mdfind query.' },
+          folder: { type: 'string', description: 'Optional folder path scope (supports ~).' },
+          limit: { type: 'number', description: 'Max file paths (default 20, max 50).' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'take_screenshot',
+      description: 'Capture a silent screenshot of this Mac display and attach the image for visual inspection.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mode: { type: 'string', enum: ['screen', 'main'], description: 'All displays or main display.' },
+          max_edge: { type: 'number', description: 'Max pixel edge after scaling (default 1280).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_notes',
+      description: 'List, search, read, or create notes in Apple Notes. Creating a note requires approval in Ask mode.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'search', 'read', 'create'], description: 'Notes action.' },
+          title: { type: 'string', description: 'Note title for read or create.' },
+          body: { type: 'string', description: 'Note body text for create.' },
+          query: { type: 'string', description: 'Search keyword for search.' },
+          limit: { type: 'number', description: 'Max notes for list/search (default 10).' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_url',
+      description: 'Open an http or https URL in the default macOS web browser.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Valid http:// or https:// URL.' },
+        },
+        required: ['url'],
+      },
+    },
+  },
 ];
 
 const ALWAYS_READONLY_TOOLS = new Set([
   'list_dir',
   'read_file',
   'search_files',
+  'spotlight_search',
   'inspect_media',
+  'search_web',
   'fetch_url',
   'calculate',
   'update_plan',
@@ -482,7 +566,14 @@ const ALWAYS_READONLY_TOOLS = new Set([
 
 // Non-destructive macOS actions: frictionless in interactive use, but a scheduled
 // background job must not silently poke at the live desktop (clipboards, banners, apps).
-const HARMLESS_ACTION_TOOLS = new Set(['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder']);
+const HARMLESS_ACTION_TOOLS = new Set([
+  'copy_to_clipboard',
+  'show_notification',
+  'open_app',
+  'open_url',
+  'take_screenshot',
+  'set_reminder',
+]);
 
 /**
  * Evaluate whether a tool call should auto-run, pause for approval, or be blocked.
@@ -567,6 +658,21 @@ export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, contex
     return { decision: 'allow' };
   }
 
+  if (name === 'manage_notes') {
+    const act = String(args.action || 'list').toLowerCase().trim();
+    if (act === 'list' || act === 'search' || act === 'read') {
+      return { decision: 'allow' };
+    }
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow creating Apple Notes.' };
+    }
+    return safetyMode === 'auto'
+      ? { decision: 'allow' }
+      : { decision: 'ask', reason: `Create Apple Note: "${String(args.title || 'Untitled').slice(0, 80)}"`, preview: String(args.body || '').slice(0, 400) };
+  }
+
   if (name === 'write_file' || name === 'edit_file') {
     const fileInfo = classifyFileWrite(args.path || '', skillsDir, knowledgeDir);
     if (fileInfo.autoAllowInAskMode) {
@@ -593,6 +699,8 @@ export async function generateToolPreview({ name: rawName, args: rawArgs = {} })
   if (name === 'run_command') return String(args.command || '');
   if (name === 'run_applescript') return String(args.script || '');
   if (name === 'run_shortcut') return `shortcuts run ${String(args.name || '')}`;
+  if (name === 'open_url') return String(args.url || '');
+  if (name === 'manage_notes') return `Apple Note "${String(args.title || '')}"\n\n${String(args.body || '').slice(0, 500)}`;
   if (name === 'write_file') {
     const resolved = expandUserPath(args.path || '');
     let oldContent = '';
@@ -677,6 +785,16 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await runShortcutTool(args);
       case 'set_reminder':
         return await setReminderTool(args);
+      case 'spotlight_search':
+        return await spotlightSearchTool(args);
+      case 'take_screenshot':
+        return await takeScreenshotTool(args);
+      case 'manage_notes':
+        return await manageNotesTool(args);
+      case 'open_url':
+        return await openUrlTool(args);
+      case 'search_web':
+        return await searchWebTool(args, { fetchFn: context.fetchFn || globalThis.fetch });
       case 'inspect_media':
         return await inspectMediaTool(args);
       case 'system_stats': {
