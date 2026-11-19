@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { LEARNED_FIXES_DOC, normalizeToolCall } from '../agent/self-improver.mjs';
 import { invalidateKnowledgeCache, listKnowledge, readKnowledge, saveKnowledge, searchKnowledge } from '../knowledge-engine.mjs';
+import { safePublicFetch } from '../net-guard.mjs';
 import { invalidateSkillsCache, listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
 import { getRuntimePaths } from '../state/paths.mjs';
 import { runAppleScriptTool } from './applescript-tool.mjs';
@@ -802,14 +803,12 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         };
       }
       case 'fetch_url': {
-        const parsedUrl = new URL(String(args.url || ''));
-        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-          return { ok: false, output: 'Only http:// and https:// URLs are supported.' };
-        }
-        const fetchImpl = context.fetchFn || globalThis.fetch;
-        const res = await fetchImpl(parsedUrl.toString(), { signal: AbortSignal.timeout(12000) });
+        const res = await safePublicFetch(String(args.url || ''), {
+          fetchFn: context.fetchFn || globalThis.fetch,
+          timeoutMs: 12000,
+        });
         if (!res.ok) {
-          return { ok: false, output: `HTTP ${res.status} fetching ${parsedUrl}` };
+          return { ok: false, output: `HTTP ${res.status} fetching ${args.url}` };
         }
         const raw = await res.text();
         const cleaned = raw

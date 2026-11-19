@@ -49,7 +49,7 @@ async function main() {
       title: `Scheduled: ${automation.name}`,
       source: 'scheduled',
       provider: config.provider || 'ollama',
-      model: config.model || 'qwen3.5:9b',
+      model: config.model || 'qwen3.5:4b',
       updatedAt: new Date().toISOString(),
       messages: [],
     };

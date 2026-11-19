@@ -1878,8 +1878,11 @@ button, input, textarea, select {
   font-size: 12.5px;
   color: var(--text-secondary);
   white-space: pre-line;
-  max-height: 58px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .learned-fixes-actions {
@@ -2238,14 +2241,136 @@ button, input, textarea, select {
   }
 }
 
+/* ---- Dashboard, Monitor & Timetable View Containers ---- */
+#view-dashboard,
+#view-monitor,
+#view-schedule {
+  padding: 24px 28px 36px;
+  overflow-y: auto;
+}
+
+#view-monitor .view-header,
+#view-schedule .view-header {
+  padding: 0 0 14px;
+  border-bottom: none;
+}
+
+.monitor-updated {
+  margin-bottom: 12px;
+}
+
+.monitor-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.workspace {
+  position: relative;
+}
+
+.sidebar-expand-fab {
+  display: none;
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 30;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.app-shell.sidebar-collapsed .sidebar-expand-fab.visible-outside-agent {
+  display: inline-flex;
+}
+
+.app-shell.sidebar-collapsed #view-dashboard,
+.app-shell.sidebar-collapsed #view-monitor,
+.app-shell.sidebar-collapsed #view-schedule {
+  padding-top: 56px;
+}
+
+.dash-quick-ask {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 8px 10px 8px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dash-quick-ask:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.dash-quick-ask-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  padding: 6px 2px;
+}
+
+.dash-quick-ask-input::placeholder {
+  color: var(--text-muted);
+}
+
+.dash-runtime-card {
+  margin-top: 16px;
+}
+
+.dash-runtime-card .dash-card-head {
+  margin-bottom: 0;
+}
+
+.segmented-tabs-sm {
+  padding: 2px;
+}
+
+.segmented-tabs-sm .seg-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.sched-mode-tabs {
+  align-self: flex-start;
+}
+
+.session-running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal-green);
+  flex: none;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
 /* ---- Dashboard ---- */
 .dash-header {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  padding: 4px 0 20px;
+  padding: 2px 0 20px;
   flex-wrap: wrap;
+}
+
+.dash-greeting-block {
+  text-align: right;
 }
 
 .dash-clock-block {
@@ -2307,9 +2432,10 @@ button, input, textarea, select {
 
 .stat-value {
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .usage-bar {
@@ -2618,12 +2744,28 @@ button, input, textarea, select {
 
 .week-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 9px;
   border: 1px solid var(--border-subtle);
   border-radius: 9px;
   background: var(--bg-surface);
+}
+
+.week-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.week-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .week-item.disabled {

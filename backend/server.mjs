@@ -30,6 +30,7 @@ import {
   ensureOllamaRunning,
   pullOllamaModel,
   selectBestInstalledOllamaModel,
+  unloadOllamaModels,
 } from './providers/ollama.mjs';
 import { CLOUD_PRESETS } from './providers/openai-compat.mjs';
 import { importSkillsFromSource, listSkillSources } from './skill-sources.mjs';
@@ -57,6 +58,7 @@ import {
 import { inspectMediaTool } from './tools/media-tool.mjs';
 import { setReminderTool, showNotificationTool } from './tools/macos-tool.mjs';
 import { startAgendaNotifier } from './agenda-notifier.mjs';
+import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
 
@@ -104,6 +106,7 @@ let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
 let cachedMetrics = null;
 let cachedMetricsAt = 0;
+let inFlightMetrics = null;
 const uiAssetCache = new Map();
 
 function sendJson(res, status, data) {
@@ -114,8 +117,6 @@ function sendJson(res, status, data) {
   });
   res.end(JSON.stringify(data));
 }
-
-const PRIVATE_FETCH_HOST_RE = /^(?:localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
 
 function isSameOriginRequest(req) {
   const origin = req.headers.origin;
@@ -353,8 +354,18 @@ export function createAgentServer({
       if (req.method === 'GET' && pathname === '/api/system/metrics') {
         const now = Date.now();
         if (!cachedMetrics || now - cachedMetricsAt > 2000) {
-          cachedMetrics = await collectSystemMetrics();
-          cachedMetricsAt = now;
+          if (!inFlightMetrics) {
+            inFlightMetrics = collectSystemMetrics()
+              .then((m) => {
+                cachedMetrics = m;
+                cachedMetricsAt = Date.now();
+                return m;
+              })
+              .finally(() => {
+                inFlightMetrics = null;
+              });
+          }
+          await inFlightMetrics;
         }
         sendJson(res, 200, { ok: true, metrics: cachedMetrics });
         return;
@@ -531,6 +542,13 @@ export function createAgentServer({
             }
           };
 
+          const keepaliveTimer = setInterval(() => {
+            if (!res.writableEnded) {
+              res.write(': keepalive\n\n');
+            }
+          }, 15000);
+          keepaliveTimer.unref?.();
+
           const abortController = new AbortController();
           const approvals = new Map();
           let resolveDone;
@@ -571,6 +589,7 @@ export function createAgentServer({
                 }),
             });
           } finally {
+            clearInterval(keepaliveTimer);
             if (activeRuns.get(sessionId) === runEntry) {
               activeRuns.delete(sessionId);
             }
@@ -719,17 +738,11 @@ export function createAgentServer({
         if (!rawUrl) return sendJson(res, 400, { ok: false, error: 'Provide a URL to import.' });
         let parsed;
         try {
-          parsed = new URL(rawUrl);
-        } catch {
-          return sendJson(res, 400, { ok: false, error: `Invalid URL: ${rawUrl}` });
+          parsed = assertPublicHttpUrl(rawUrl, 'URL');
+        } catch (err) {
+          return sendJson(res, 400, { ok: false, error: err.message });
         }
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-          return sendJson(res, 400, { ok: false, error: 'Only http:// and https:// URLs are supported.' });
-        }
-        if (PRIVATE_FETCH_HOST_RE.test(parsed.hostname) || parsed.hostname.endsWith('.local')) {
-          return sendJson(res, 400, { ok: false, error: 'Refusing to import from local or private network hosts.' });
-        }
-        const fetched = await fetchFn(parsed.toString(), { signal: AbortSignal.timeout(15000) });
+        const fetched = await safePublicFetch(parsed.toString(), { fetchFn, timeoutMs: 15000 });
         if (!fetched.ok) {
           return sendJson(res, 502, { ok: false, error: `HTTP ${fetched.status} fetching ${parsed}` });
         }
@@ -866,6 +879,13 @@ export function createAgentServer({
         return sendJson(res, 200, { ok: true, ollama });
       }
 
+      if (req.method === 'POST' && pathname === '/api/models/ollama/unload') {
+        const body = await readJsonBody(req);
+        const result = await unloadOllamaModels(undefined, typeof body.model === 'string' ? body.model.trim() : '');
+        const ollama = await checkOllamaHealth();
+        return sendJson(res, 200, { ok: true, ...result, ollama });
+      }
+
       if (req.method === 'POST' && pathname === '/api/models/ollama/pull') {
         const body = await readJsonBody(req);
         res.writeHead(200, {
@@ -936,6 +956,10 @@ export function createAgentServer({
     }
   });
 
+  // Allow long-running SSE agent turns and Ollama model downloads without 5-minute request timeout drops
+  server.requestTimeout = 0;
+  server.keepAliveTimeout = 65000;
+
   return {
     server,
     authToken: token,
@@ -971,13 +995,34 @@ export function createAgentServer({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const instance = createAgentServer({ agendaNotifications: true });
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await instance.stop().catch(() => {});
+    process.exit(0);
+  };
+
   instance.start(Number(process.env.PORT) || 0).then(({ port }) => {
     process.stdout.write(`READY:${port}\n`);
   });
-  const shutdown = async () => {
-    await instance.stop();
-    process.exit(0);
-  };
+
+  // Self-terminate cleanly if the parent macOS host crashes or exits unexpectedly
+  const parentPid = Number(process.env.LOCALGRAVITY_PARENT_PID || 0);
+  if (Number.isInteger(parentPid) && parentPid > 1) {
+    process.stdin.resume();
+    process.stdin.on('end', shutdown);
+    process.stdin.on('close', shutdown);
+    const parentWatch = setInterval(() => {
+      try {
+        process.kill(parentPid, 0);
+      } catch {
+        shutdown();
+      }
+    }, 3000);
+    parentWatch.unref?.();
+  }
+
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": false,
   "type": "module",
-  "description": "Native macOS Launchpad AI agent desktop app powered by local Ollama (Qwen3.5-9B) & multi-provider cloud models with self-teaching SKILL.md and Knowledge Base.",
+  "description": "Native macOS AI agent desktop app for local Ollama and cloud models, with 29 tools, 30 starter skills, live system monitor, weekly/one-off timetable, and zero npm dependencies.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "bash scripts/check.sh",

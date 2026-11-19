@@ -22,11 +22,22 @@ export function estimateMessagesTokens(messages = []) {
 }
 
 /**
+ * Estimate token usage for JSON tool schema definitions (~3.5 chars per token).
+ */
+export function estimateToolsTokens(tools = []) {
+  if (!Array.isArray(tools) || tools.length === 0) return 0;
+  return Math.ceil(JSON.stringify(tools).length / 3.5);
+}
+
+/**
  * Compact older conversation turns into a crisp summary when approaching the context budget.
  */
-export async function compactConversation(messages, { numCtx = 16384, force = false, summarizeFn } = {}) {
+export async function compactConversation(
+  messages,
+  { numCtx = 16384, force = false, summarizeFn, overheadTokens = 0 } = {}
+) {
   const threshold = Math.floor((Number(numCtx) || 16384) * 0.7);
-  const currentTokens = estimateMessagesTokens(messages);
+  const currentTokens = estimateMessagesTokens(messages) + Math.max(0, Number(overheadTokens) || 0);
 
   if (!force && currentTokens <= threshold) {
     return { messages, compacted: false, tokensBefore: currentTokens, tokensAfter: currentTokens };
@@ -81,6 +92,6 @@ export async function compactConversation(messages, { numCtx = 16384, force = fa
     compacted: true,
     summary,
     tokensBefore: currentTokens,
-    tokensAfter: estimateMessagesTokens(compactedMessages),
+    tokensAfter: estimateMessagesTokens(compactedMessages) + Math.max(0, Number(overheadTokens) || 0),
   };
 }

@@ -2,6 +2,9 @@ import { execFile } from 'node:child_process';
 import os from 'node:os';
 
 const MAX_CAPTURE_BYTES = 1024 * 1024;
+let cachedBootTimeSec = null;
+let cachedTotalRamBytes = null;
+let cpTimeSupported = true;
 
 function runBinary(bin, args, timeout = 4000) {
   return new Promise((resolve) => {
@@ -52,11 +55,14 @@ export function cpuPercentBetween(a, b) {
 }
 
 /**
- * Parse `vm_stat` page counts into byte figures.
+ * Parse `vm_stat` page counts into byte figures, reading page size dynamically from the header when present.
  */
-export function parseVmStat(text, pageSize = 16384) {
+export function parseVmStat(text, defaultPageSize = 16384) {
+  const src = String(text || '');
+  const headerSize = src.match(/page size of (\d+) bytes/i);
+  const pageSize = headerSize ? Number(headerSize[1]) || defaultPageSize : defaultPageSize;
   const counts = {};
-  for (const line of String(text || '').split('\n')) {
+  for (const line of src.split('\n')) {
     const m = line.match(/^(Pages\s+[^:]+):\s+(\d+)/);
     if (m) {
       const key = m[1].trim().toLowerCase().replace(/\s+/g, '_');
@@ -76,6 +82,34 @@ export function parseVmStat(text, pageSize = 16384) {
     wiredBytes: wired,
     compressedBytes: compressed,
     usedBytes: active + wired + compressed,
+  };
+}
+
+/**
+ * Parse `sysctl -n vm.swapusage` output (`total = 8192.00M  used = 7428.50M  free = 763.50M`).
+ */
+export function parseSwapUsage(text) {
+  const src = String(text || '');
+  if (!src) return null;
+  const readField = (label) => {
+    const m = src.match(new RegExp(`${label}\\s*=\\s*([\\d.]+)([KMGTP])`, 'i'));
+    if (!m) return null;
+    const val = Number(m[1]);
+    if (!Number.isFinite(val)) return null;
+    const unit = m[2].toUpperCase();
+    const mult =
+      unit === 'T' ? 1024 ** 4 : unit === 'G' ? 1024 ** 3 : unit === 'M' ? 1024 ** 2 : unit === 'K' ? 1024 : 1;
+    return Math.round(val * mult);
+  };
+  const totalBytes = readField('total');
+  const usedBytes = readField('used');
+  const freeBytes = readField('free');
+  if (totalBytes === null && usedBytes === null) return null;
+  return {
+    totalBytes: totalBytes ?? 0,
+    usedBytes: usedBytes ?? 0,
+    freeBytes: freeBytes ?? 0,
+    usedPercent: totalBytes && totalBytes > 0 ? round(((usedBytes || 0) / totalBytes) * 100) : 0,
   };
 }
 
@@ -177,7 +211,7 @@ export function partitionDisks(disks) {
 // output only because the samplers run concurrently with it.
 export const SAMPLER_PROCESS_NAMES = new Set(['ps', 'pmset', 'ioreg', 'vm_stat', 'sysctl', 'df']);
 
-export function parsePs(text) {
+export function parsePs(text, { limit = 12, sortBy = 'cpu' } = {}) {
   const rows = [];
   const lines = String(text || '').split('\n').slice(1);
   for (const line of lines) {
@@ -193,14 +227,23 @@ export function parsePs(text) {
       rssBytes: Number(m[4]) * 1024,
       command,
     });
-    if (rows.length >= 12) break;
+    if (sortBy === 'cpu' && rows.length >= limit) break;
+  }
+  if (sortBy === 'memory') {
+    rows.sort((a, b) => b.rssBytes - a.rssBytes || b.memPercent - a.memPercent);
+    return rows.slice(0, limit);
   }
   return rows;
 }
 
 export async function sampleCpuTimes() {
+  if (!cpTimeSupported) return null;
   const res = await runBinary('/usr/sbin/sysctl', ['-n', 'kern.cp_time']);
-  return res.ok ? parseCpuTimes(res.stdout) : null;
+  if (!res.ok) {
+    cpTimeSupported = false;
+    return null;
+  }
+  return parseCpuTimes(res.stdout);
 }
 
 /**
@@ -237,26 +280,35 @@ export async function collectSystemMetrics({ sampleMs = 250 } = {}) {
   if (first && sampleMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, sampleMs));
   }
-  const [second, vmStat, gpuDump, dfDump, psDump, loadDump, memSizeDump, bootDump, battDump] =
+  const [second, vmStat, swapDump, gpuDump, dfDump, psDump, loadDump, memSizeDump, bootDump, battDump] =
     await Promise.all([
-      sampleCpuTimes(),
+      first ? sampleCpuTimes() : Promise.resolve(null),
       runBinary('/usr/bin/vm_stat', []),
+      runBinary('/usr/sbin/sysctl', ['-n', 'vm.swapusage']),
       runBinary('/usr/sbin/ioreg', ['-r', '-c', 'IOAccelerator']),
       runBinary('/bin/df', ['-kP']),
       runBinary('/bin/ps', ['-Aceo', 'pid,pcpu,pmem,rss,comm', '-r']),
       runBinary('/usr/sbin/sysctl', ['-n', 'vm.loadavg']),
-      runBinary('/usr/sbin/sysctl', ['-n', 'hw.memsize']),
-      runBinary('/usr/sbin/sysctl', ['-n', 'kern.boottime']),
+      cachedTotalRamBytes === null ? runBinary('/usr/sbin/sysctl', ['-n', 'hw.memsize']) : Promise.resolve(null),
+      cachedBootTimeSec === null ? runBinary('/usr/sbin/sysctl', ['-n', 'kern.boottime']) : Promise.resolve(null),
       runBinary('/usr/bin/pmset', ['-g', 'batt']),
     ]);
 
-  const pageSize = 16384;
-  const memBytes = parseVmStat(vmStat.stdout, pageSize);
-  const totalRamBytes = Number(memSizeDump.stdout.trim()) || os.totalmem();
+  if (cachedTotalRamBytes === null) {
+    const parsedMem = Number(memSizeDump?.stdout?.trim());
+    cachedTotalRamBytes = Number.isFinite(parsedMem) && parsedMem > 0 ? parsedMem : os.totalmem();
+  }
+  if (cachedBootTimeSec === null && bootDump?.stdout) {
+    const bootMatch = bootDump.stdout.match(/sec\s*=\s*(\d+)/);
+    if (bootMatch) cachedBootTimeSec = Number(bootMatch[1]);
+  }
+
+  const memBytes = parseVmStat(vmStat.stdout);
+  const swap = swapDump.ok ? parseSwapUsage(swapDump.stdout) : null;
+  const totalRamBytes = cachedTotalRamBytes || os.totalmem();
   const allDisks = dfDump.ok ? parseDf(dfDump.stdout) : [];
   const { user: disks, system: systemDisks } = partitionDisks(allDisks);
   const loadMatch = loadDump.stdout.trim().match(/\{?\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-  const bootMatch = bootDump.stdout.match(/sec\s*=\s*(\d+)/);
   const ncpu = os.cpus()?.length || 1;
 
   return {
@@ -278,15 +330,17 @@ export async function collectSystemMetrics({ sampleMs = 250 } = {}) {
         memBytes && totalRamBytes
           ? round((memBytes.usedBytes / totalRamBytes) * 100)
           : null,
+      swap,
     },
     gpu: gpuDump.ok ? parseGpuStats(gpuDump.stdout) : null,
     disks,
     systemDisks,
-    processes: psDump.ok ? parsePs(psDump.stdout) : [],
+    processes: psDump.ok ? parsePs(psDump.stdout, { limit: 12, sortBy: 'cpu' }) : [],
+    processesByMemory: psDump.ok ? parsePs(psDump.stdout, { limit: 12, sortBy: 'memory' }) : [],
     loadAvg: loadMatch
       ? [Number(loadMatch[1]), Number(loadMatch[2]), Number(loadMatch[3])]
       : null,
-    uptimeSeconds: bootMatch ? Math.max(0, Math.floor(Date.now() / 1000) - Number(bootMatch[1])) : null,
+    uptimeSeconds: cachedBootTimeSec !== null ? Math.max(0, Math.floor(Date.now() / 1000) - cachedBootTimeSec) : null,
     battery: battDump.ok ? parsePmsetBatt(battDump.stdout) : null,
     arch: os.arch(),
   };
@@ -304,10 +358,14 @@ export function summarizeSystemMetrics(metrics) {
   );
   if (metrics.memory.totalBytes) {
     const gb = (n) => `${round(n / 1024 ** 3)} GB`;
+    const swapNote =
+      metrics.memory.swap && metrics.memory.swap.usedBytes > 0
+        ? ` | swap ${gb(metrics.memory.swap.usedBytes)} / ${gb(metrics.memory.swap.totalBytes)}`
+        : '';
     lines.push(
       `Memory: ${gb(metrics.memory.usedBytes || 0)} used of ${gb(metrics.memory.totalBytes)}` +
         (metrics.memory.usedPercent !== null ? ` (${metrics.memory.usedPercent}%)` : '') +
-        ` | wired ${gb(metrics.memory.wiredBytes || 0)} | compressed ${gb(metrics.memory.compressedBytes || 0)}`
+        ` | wired ${gb(metrics.memory.wiredBytes || 0)} | compressed ${gb(metrics.memory.compressedBytes || 0)}${swapNote}`
     );
   }
   if (metrics.gpu) {

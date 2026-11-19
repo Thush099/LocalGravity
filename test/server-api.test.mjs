@@ -349,6 +349,41 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     const searchData = await searchRes.json();
     assert.ok(searchData.results.some((r) => r.id === 'multi-msg-1'));
     assert.ok(searchData.results[0].snippet.length > 0);
+
+    // Private/metadata URLs are blocked by the SSRF guard during skill import
+    const blockedSkillRes = await fetch(`${base}/api/skills/import-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ urls: ['http://169.254.169.254/latest/meta-data/'] }),
+    });
+    assert.equal(blockedSkillRes.status, 200);
+    const blockedSkillData = await blockedSkillRes.json();
+    assert.equal(blockedSkillData.imported.length, 0);
+    assert.equal(blockedSkillData.errors.length, 1);
+    assert.match(blockedSkillData.errors[0].error, /blocked|private|local/i);
+
+    // System metrics endpoint exposes swap and memory-sorted processes
+    const metricsRes = await fetch(`${base}/api/system/metrics`, {
+      headers: { 'X-Auth-Token': authToken },
+    });
+    assert.equal(metricsRes.status, 200);
+    const metricsData = await metricsRes.json();
+    assert.equal(metricsData.ok, true);
+    assert.ok(metricsData.metrics && typeof metricsData.metrics.memory === 'object');
+    assert.ok(Array.isArray(metricsData.metrics.processesByMemory));
+
+    // Unload endpoint requires auth and handles empty/idle Ollama cleanly
+    const unauthUnload = await fetch(`${base}/api/models/ollama/unload`, { method: 'POST' });
+    assert.equal(unauthUnload.status, 401);
+    const unloadRes = await fetch(`${base}/api/models/ollama/unload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({}),
+    });
+    assert.equal(unloadRes.status, 200);
+    const unloadData = await unloadRes.json();
+    assert.equal(unloadData.ok, true);
+    assert.ok(Array.isArray(unloadData.unloaded));
   } finally {
     globalThis.fetch = origFetch;
     if (startedReal) await srv.stop();

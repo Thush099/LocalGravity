@@ -32,3 +32,12 @@ jobs:
 
       - name: Run checks
         run: npm run check
+
+      - name: Build and verify macOS app bundle
+        env:
+          APP_BUNDLE_OVERRIDE: ${{ runner.temp }}/LocalGravity-CI.app
+        run: |
+          bash scripts/build-app.sh
+          plutil -lint "$APP_BUNDLE_OVERRIDE/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP_BUNDLE_OVERRIDE"
+          test -x "$APP_BUNDLE_OVERRIDE/Contents/MacOS/LocalGravity"

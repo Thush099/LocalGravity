@@ -24,8 +24,17 @@ export function normalizeScheduleEntry(raw, existing = null) {
   if (date !== null && !DATE_RE.test(date)) {
     return { ok: false, error: 'Date must be in YYYY-MM-DD format.' };
   }
-  if (date !== null && Number.isNaN(new Date(`${date}T00:00:00`).getTime())) {
-    return { ok: false, error: 'Date must be a real calendar date.' };
+  if (date !== null) {
+    const [y, m, d] = date.split('-').map(Number);
+    const check = new Date(y, m - 1, d);
+    if (
+      Number.isNaN(check.getTime()) ||
+      check.getFullYear() !== y ||
+      check.getMonth() + 1 !== m ||
+      check.getDate() !== d
+    ) {
+      return { ok: false, error: 'Date must be a real calendar date.' };
+    }
   }
   if (date !== null) {
     // One-off entries land on a single date instead of repeating weekdays.

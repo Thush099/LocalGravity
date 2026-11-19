@@ -6,6 +6,7 @@ import {
   cpuPercentFromPs,
   partitionDisks,
   parseVmStat,
+  parseSwapUsage,
   parseGpuStats,
   parseDf,
   parsePs,
@@ -189,4 +190,39 @@ test('summarizeSystemMetrics includes power when a battery is present', () => {
     battery: { powerSource: 'Battery Power', percent: 62, state: 'discharging', minutesRemaining: 187 },
   });
   assert.match(report, /Power: 62% discharging on Battery Power \(3h 7m left\)/);
+});
+
+test('parseSwapUsage, dynamic vm_stat page size, and memory-sorted parsePs work accurately', () => {
+  const swap = parseSwapUsage('total = 8192.00M  used = 4096.00M  free = 4096.00M  (encrypted)');
+  assert.equal(swap.totalBytes, 8192 * 1024 * 1024);
+  assert.equal(swap.usedBytes, 4096 * 1024 * 1024);
+  assert.equal(swap.usedPercent, 50);
+  assert.equal(parseSwapUsage(''), null);
+
+  const intelVm = parseVmStat('Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages active: 100.\n');
+  assert.equal(intelVm.activeBytes, 100 * 4096);
+
+  const psText =
+    '  PID %CPU %MEM    RSS COMM\n' +
+    ' 10 90.0 0.5 1024 cpu_hog\n' +
+    ' 11  1.0 9.0 999999 ram_hog\n';
+  const byMem = parsePs(psText, { limit: 12, sortBy: 'memory' });
+  assert.equal(byMem[0].command, 'ram_hog');
+  assert.equal(byMem[1].command, 'cpu_hog');
+
+  const swapSummary = summarizeSystemMetrics({
+    cpu: { percent: 10 },
+    memory: {
+      totalBytes: 16 * 1024 ** 3,
+      usedBytes: 14 * 1024 ** 3,
+      usedPercent: 87.5,
+      wiredBytes: 9 * 1024 ** 3,
+      compressedBytes: 3 * 1024 ** 3,
+      swap: { totalBytes: 8 * 1024 ** 3, usedBytes: 4 * 1024 ** 3, usedPercent: 50 },
+    },
+    gpu: null,
+    disks: [],
+    processes: [],
+  });
+  assert.match(swapSummary, /swap 4 GB \/ 8 GB/);
 });

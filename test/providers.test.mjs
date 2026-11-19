@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchWithRetry } from '../backend/providers/http-retry.mjs';
 import { extractFallbackToolCalls, extractInlineThinking } from '../backend/providers/tool-parser.mjs';
-import { selectBestInstalledOllamaModel, streamOllamaChat } from '../backend/providers/ollama.mjs';
+import {
+  listRunningOllamaModels,
+  selectBestInstalledOllamaModel,
+  streamOllamaChat,
+  unloadOllamaModels,
+} from '../backend/providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../backend/providers/openai-compat.mjs';
 import { streamAnthropicChat } from '../backend/providers/anthropic.mjs';
 
@@ -250,6 +255,65 @@ test('streamOllamaChat auto-recovers missing model tag and retries cleanly when 
     assert.equal(attempts, 3);
     assert.equal(res.resolvedModel, 'qwen3.5:9b');
     assert.equal(res.content, 'Retried ok!');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('Ollama ps/unload helpers, RAM-aware selection, and transient disconnect retry work cleanly', async () => {
+  assert.equal(
+    selectBestInstalledOllamaModel([{ name: 'qwen3.5:9b' }, { name: 'qwen3.5:4b' }], '', { totalRamGb: 16 }),
+    'qwen3.5:4b'
+  );
+  assert.equal(
+    selectBestInstalledOllamaModel([{ name: 'qwen3.5:9b' }, { name: 'qwen3.5:4b' }], '', { totalRamGb: 32 }),
+    'qwen3.5:9b'
+  );
+
+  const origFetch = globalThis.fetch;
+  const unloadedBodies = [];
+  let chatCalls = 0;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.endsWith('/api/ps')) {
+      return new Response(
+        JSON.stringify({
+          models: [{ name: 'qwen3.5:9b', size: 9_100_000_000, size_vram: 9_100_000_000, context_length: 8192 }],
+        }),
+        { status: 200 }
+      );
+    }
+    if (u.endsWith('/api/generate')) {
+      unloadedBodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ done: true }), { status: 200 });
+    }
+    if (u.endsWith('/api/chat')) {
+      chatCalls++;
+      if (chatCalls === 1) throw new TypeError('terminated');
+      return makeStreamResponse([
+        JSON.stringify({ message: { role: 'assistant', content: 'Recovered after drop' }, done: true }) + '\n',
+      ]);
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  try {
+    const running = await listRunningOllamaModels('http://mock-ollama.local');
+    assert.equal(running.length, 1);
+    assert.equal(running[0].name, 'qwen3.5:9b');
+    assert.equal(running[0].sizeVram, 9_100_000_000);
+
+    const unloaded = await unloadOllamaModels('http://mock-ollama.local');
+    assert.deepEqual(unloaded.unloaded, ['qwen3.5:9b']);
+    assert.equal(unloadedBodies[0].keep_alive, 0);
+
+    const recovered = await streamOllamaChat({
+      baseUrl: 'http://mock-ollama.local',
+      model: 'qwen3.5:9b',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    assert.equal(chatCalls, 2);
+    assert.equal(recovered.content, 'Recovered after drop');
   } finally {
     globalThis.fetch = origFetch;
   }

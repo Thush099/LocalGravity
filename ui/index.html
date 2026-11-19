@@ -61,6 +61,19 @@
       </aside>
 
       <main class="workspace">
+        <button
+          id="sidebar-expand-fab"
+          class="chrome-icon-btn sidebar-expand-fab"
+          type="button"
+          aria-label="Show sidebar"
+          title="Show sidebar (⌘\)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8" />
+            <path d="M9 4v16" stroke="currentColor" stroke-width="1.8" />
+          </svg>
+        </button>
+
         <!-- VIEW: AGENT -->
         <section id="view-agent" class="view">
           <header class="workspace-header">
@@ -80,7 +93,7 @@
               </button>
               <button id="model-picker-btn" class="pill-btn model-pill" type="button">
                 <span class="pill-dot"></span>
-                <span id="active-model-label">qwen3.5:9b (Local)</span>
+                <span id="active-model-label">Local model</span>
                 <span class="chevron">▾</span>
               </button>
               <div id="model-popover" class="popover hidden" role="dialog" aria-label="Switch model"></div>
@@ -233,6 +246,17 @@
             <div class="stat-tile"><span class="stat-label">Storage</span><span class="stat-value" id="dash-disk">—</span><div class="usage-bar"><span id="dash-disk-bar"></span></div></div>
           </div>
 
+          <form id="dash-quick-ask-form" class="dash-quick-ask">
+            <input
+              id="dash-quick-ask-input"
+              class="dash-quick-ask-input"
+              type="text"
+              placeholder="Ask LocalGravity anything on your Mac… (press Enter to jump into Agent)"
+              aria-label="Quick ask LocalGravity"
+            />
+            <button class="primary-btn" type="submit">Ask Agent →</button>
+          </form>
+
           <div class="dash-columns">
             <div class="dash-card">
               <div class="dash-card-head">
@@ -264,6 +288,19 @@
               <div id="dash-snapshot" class="dash-snapshot">Loading…</div>
             </div>
           </div>
+
+          <div class="dash-card dash-runtime-card">
+            <div class="dash-card-head">
+              <div>
+                <h3>Local AI Runtime &amp; Memory</h3>
+                <div id="dash-runtime-summary" class="status-sub">Checking Ollama and memory state…</div>
+              </div>
+              <div class="toolbar-actions">
+                <button id="dash-unload-ram-btn" class="secondary-btn hidden" type="button">Unload model (Free RAM)</button>
+                <button id="dash-open-settings" class="secondary-btn" type="button">Models &amp; Settings</button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- VIEW: SYSTEM MONITOR -->
@@ -275,11 +312,13 @@
             </div>
             <div class="toolbar-actions">
               <label class="field-inline"><input id="monitor-autorefresh" type="checkbox" checked /> Auto-refresh</label>
+              <button id="monitor-unload-btn" class="secondary-btn hidden" type="button">Free Ollama RAM</button>
               <button id="monitor-refresh-btn" class="secondary-btn" type="button">Refresh now</button>
             </div>
           </header>
 
-          <div id="monitor-updated" class="status-sub" aria-live="polite">Not sampled yet.</div>
+          <div id="monitor-updated" class="status-sub monitor-updated" aria-live="polite">Not sampled yet.</div>
+          <div id="monitor-memory-alert" class="monitor-alert hidden" role="status"></div>
           <div id="monitor-stats" class="stat-grid">
             <div class="stat-tile"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
             <div class="stat-tile"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
@@ -302,7 +341,13 @@
           </div>
 
           <div class="dash-card">
-            <div class="dash-card-head"><h3>Top processes</h3><span class="status-sub">sorted by CPU</span></div>
+            <div class="dash-card-head">
+              <h3>Top processes</h3>
+              <div class="segmented-tabs segmented-tabs-sm" role="group" aria-label="Sort processes by">
+                <button type="button" class="seg-btn mon-sort-btn active" data-sort="cpu">Sort: CPU %</button>
+                <button type="button" class="seg-btn mon-sort-btn" data-sort="memory">Sort: Memory</button>
+              </div>
+            </div>
             <table class="data-table">
               <thead><tr><th>Process</th><th>PID</th><th>CPU %</th><th>Memory %</th><th>Memory</th></tr></thead>
               <tbody id="monitor-processes"></tbody>
@@ -336,7 +381,11 @@
                   <input id="sched-duration" class="text-input" type="number" min="5" max="1440" value="30" />
                 </label>
               </div>
-              <fieldset class="day-picker">
+              <div class="segmented-tabs segmented-tabs-sm sched-mode-tabs" role="group" aria-label="Entry schedule type">
+                <button type="button" class="seg-btn sched-mode-btn active" data-mode="weekly">Weekly repeat</button>
+                <button type="button" class="seg-btn sched-mode-btn" data-mode="once">One-off date</button>
+              </div>
+              <fieldset id="sched-days-fieldset" class="day-picker">
                 <legend>Repeats on</legend>
                 <label><input type="checkbox" name="sched-day" value="1" checked /> Mon</label>
                 <label><input type="checkbox" name="sched-day" value="2" checked /> Tue</label>
@@ -346,6 +395,10 @@
                 <label><input type="checkbox" name="sched-day" value="6" /> Sat</label>
                 <label><input type="checkbox" name="sched-day" value="0" /> Sun</label>
               </fieldset>
+              <label id="sched-date-field" class="field-block hidden">
+                <span>Date</span>
+                <input id="sched-date" class="text-input" type="date" />
+              </label>
               <label class="field-block">
                 <span>Notes (optional)</span>
                 <textarea id="sched-notes" class="text-input" rows="2" maxlength="500" placeholder="Bring the design review notes"></textarea>
@@ -454,6 +507,7 @@
                   </select>
                 </label>
                 <button id="start-ollama-btn" class="secondary-btn" type="button">Start / Check Ollama</button>
+                <button id="unload-ollama-btn" class="secondary-btn" type="button" title="Unload resident Ollama models to immediately reclaim GPU RAM">Unload Model (Free RAM)</button>
               </div>
             </div>
 

@@ -49,7 +49,7 @@ function toSessionCacheEntry(data) {
       title: data.title || 'Untitled Task',
       source: data.source || 'interactive',
       provider: data.provider || 'ollama',
-      model: data.model || 'qwen3.5:9b',
+      model: data.model || 'qwen3.5:4b',
       updatedAt: data.updatedAt || '',
       messageCount: Array.isArray(data.messages) ? data.messages.length : 0,
     },

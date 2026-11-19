@@ -7,9 +7,10 @@ import { listSkills, syncStarterSkills } from '../skills-engine.mjs';
 import { getRepoPath, getRuntimePaths } from '../state/paths.mjs';
 import { saveConfig, saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
-import { compactConversation, estimateMessagesTokens } from './compactor.mjs';
+import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from './compactor.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
+import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import {
   loadLearnedFixesExcerpt,
   normalizeToolCall,
@@ -27,7 +28,7 @@ function resolveProviderChatFn(providerConfig = {}) {
     return (req) =>
       streamOllamaChat({
         baseUrl: providerConfig.ollamaUrl || DEFAULT_OLLAMA_URL,
-        model: providerConfig.model || 'qwen3.5:9b',
+        model: providerConfig.model || 'qwen3.5:4b',
         messages: req.messages,
         tools: req.tools,
         thinking: providerConfig.thinking ?? false,
@@ -201,6 +202,7 @@ export async function runAgentTurn({
 
   const suggestedSkills = selectRelevantSkills(skills, fullUserText);
 
+  const isLocalOllama = provider === 'ollama';
   const systemPrompt = buildSystemPrompt({
     skills,
     suggestedSkills,
@@ -211,8 +213,19 @@ export async function runAgentTurn({
     safetyMode,
     isHeadless,
     allowAutoRun,
+    compact: isLocalOllama,
     cwd,
   });
+
+  const selectedTools = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider,
+    userMessage: fullUserText,
+    sessionMessages: session.messages,
+    attachments,
+  });
+  const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
+  const systemTokens = Math.ceil(systemPrompt.length / 3.5) + 8;
+  const toolsTokens = estimateToolsTokens(activeTools);
 
   try {
     for (let step = 0; step < maxSteps; step++) {
@@ -223,6 +236,7 @@ export async function runAgentTurn({
 
       const compacted = await compactConversation(session.messages, {
         numCtx,
+        overheadTokens: systemTokens + toolsTokens,
         summarizeFn: async (transcript) => {
           const sumRes = await activeChatFn({
             messages: [
@@ -249,13 +263,13 @@ export async function runAgentTurn({
 
       onEvent?.({
         type: 'context_stats',
-        tokens: estimateMessagesTokens(modelMessages),
+        tokens: estimateMessagesTokens(modelMessages) + toolsTokens,
         numCtx,
       });
 
       const response = await activeChatFn({
         messages: modelMessages,
-        tools: TOOL_DEFINITIONS,
+        tools: activeTools,
         signal: abortSignal,
         onEvent: (evt) => {
           if (evt?.type === 'self_improved' && evt.resolvedModel && persistSession) {

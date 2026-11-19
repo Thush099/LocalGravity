@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { entriesForDate, loadSchedule } from './schedule.mjs';
-import { loadConfig } from './state/storage.mjs';
+import { atomicWriteJson, loadConfig, readJsonSafe } from './state/storage.mjs';
 
 export const DEFAULT_LEAD_MINUTES = 5;
 const NOTIFIED_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -33,24 +32,19 @@ export function notificationsDue(entries, now, { leadMinutes = DEFAULT_LEAD_MINU
   return due;
 }
 
-function loadNotified(paths) {
-  try {
-    const raw = JSON.parse(fs.readFileSync(notifiedFile(paths), 'utf8'));
-    return raw && typeof raw === 'object' ? raw : {};
-  } catch {
-    return {};
-  }
+async function loadNotified(paths) {
+  const raw = await readJsonSafe(notifiedFile(paths), {});
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
 }
 
-function saveNotified(paths, notified, now) {
+async function saveNotified(paths, notified, now) {
   const cutoff = now.getTime() - NOTIFIED_RETENTION_MS;
   const pruned = {};
   for (const [key, at] of Object.entries(notified)) {
     const t = Date.parse(at);
     if (Number.isFinite(t) && t >= cutoff) pruned[key] = at;
   }
-  fs.mkdirSync(paths.root || paths.stateDir, { recursive: true });
-  fs.writeFileSync(notifiedFile(paths), JSON.stringify(pruned, null, 2));
+  await atomicWriteJson(notifiedFile(paths), pruned, 0o600);
 }
 
 function announcementFor(entry, minutesUntil) {
@@ -74,7 +68,7 @@ export async function runAgendaTick({ paths, now = new Date(), leadMinutes, noti
   if (config.agendaNotifications === false) return [];
   const lead = clampLead(leadMinutes ?? config.agendaLeadMinutes);
   const entries = await loadSchedule(paths);
-  const notified = loadNotified(paths);
+  const notified = await loadNotified(paths);
   const due = notificationsDue(entries, now, { leadMinutes: lead, notified });
   const fired = [];
   for (const item of due) {
@@ -87,7 +81,7 @@ export async function runAgendaTick({ paths, now = new Date(), leadMinutes, noti
       // A failed notification should retry on the next tick, so leave the key unset.
     }
   }
-  if (due.length > 0) saveNotified(paths, notified, now);
+  if (due.length > 0) await saveNotified(paths, notified, now);
   return fired;
 }
 

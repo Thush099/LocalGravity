@@ -30,11 +30,12 @@ const state = {
   automations: [],
   attachments: [],
   isRunning: false,
+  runningSessionId: null,
   runAbort: null,
   runStartedAt: 0,
   timerHandle: null,
   rafPending: false,
-  queuedMessage: null,
+  queuedMessages: [],
   liveAssistantMsg: null,
   displayedItems: [],
   pendingApprovals: new Map(),
@@ -43,6 +44,8 @@ const state = {
   paletteItems: [],
   paletteIndex: 0,
   metrics: null,
+  monitorProcessSort: 'cpu',
+  scheduleFormMode: 'weekly',
   schedule: [],
   scheduleToday: [],
   monitorTimer: null,
@@ -140,6 +143,10 @@ function updateContextMeter(tokens, numCtx) {
 
 // Swift native bridges
 window.__lgSetToken = (token) => setAuthToken(token);
+window.__lgFileSaved = (savedPath) => {
+  const base = String(savedPath || '').split('/').pop() || 'file';
+  showToast(`Saved ${base}`);
+};
 window.__lgReceiveFiles = async (filePaths) => {
   if (!Array.isArray(filePaths)) return;
   for (const fp of filePaths) {
@@ -165,10 +172,13 @@ function switchView(viewName) {
   state.view = viewName;
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === viewName));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${viewName}`));
+  $('#sidebar-expand-fab')?.classList.toggle('visible-outside-agent', viewName !== 'agent');
   if (viewName === 'dashboard') {
+    renderDashboard();
     refreshSystemMetrics();
     loadSchedule();
   } else if (viewName === 'monitor') {
+    renderMonitor();
     refreshSystemMetrics();
   } else if (viewName === 'schedule') {
     loadSchedule();
@@ -253,7 +263,29 @@ function renderDashboard() {
     }
     const top = metrics?.processes?.[0];
     if (top) parts.push(`Busiest: ${top.command} (${top.cpuPercent}%)`);
+    if (metrics?.memory?.swap?.usedBytes > 0) {
+      parts.push(`Swap ${formatBytes(metrics.memory.swap.usedBytes)} / ${formatBytes(metrics.memory.swap.totalBytes)}`);
+    }
     snapshot.textContent = parts.join(' · ') || 'Snapshot unavailable.';
+  }
+
+  const runtimeEl = $('#dash-runtime-summary');
+  const unloadBtn = $('#dash-unload-ram-btn');
+  if (runtimeEl) {
+    const running = state.health?.ollama?.runningModels || [];
+    const activeLabel = `${state.config?.model || 'qwen3.5:4b'} (${(state.config?.provider || 'ollama') === 'ollama' ? 'Local' : state.config?.provider})`;
+    const thinkLabel = state.config?.thinking ? 'Deep Think On' : 'Fast mode';
+    if (running.length > 0) {
+      const totalVram = running.reduce((acc, m) => acc + (m.sizeVram || m.size || 0), 0);
+      runtimeEl.textContent = `Active: ${activeLabel} · ${thinkLabel} · Loaded in GPU: ${running.map((m) => m.name).join(', ')} (${formatBytes(totalVram)})`;
+      unloadBtn?.classList.remove('hidden');
+    } else if (state.health?.ollama?.running) {
+      runtimeEl.textContent = `Active: ${activeLabel} · ${thinkLabel} · Ollama idle (0 B GPU RAM used)`;
+      unloadBtn?.classList.add('hidden');
+    } else {
+      runtimeEl.textContent = `Active: ${activeLabel} · Ollama stopped (auto-starts on your first local task)`;
+      unloadBtn?.classList.add('hidden');
+    }
   }
   renderAgenda();
 }
@@ -304,6 +336,8 @@ function renderMonitor() {
   );
 
   const details = $('#monitor-details');
+  const runningModels = state.health?.ollama?.runningModels || [];
+  const totalVram = runningModels.reduce((acc, m) => acc + (m.sizeVram || m.size || 0), 0);
   if (details) {
     const rows = [
       ['CPU cores', metrics.cpu?.cores ? String(metrics.cpu.cores) : '—'],
@@ -311,7 +345,19 @@ function renderMonitor() {
       ['Uptime', metrics.uptimeSeconds != null ? formatUptime(metrics.uptimeSeconds) : '—'],
       ['Wired memory', mem.wiredBytes != null ? formatBytes(mem.wiredBytes) : '—'],
       ['Compressed memory', mem.compressedBytes != null ? formatBytes(mem.compressedBytes) : '—'],
+      [
+        'Swap memory',
+        mem.swap && mem.swap.totalBytes > 0
+          ? `${formatBytes(mem.swap.usedBytes)} / ${formatBytes(mem.swap.totalBytes)} (${mem.swap.usedPercent}%)`
+          : '0 B (no swap pressure)',
+      ],
       ['GPU', gpu ? `${gpu.name}${gpu.inUseMemoryBytes ? ` · ${formatBytes(gpu.inUseMemoryBytes)} in use` : ''}` : 'No GPU stats exposed'],
+      [
+        'Ollama GPU RAM',
+        runningModels.length > 0
+          ? `${runningModels.map((m) => m.name).join(', ')} (${formatBytes(totalVram)})`
+          : 'None loaded',
+      ],
     ];
     if (metrics.battery) {
       const b = metrics.battery;
@@ -327,6 +373,19 @@ function renderMonitor() {
     details.innerHTML = rows
       .map(([k, v]) => `<div class="detail-row"><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
       .join('');
+  }
+
+  $('#monitor-unload-btn')?.classList.toggle('hidden', runningModels.length === 0);
+  const alertEl = $('#monitor-memory-alert');
+  if (alertEl) {
+    const highSwap = (mem.swap?.usedBytes || 0) >= 2 * 1024 ** 3;
+    const highMem = (mem.usedPercent || 0) >= 85;
+    if (runningModels.length > 0 && (highSwap || highMem)) {
+      alertEl.textContent = `High memory pressure (${mem.usedPercent ?? '?'}% RAM${highSwap ? `, ${formatBytes(mem.swap.usedBytes)} swap` : ''}) while ${runningModels.map((m) => m.name).join(', ')} is loaded (${formatBytes(totalVram)}). Click "Free Ollama RAM" to reclaim memory immediately.`;
+      alertEl.classList.remove('hidden');
+    } else {
+      alertEl.classList.add('hidden');
+    }
   }
 
   const disksBody = $('#monitor-disks');
@@ -345,7 +404,11 @@ function renderMonitor() {
 
   const procsBody = $('#monitor-processes');
   if (procsBody) {
-    procsBody.innerHTML = (metrics.processes || [])
+    const procList =
+      state.monitorProcessSort === 'memory' && Array.isArray(metrics.processesByMemory)
+        ? metrics.processesByMemory
+        : metrics.processes || [];
+    procsBody.innerHTML = procList
       .map(
         (p) => `<tr>
           <td>${escapeHtml(p.command)}</td>
@@ -366,8 +429,8 @@ async function refreshSystemMetrics() {
   try {
     const data = await apiRequest('/api/system/metrics');
     state.metrics = data.metrics || null;
-    renderDashboard();
-    renderMonitor();
+    if (state.view === 'dashboard') renderDashboard();
+    else if (state.view === 'monitor') renderMonitor();
   } catch {
     // Keep the last snapshot; the next tick retries.
   }
@@ -403,10 +466,12 @@ function renderScheduleWeek() {
         <ul class="week-list">${oneOffs
           .map(
             (e) => `<li class="week-item${e.enabled === false ? ' disabled' : ''}">
-              <span class="agenda-time">${escapeHtml(e.time)}</span>
-              <span class="agenda-title">${escapeHtml(e.title)}</span>
-              <span class="agenda-meta">${escapeHtml(String(e.date))}</span>
-              <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+              <div class="week-item-top">
+                <span class="agenda-time">${escapeHtml(e.time)}</span>
+                <span class="agenda-meta">${escapeHtml(String(e.date))}</span>
+                <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+              </div>
+              <div class="week-item-title" title="${escapeHtml(e.title)}">${escapeHtml(e.title)}</div>
             </li>`
           )
           .join('')}</ul>
@@ -421,10 +486,12 @@ function renderScheduleWeek() {
       const items = dayEntries
         .map(
           (e) => `<li class="week-item${e.enabled === false ? ' disabled' : ''}">
-            <span class="agenda-time">${escapeHtml(e.time)}</span>
-            <span class="agenda-title">${escapeHtml(e.title)}</span>
-            <span class="agenda-meta">${escapeHtml(String(e.durationMin || 30))} min</span>
-            <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+            <div class="week-item-top">
+              <span class="agenda-time">${escapeHtml(e.time)}</span>
+              <span class="agenda-meta">${escapeHtml(String(e.durationMin || 30))}m</span>
+              <button type="button" class="icon-btn week-delete" data-id="${escapeHtml(e.id)}" title="Delete entry" aria-label="Delete ${escapeHtml(e.title)}">×</button>
+            </div>
+            <div class="week-item-title" title="${escapeHtml(e.title)}">${escapeHtml(e.title)}</div>
           </li>`
         )
         .join('') || '<li class="agenda-empty">Nothing</li>';
@@ -452,7 +519,7 @@ async function loadSchedule() {
 function updateHeaderControls() {
   if (!state.config) return;
   const prov = state.config.provider || 'ollama';
-  const model = state.config.model || 'qwen3.5:9b';
+  const model = state.config.model || 'qwen3.5:4b';
   const provLabel = prov === 'ollama' ? 'Local' : state.presets?.[prov]?.label?.split(' ')[0] || prov;
   $('#active-model-label').textContent = `${model} (${provLabel})`;
 
@@ -485,7 +552,8 @@ function renderSidebarStatus() {
   const txt = $('#ollama-status-text');
   if (ollama?.running) {
     dot.className = 'status-dot online';
-    txt.textContent = `Ollama ready (${ollama.models.length} models)`;
+    const count = ollama.models.length;
+    txt.textContent = `Ollama ready (${count} ${count === 1 ? 'model' : 'models'})`;
   } else {
     dot.className = 'status-dot offline';
     txt.textContent = system.tools?.ollama ? 'Ollama stopped' : 'Ollama not installed';
@@ -513,6 +581,7 @@ function renderSessionsList() {
     .map(
       (s) => `
       <div class="session-item ${state.activeSession?.id === s.id ? 'active' : ''}" data-id="${escapeHtml(s.id)}">
+        ${state.isRunning && state.runningSessionId === s.id ? '<span class="session-running-dot" title="Running"></span>' : ''}
         <span class="session-title-wrap">
           <span class="session-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
           ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
@@ -701,25 +770,8 @@ function buildToolBodyHtml(tool) {
   return `<pre class="tool-body">${escapeHtml(JSON.stringify(tool.arguments || {}, null, 2))}</pre>`;
 }
 
-function buildDisplayItemHtml(item, idx) {
-  if (item.type === 'compaction') {
-    return `<div class="thinking-box"><details><summary>Compacted earlier context</summary><div class="thinking-content">${escapeHtml(item.content)}</div></details></div>`;
-  }
-  if (item.type === 'user') {
-    const attachTag =
-      Array.isArray(item.msg.attachments) && item.msg.attachments.length > 0
-        ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
-        : '';
-    const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
-    return `<div class="msg-row"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div></div>`;
-  }
-
-  const thinkingCombined = (item.thinking || []).join('').trim();
-  const thinkingHtml = thinkingCombined
-    ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
-    : '';
-
-  const toolsHtml = (item.tools || [])
+function buildToolsHtml(tools = []) {
+  return (tools || [])
     .map((t) => {
       const badgeCls = t.status === 'ok' ? 'ok' : t.status === 'fail' ? 'fail' : t.status === 'wait' ? 'wait' : '';
       const badgeLabel =
@@ -770,6 +822,27 @@ function buildDisplayItemHtml(item, idx) {
         </div>`;
     })
     .join('');
+}
+
+function buildDisplayItemHtml(item, idx) {
+  if (item.type === 'compaction') {
+    return `<div class="thinking-box"><details><summary>Compacted earlier context</summary><div class="thinking-content">${escapeHtml(item.content)}</div></details></div>`;
+  }
+  if (item.type === 'user') {
+    const attachTag =
+      Array.isArray(item.msg.attachments) && item.msg.attachments.length > 0
+        ? `<div style="font-size:11.5px;opacity:0.85;margin-top:4px;">Attached: ${item.msg.attachments.map((p) => escapeHtml(p.split('/').pop())).join(', ')}</div>`
+        : '';
+    const textOnly = String(item.msg.content || '').replace(/\n\n\[Attached files\][\s\S]*$/, '');
+    return `<div class="msg-row"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div></div>`;
+  }
+
+  const thinkingCombined = (item.thinking || []).join('').trim();
+  const thinkingHtml = thinkingCombined
+    ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
+    : '';
+
+  const toolsHtml = buildToolsHtml(item.tools);
 
   const selfImprovedHtml =
     Array.isArray(item.selfImprovedLessons) && item.selfImprovedLessons.length > 0
@@ -849,7 +922,11 @@ function scrollToBottomIfPinned(force = false) {
  */
 function renderMessages(forceScroll = false) {
   const messages = state.activeSession?.messages || [];
-  const hasAny = messages.length > 0 || Boolean(state.liveAssistantMsg);
+  const showLiveHere = Boolean(
+    state.liveAssistantMsg &&
+      (!state.runningSessionId || state.activeSession?.id === state.runningSessionId)
+  );
+  const hasAny = messages.length > 0 || showLiveHere;
   $('#welcome-state').classList.toggle('hidden', hasAny);
   const container = $('#chat-messages');
 
@@ -861,10 +938,10 @@ function renderMessages(forceScroll = false) {
   }
 
   const historyItems = groupMessagesForDisplay(messages);
-  state.displayedItems = state.liveAssistantMsg ? [...historyItems, state.liveAssistantMsg] : historyItems;
+  state.displayedItems = showLiveHere ? [...historyItems, state.liveAssistantMsg] : historyItems;
 
   const historyHtml = historyItems.map((item, idx) => buildDisplayItemHtml(item, idx)).join('');
-  const liveHtml = state.liveAssistantMsg ? buildDisplayItemHtml(state.liveAssistantMsg, historyItems.length) : '';
+  const liveHtml = showLiveHere ? buildDisplayItemHtml(state.liveAssistantMsg, historyItems.length) : '';
 
   container.innerHTML = `<div id="chat-history-items">${historyHtml}</div><div id="chat-live-slot">${liveHtml}</div>`;
   scrollToBottomIfPinned(forceScroll);
@@ -881,6 +958,7 @@ function scheduleLiveUpdate() {
     state.rafPending = false;
     const item = state.liveAssistantMsg;
     if (!item) return;
+    if (state.runningSessionId && state.activeSession?.id !== state.runningSessionId) return;
     const slot = $('#chat-live-slot');
     if (!slot) {
       renderMessages();
@@ -953,10 +1031,7 @@ function scheduleLiveUpdate() {
           }
         }
 
-        const tempContainer = document.createElement('div');
-        tempContainer.innerHTML = buildDisplayItemHtml(item, 0);
-        const nextToolsHtml = tempContainer.querySelector('.live-tools-slot')?.innerHTML || '';
-        toolsSlot.innerHTML = nextToolsHtml;
+        toolsSlot.innerHTML = buildToolsHtml(item.tools);
 
         if (focusedToolId) {
           const restoredInput = toolsSlot.querySelector(`.approval-cmd-edit[data-tool-id="${CSS.escape(focusedToolId)}"]`);
@@ -1060,7 +1135,7 @@ async function createNewTask() {
     body: JSON.stringify({ title: 'New Task' }),
   });
   state.activeSession = res.session;
-  state.liveAssistantMsg = null;
+  if (!state.isRunning) state.liveAssistantMsg = null;
   state.contextTokens = 0;
   updateContextMeter(0, state.config?.numCtx);
   await loadSessions();
@@ -1071,12 +1146,15 @@ async function createNewTask() {
 
 function renderQueuedBar() {
   const bar = $('#queued-bar');
-  if (!state.queuedMessage) {
+  if (!state.queuedMessages || state.queuedMessages.length === 0) {
     bar.classList.add('hidden');
     return;
   }
   bar.classList.remove('hidden');
-  $('#queued-text').textContent = `Queued next: ${state.queuedMessage.text || '(attached files)'}`;
+  const count = state.queuedMessages.length;
+  const next = state.queuedMessages[0];
+  const prefix = count > 1 ? `Queued (${count} · next)` : 'Queued next';
+  $('#queued-text').textContent = `${prefix}: ${next.text || '(attached files)'}`;
 }
 
 async function sendPrompt(overridePayload = null) {
@@ -1087,7 +1165,11 @@ async function sendPrompt(overridePayload = null) {
   if (!text && attachPaths.length === 0) return;
 
   if (state.isRunning) {
-    state.queuedMessage = { text, attachments: attachPaths };
+    state.queuedMessages.push({
+      text,
+      attachments: attachPaths,
+      sessionId: overridePayload?.sessionId || state.activeSession?.id || state.runningSessionId || null,
+    });
     if (!overridePayload) {
       input.value = '';
       input.style.height = 'auto';
@@ -1095,8 +1177,17 @@ async function sendPrompt(overridePayload = null) {
       renderAttachments();
     }
     renderQueuedBar();
-    showToast('Follow-up queued (runs next, or click Send now)');
+    showToast(`Follow-up queued (#${state.queuedMessages.length} — runs next, or click Send now)`);
     return;
+  }
+
+  if (overridePayload?.sessionId && state.activeSession?.id !== overridePayload.sessionId) {
+    try {
+      const loaded = await apiRequest(`/api/sessions/${encodeURIComponent(overridePayload.sessionId)}`);
+      state.activeSession = loaded.session;
+    } catch {
+      // Fall back to active session
+    }
   }
 
   if (!state.activeSession) {
@@ -1107,6 +1198,7 @@ async function sendPrompt(overridePayload = null) {
     state.activeSession = created.session;
   }
 
+  const runSessionId = state.activeSession.id;
   if (!overridePayload) {
     input.value = '';
     input.style.height = 'auto';
@@ -1130,6 +1222,7 @@ async function sendPrompt(overridePayload = null) {
     selfImprovedLessons: [],
   };
   state.isRunning = true;
+  state.runningSessionId = runSessionId;
   state.runStartedAt = Date.now();
   state.runAbort = new AbortController();
   clearInterval(state.timerHandle);
@@ -1144,11 +1237,12 @@ async function sendPrompt(overridePayload = null) {
 
   $('#send-btn').textContent = 'Queue';
   $('#stop-btn').classList.remove('hidden');
+  renderSessionsList();
   renderMessages(true);
 
   try {
     await streamSse(
-      `/api/sessions/${encodeURIComponent(state.activeSession.id)}/run`,
+      `/api/sessions/${encodeURIComponent(runSessionId)}/run`,
       {
         message: text,
         attachments: attachPaths,
@@ -1208,11 +1302,13 @@ async function sendPrompt(overridePayload = null) {
             }
           }
         } else if (evt.type === 'context_stats') {
-          state.contextTokens = Number(evt.tokens) || 0;
-          updateContextMeter(state.contextTokens, evt.numCtx || state.config?.numCtx);
+          if (state.activeSession?.id === runSessionId) {
+            state.contextTokens = Number(evt.tokens) || 0;
+            updateContextMeter(state.contextTokens, evt.numCtx || state.config?.numCtx);
+          }
           return;
         } else if (evt.type === 'compacted') {
-          if (Number.isFinite(evt.tokensAfter)) {
+          if (state.activeSession?.id === runSessionId && Number.isFinite(evt.tokensAfter)) {
             state.contextTokens = evt.tokensAfter;
             updateContextMeter(state.contextTokens, state.config?.numCtx);
           }
@@ -1231,27 +1327,33 @@ async function sendPrompt(overridePayload = null) {
     clearInterval(state.timerHandle);
     state.timerHandle = null;
     state.isRunning = false;
+    state.runningSessionId = null;
     state.runAbort = null;
     state.liveAssistantMsg = null;
     $('#send-btn').textContent = 'Run';
     $('#stop-btn').classList.add('hidden');
 
-    if (state.activeSession?.id) {
+    if (state.activeSession?.id === runSessionId) {
       try {
-        const refreshed = await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}`);
-        state.activeSession = refreshed.session;
-        await loadSessions();
+        const refreshed = await apiRequest(`/api/sessions/${encodeURIComponent(runSessionId)}`);
+        if (state.activeSession?.id === runSessionId) {
+          state.activeSession = refreshed.session;
+        }
       } catch {
         // Keep current messages if reload fails
       }
+      state.contextTokens = estimateTokens(state.activeSession?.messages || []);
+      updateContextMeter(state.contextTokens, state.config?.numCtx);
+      renderMessages(false);
     }
-    state.contextTokens = estimateTokens(state.activeSession?.messages || []);
-    updateContextMeter(state.contextTokens, state.config?.numCtx);
-    renderMessages(false);
+    if (!state.sessionSearchQuery) {
+      await loadSessions().catch(() => {});
+    } else {
+      renderSessionsList();
+    }
 
-    if (state.queuedMessage) {
-      const nextPayload = state.queuedMessage;
-      state.queuedMessage = null;
+    if (state.queuedMessages.length > 0) {
+      const nextPayload = state.queuedMessages.shift();
       renderQueuedBar();
       sendPrompt(nextPayload);
     }
@@ -1263,7 +1365,7 @@ function renderModelPopover() {
   const pop = $('#model-popover');
   const ollamaModels = state.health?.ollama?.models || [];
   const currentProv = state.config?.provider || 'ollama';
-  const currentModel = state.config?.model || 'qwen3.5:9b';
+  const currentModel = state.config?.model || 'qwen3.5:4b';
 
   const localItems =
     ollamaModels.length > 0
@@ -1634,9 +1736,10 @@ function renderSettingsView() {
   $('#providers-list').querySelectorAll('.clear-prov-btn').forEach((b) => {
     b.addEventListener('click', async () => {
       const prov = b.dataset.prov;
+      const defaultLocal = state.health?.ollama?.models?.[0]?.name || 'qwen3.5:4b';
       const res = await apiRequest('/api/models/config', {
         method: 'POST',
-        body: JSON.stringify({ apiKeys: { [prov]: null }, provider: 'ollama', model: 'qwen3.5:9b' }),
+        body: JSON.stringify({ apiKeys: { [prov]: null }, provider: 'ollama', model: defaultLocal }),
       });
       state.config = res.config;
       state.configuredKeys = res.configuredKeys;
@@ -1790,15 +1893,23 @@ function exportActiveConversation() {
       if (tools.length > 0) lines.push(`*Tools used: ${tools.join(', ')}*`, '');
     }
   }
-  const blob = new Blob([`${lines.join('\n').trimEnd()}\n`], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${String(session.title || 'conversation')
+  const markdownContent = `${lines.join('\n').trimEnd()}\n`;
+  const filename = `${String(session.title || 'conversation')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 48) || 'conversation'}.md`;
+
+  if (hasSwiftBridge()) {
+    postSwiftAction('saveFile', { filename, content: markdownContent });
+    return;
+  }
+
+  const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -2146,6 +2257,23 @@ async function refreshHealth() {
   renderSidebarStatus();
   updateHeaderControls();
   if (state.view === 'settings') renderSettingsView();
+  else if (state.view === 'dashboard') renderDashboard();
+  else if (state.view === 'monitor') renderMonitor();
+}
+
+async function unloadOllamaMemory() {
+  try {
+    showToast('Unloading resident Ollama models…');
+    const res = await apiRequest('/api/models/ollama/unload', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    await Promise.all([refreshHealth(), refreshSystemMetrics()]);
+    const count = Array.isArray(res.unloaded) ? res.unloaded.length : 0;
+    showToast(count > 0 ? `Unloaded ${res.unloaded.join(', ')} (RAM freed)` : 'No Ollama models were loaded');
+  } catch (err) {
+    showToast(err.message || 'Could not unload Ollama models');
+  }
 }
 
 const PALETTE_ACTION_ITEMS = [
@@ -2163,6 +2291,7 @@ const PALETTE_ACTION_ITEMS = [
   { label: 'Create new skill', hint: 'Write a reusable SKILL.md', keywords: 'skills teach new', run: () => openSkillModal(null) },
   { label: 'New knowledge doc', hint: 'Save notes, preferences, or reference material', keywords: 'knowledge memory new', run: () => openKnowledgeModal(null) },
   { label: 'Create automation', hint: 'Save a workflow for one-click or scheduled runs', keywords: 'automation workflow schedule new', run: () => openAutomationModal() },
+  { label: 'Unload Ollama models (Free RAM)', hint: 'Evict resident local models from Apple Silicon GPU memory', keywords: 'ollama unload free ram memory swap', run: () => unloadOllamaMemory() },
   { label: 'Toggle Deep Think', hint: 'Slower, more deliberate reasoning', keywords: 'thinking model reasoning', run: () => $('#thinking-toggle').click() },
   { label: 'Toggle Safety mode', hint: 'Switch Ask / Auto command approval', keywords: 'safety approval auto', run: () => $('#safety-toggle').click() },
   { label: 'Compact conversation', hint: 'Summarize older turns to free context', keywords: 'context tokens compact summarize', run: () => $('#compact-btn').click() },
@@ -2358,10 +2487,10 @@ function wireEvents() {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
 
-  $$('.seg-btn').forEach((btn) => {
+  $$('.seg-btn[data-subtab]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.subtab = btn.dataset.subtab;
-      $$('.seg-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      $$('.seg-btn[data-subtab]').forEach((b) => b.classList.toggle('active', b === btn));
       $$('.subtab').forEach((t) => t.classList.toggle('active', t.id === `subtab-${state.subtab}`));
     });
   });
@@ -2408,6 +2537,41 @@ function wireEvents() {
     }
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
+  $('#dash-open-settings')?.addEventListener('click', () => switchView('settings'));
+  $('#dash-unload-ram-btn')?.addEventListener('click', unloadOllamaMemory);
+  $('#monitor-unload-btn')?.addEventListener('click', unloadOllamaMemory);
+  $('#dash-quick-ask-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const qInput = $('#dash-quick-ask-input');
+    const promptText = qInput?.value.trim() || '';
+    if (!promptText) return;
+    qInput.value = '';
+    await createNewTask();
+    await sendPrompt({ text: promptText, attachments: [] });
+  });
+
+  $$('.mon-sort-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.monitorProcessSort = btn.dataset.sort === 'memory' ? 'memory' : 'cpu';
+      $$('.mon-sort-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      renderMonitor();
+    });
+  });
+
+  const setScheduleFormMode = (mode) => {
+    state.scheduleFormMode = mode === 'once' ? 'once' : 'weekly';
+    $$('.sched-mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.scheduleFormMode));
+    $('#sched-days-fieldset')?.classList.toggle('hidden', state.scheduleFormMode === 'once');
+    $('#sched-date-field')?.classList.toggle('hidden', state.scheduleFormMode !== 'once');
+    const dateInput = $('#sched-date');
+    if (state.scheduleFormMode === 'once' && dateInput && !dateInput.value) {
+      const d = new Date();
+      dateInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  };
+  $$('.sched-mode-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setScheduleFormMode(btn.dataset.mode));
+  });
 
   $('#agenda-save-btn')?.addEventListener('click', async () => {
     try {
@@ -2431,20 +2595,31 @@ function wireEvents() {
     const time = $('#sched-time').value;
     const durationMin = Number($('#sched-duration').value) || 30;
     const notes = $('#sched-notes').value.trim();
-    const days = $$('input[name="sched-day"]:checked').map((el) => Number(el.value));
     if (!title || !time) {
       showToast('Enter a title and a start time.');
       return;
     }
-    if (days.length === 0) {
-      showToast('Pick at least one weekday.');
-      return;
+    let payload;
+    if (state.scheduleFormMode === 'once') {
+      const date = $('#sched-date')?.value || '';
+      if (!date) {
+        showToast('Pick a date for this one-off entry.');
+        return;
+      }
+      payload = { title, time, date, durationMin, notes };
+    } else {
+      const days = $$('input[name="sched-day"]:checked').map((el) => Number(el.value));
+      if (days.length === 0) {
+        showToast('Pick at least one weekday.');
+        return;
+      }
+      payload = { title, time, days, durationMin, notes };
     }
     try {
       await apiRequest('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, time, days, durationMin, notes }),
+        body: JSON.stringify(payload),
       });
       $('#sched-title').value = '';
       $('#sched-notes').value = '';
@@ -2527,6 +2702,7 @@ function wireEvents() {
 
   $('#new-task-btn').addEventListener('click', createNewTask);
   $('#sidebar-toggle').addEventListener('click', toggleSidebar);
+  $('#sidebar-expand-fab')?.addEventListener('click', toggleSidebar);
   let sessionSearchTimer = null;
   $('#session-search').addEventListener('input', (e) => {
     const query = e.target.value.trim();
@@ -2609,25 +2785,29 @@ function wireEvents() {
   $('#send-btn').addEventListener('click', () => sendPrompt());
   $('#stop-btn').addEventListener('click', async () => {
     state.runAbort?.abort();
-    if (state.activeSession) {
-      await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/cancel`, { method: 'POST' }).catch(() => {});
+    const targetId = state.runningSessionId || state.activeSession?.id;
+    if (targetId) {
+      await apiRequest(`/api/sessions/${encodeURIComponent(targetId)}/cancel`, { method: 'POST' }).catch(() => {});
     }
   });
   $('#queued-now-btn').addEventListener('click', async () => {
-    if (!state.queuedMessage) return;
+    if (!state.queuedMessages || state.queuedMessages.length === 0) return;
     state.runAbort?.abort();
-    if (state.activeSession) {
-      await apiRequest(`/api/sessions/${encodeURIComponent(state.activeSession.id)}/cancel`, { method: 'POST' }).catch(() => {});
+    const targetId = state.runningSessionId || state.activeSession?.id;
+    if (targetId) {
+      await apiRequest(`/api/sessions/${encodeURIComponent(targetId)}/cancel`, { method: 'POST' }).catch(() => {});
     }
   });
   $('#queued-cancel-btn').addEventListener('click', () => {
-    state.queuedMessage = null;
+    state.queuedMessages = [];
     renderQueuedBar();
   });
 
   $$('.quick-card').forEach((card) => {
     card.addEventListener('click', () => {
       promptInput.value = card.dataset.prompt || '';
+      promptInput.style.height = 'auto';
+      promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;
       promptInput.focus();
     });
   });
@@ -2710,6 +2890,8 @@ function wireEvents() {
       showToast(err.message);
     }
   });
+
+  $('#unload-ollama-btn')?.addEventListener('click', unloadOllamaMemory);
 
   const doPull = async (modelName) => {
     const tag = modelName.trim();
@@ -2844,7 +3026,9 @@ function wireEvents() {
   });
 
   window.addEventListener('focus', () => {
-    loadSessions().catch(() => {});
+    if (!state.sessionSearchQuery) {
+      loadSessions().catch(() => {});
+    }
   });
 }
 

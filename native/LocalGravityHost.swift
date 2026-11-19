@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var window: NSWindow!
     private var webView: GravityWebView!
     private var serverProcess: Process?
+    private var serverStdinPipe: Pipe?
     private var authToken: String = ""
     private var serverPort: Int = 0
     private var stdoutBuffer = ""
@@ -111,11 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.center()
         window.title = "LocalGravity"
         window.minSize = NSSize(width: 920, height: 600)
+        window.backgroundColor = NSColor(srgbRed: 0.071, green: 0.082, blue: 0.106, alpha: 1.0)
+        window.isReleasedWhenClosed = false
 
         webView = GravityWebView(frame: rect, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
+        webView.setValue(false, forKey: "drawsBackground")
         webView.onFilesDropped = { [weak self] paths in
             self?.sendFilesToJS(paths)
         }
@@ -167,14 +171,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         var env = ProcessInfo.processInfo.environment
         env["AUTH_TOKEN"] = authToken
         env["PORT"] = "0"
+        env["LOCALGRAVITY_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         let basePath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:\(basePath)"
         proc.environment = env
 
+        let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
+        proc.standardInput = stdinPipe
         proc.standardOutput = stdoutPipe
         proc.standardError = stderrPipe
+        serverStdinPipe = stdinPipe
 
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -231,6 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     private func stopBackendServer() {
+        serverStdinPipe?.fileHandleForWriting.closeFile()
+        serverStdinPipe = nil
         guard let proc = serverProcess, proc.isRunning else { return }
         proc.terminate()
         let deadline = Date().addingTimeInterval(1.5)
@@ -272,6 +282,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             }
         } else if type == "openExternal", let urlStr = body["url"] as? String, let url = URL(string: urlStr) {
             NSWorkspace.shared.open(url)
+        } else if type == "saveFile", let content = body["content"] as? String {
+            let suggestedName = (body["filename"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = (suggestedName?.isEmpty == false ? suggestedName! : "conversation.md")
+            panel.canCreateDirectories = true
+            panel.beginSheetModal(for: window) { [weak self] response in
+                if response == .OK, let destUrl = panel.url {
+                    do {
+                        try content.write(to: destUrl, atomically: true, encoding: .utf8)
+                        if let data = try? JSONSerialization.data(withJSONObject: destUrl.path),
+                           let json = String(data: data, encoding: .utf8) {
+                            self?.webView.evaluateJavaScript("window.__lgFileSaved && window.__lgFileSaved(\(json));")
+                        }
+                    } catch {
+                        // Best-effort save error handling
+                    }
+                }
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { getRuntimePaths, getStarterSkillsDir } from './state/paths.mjs';
 
 const SKILL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -468,26 +469,13 @@ export async function importExternalSkills(sourceDir, names, paths = getRuntimeP
   return imported;
 }
 
-const PRIVATE_HOST_RE = /^(?:localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/i;
-
 /**
  * Accept a raw SKILL.md URL or a github.com blob link and return a raw fetchable URL.
  */
 export function normalizeSkillUrl(rawUrl) {
   const text = String(rawUrl || '').trim();
   if (!text) throw new Error('A skill URL is required.');
-  let parsed;
-  try {
-    parsed = new URL(text);
-  } catch {
-    throw new Error(`Invalid URL: ${text}`);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('Only http:// and https:// skill URLs are supported.');
-  }
-  if (PRIVATE_HOST_RE.test(parsed.hostname) || parsed.hostname.endsWith('.local')) {
-    throw new Error('Refusing to fetch skills from local or private network hosts.');
-  }
+  const parsed = assertPublicHttpUrl(text, 'skill URL');
 
   const githubMatch = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/(?:blob|raw)\/([^/]+)\/(.+)$/);
   if (parsed.hostname === 'github.com' && githubMatch) {
@@ -516,7 +504,7 @@ export function slugifySkillName(name) {
  */
 export async function importSkillFromUrl(rawUrl, { fetchFn = globalThis.fetch, paths = getRuntimePaths() } = {}) {
   const url = normalizeSkillUrl(rawUrl);
-  const response = await fetchFn(url, { signal: AbortSignal.timeout(15000) });
+  const response = await safePublicFetch(url, { fetchFn, timeoutMs: 15000 });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} fetching ${url}`);
   }

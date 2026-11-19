@@ -13,14 +13,21 @@ export function buildSystemPrompt({
   safetyMode = 'ask',
   isHeadless = false,
   allowAutoRun = false,
+  compact = false,
   cwd,
 }) {
   const skillLines =
     skills.length > 0
       ? skills
           .map((s) => {
+            const slug = s.slug || s.name;
+            if (compact) {
+              const rawDesc = String(s.description || '').replace(/\s+/g, ' ').trim();
+              const shortDesc = rawDesc.length > 68 ? `${rawDesc.slice(0, 65).trimEnd()}...` : rawDesc;
+              return `- ${slug}: ${shortDesc}`;
+            }
             const triggers = Array.isArray(s.triggers) ? s.triggers.slice(0, 6).join(', ') : '';
-            return `- ${s.slug || s.name}: ${s.description}${triggers ? ` (triggers: ${triggers})` : ''}`;
+            return `- ${slug}: ${s.description}${triggers ? ` (triggers: ${triggers})` : ''}`;
           })
           .join('\n')
       : '- (none installed)';
@@ -35,8 +42,8 @@ export function buildSystemPrompt({
       ? knowledgeDocs.map((d) => `- ${d.name}: ${d.title}`).join('\n')
       : '- (no knowledge documents yet)';
 
-  const trimmedMemory = String(memoryContent || '').trim().slice(0, 1200);
-  const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, 1000);
+  const trimmedMemory = String(memoryContent || '').trim().slice(0, compact ? 600 : 1200);
+  const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, compact ? 500 : 1000);
   const modeLine = isHeadless
     ? allowAutoRun
       ? 'Mode: Scheduled background Auto-Run (catastrophic commands permanently blocked).'
@@ -44,6 +51,31 @@ export function buildSystemPrompt({
     : safetyMode === 'auto'
       ? 'Mode: Interactive Auto-Run (catastrophic commands permanently blocked).'
       : 'Mode: Interactive Ask-before-risky (mutating commands and external file edits prompt user approval).';
+
+  if (compact) {
+    return [
+      `You are LocalGravity, a fast autonomous macOS agent (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}). ${modeLine}`,
+      '',
+      '## Rules',
+      '1. Act directly with tools—do not call `list_skills`/`list_knowledge` unless you modified them. Read a skill (`read_skill(name)`) only when it clearly matches.',
+      '2. You CAN self-install skills (`save_skill` with optional `extra_files`), save knowledge (`save_knowledge`), install CLI tools (`run_command`), and edit files directly.',
+      repoPath
+        ? `3. Self-upgrade LocalGravity at \`${repoPath}\` via \`read_skill("self-upgrade")\`, then verify \`npm test\` and \`npm run build:app\`.`
+        : '',
+      '4. Never repeat a failing call identically—diagnose from `[Self-Healing Hint]`, pivot, and verify edits with real commands/tests.',
+      '5. For 2+ step tasks, publish progress with `update_plan`. Use `system_stats` for Mac health and schedule tools for timetable changes. Always end with a clear, direct answer.',
+      '',
+      '## Skills (call read_skill(name) when needed)',
+      skillLines,
+      suggestedLines ? `\n## Most Relevant Skills For This Turn\n${suggestedLines}` : '',
+      `\n## Knowledge Docs\n${knowledgeLines}`,
+      trimmedFixes ? `\n## Learned Fixes\n${trimmedFixes}` : '',
+      trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+    ]
+      .filter((line) => line !== '' && line !== undefined)
+      .join('\n')
+      .trim();
+  }
 
   return [
     `You are LocalGravity, a smart autonomous macOS agent running on Apple Silicon (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}).`,

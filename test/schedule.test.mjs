@@ -39,6 +39,8 @@ test('one-off entries carry a single date and skip weekday rules', () => {
   assert.deepEqual(oneOff.entry.days, []);
 
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '2024-13-99' }).ok, false);
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '2026-02-31' }).ok, false);
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '2026-04-31' }).ok, false);
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '15:00', date: '03-01-2024' }).ok, false);
 });
 
