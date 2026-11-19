@@ -5,6 +5,13 @@ import { compactToolDefinitions, selectToolsForTurn } from '../backend/agent/too
 import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { compactConversation, estimateToolsTokens } from '../backend/agent/compactor.mjs';
 
+test('compact local-agent prompts prefer the shortest complete response unless detail is requested', () => {
+  const prompt = buildSystemPrompt({ compact: true });
+  assert.match(prompt, /shortest complete answer/i);
+  assert.match(prompt, /expand only when the user asks for detail/i);
+  assert.match(prompt, /include every requested point/i);
+});
+
 test('selectToolsForTurn keeps general local conversation tool-free and adds only task-relevant tools', () => {
   const general = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',

@@ -79,6 +79,7 @@ export function buildSystemPrompt({
         : '',
       '4. Never repeat a failing call identically—diagnose from `[Self-Healing Hint]`, pivot, and verify edits with real commands/tests.',
       '5. For 2+ step tasks, publish progress with `update_plan`. Use `system_stats` for Mac health and schedule tools for timetable changes. Always end with a clear, direct answer.',
+      '6. For ordinary conversational questions, give the shortest complete answer; expand only when the user asks for detail, and include every requested point.',
       '',
       '## Skills (call read_skill(name) when needed)',
       skillLines,
