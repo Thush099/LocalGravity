@@ -172,6 +172,8 @@ const HUMAN_TOOL_META = {
   save_knowledge: { label: 'Save Knowledge', summarize: (a) => a.name || '' },
 };
 
+let warmupRequestedModel = '';
+
 const state = {
   view: 'dashboard',
   themeMode: 'auto',
@@ -3209,6 +3211,7 @@ async function unloadOllamaMemory() {
     });
     await Promise.all([refreshHealth(), refreshSystemMetrics()]);
     const count = Array.isArray(res.unloaded) ? res.unloaded.length : 0;
+    if (count > 0) warmupRequestedModel = '';
     showToast(count > 0 ? `Unloaded ${res.unloaded.join(', ')} (RAM freed)` : 'No Ollama models were loaded');
   } catch (err) {
     showToast(err.message || 'Could not unload Ollama models');
@@ -3889,6 +3892,12 @@ function wireEvents() {
   });
 
   const promptInput = $('#prompt-input');
+  promptInput.addEventListener('focus', () => {
+    const model = state.config?.model;
+    if (state.config?.provider !== 'ollama' || !model || warmupRequestedModel === model) return;
+    warmupRequestedModel = model;
+    apiRequest('/api/models/ollama/warm', { method: 'POST', body: '{}' }).catch(() => {});
+  });
   promptInput.addEventListener('input', () => {
     promptInput.style.height = 'auto';
     promptInput.style.height = `${Math.min(promptInput.scrollHeight, 180)}px`;

@@ -6,6 +6,7 @@ import {
   listRunningOllamaModels,
   selectBestInstalledOllamaModel,
   streamOllamaChat,
+  warmOllamaModel,
   unloadOllamaModels,
 } from '../backend/providers/ollama.mjs';
 import { CLOUD_PRESETS, streamOpenAIChat } from '../backend/providers/openai-compat.mjs';
@@ -255,6 +256,51 @@ test('streamOllamaChat auto-recovers missing model tag and retries cleanly when 
     assert.equal(attempts, 3);
     assert.equal(res.resolvedModel, 'qwen3.5:9b');
     assert.equal(res.content, 'Retried ok!');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('warmOllamaModel loads only installed models and skips models already resident', async () => {
+  const origFetch = globalThis.fetch;
+  const requests = [];
+  let installed = true;
+  let resident = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const endpoint = new URL(String(url));
+    requests.push({ path: endpoint.pathname, body: init.body ? JSON.parse(init.body) : null });
+    if (endpoint.pathname === '/api/tags') {
+      return new Response(JSON.stringify({ models: installed ? [{ name: 'qwen3.5:9b' }] : [] }), { status: 200 });
+    }
+    if (endpoint.pathname === '/api/ps') {
+      return new Response(JSON.stringify({ models: resident ? [{ name: 'qwen3.5:9b' }] : [] }), { status: 200 });
+    }
+    if (endpoint.pathname === '/api/generate') {
+      return new Response(JSON.stringify({ done: true }), { status: 200 });
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  try {
+    const loaded = await warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local', numCtx: 8192 });
+    assert.equal(loaded.status, 'loaded');
+    assert.deepEqual(requests.at(-1), {
+      path: '/api/generate',
+      body: { model: 'qwen3.5:9b', prompt: '', stream: false, keep_alive: '15m', options: { num_ctx: 8192 } },
+    });
+
+    requests.length = 0;
+    resident = true;
+    const alreadyLoaded = await warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local' });
+    assert.equal(alreadyLoaded.status, 'already_loaded');
+    assert.ok(!requests.some((request) => request.path === '/api/generate'));
+
+    requests.length = 0;
+    resident = false;
+    installed = false;
+    const missing = await warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local' });
+    assert.equal(missing.status, 'not_installed');
+    assert.ok(!requests.some((request) => request.path === '/api/generate'));
   } finally {
     globalThis.fetch = origFetch;
   }

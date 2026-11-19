@@ -7,6 +7,108 @@ import { getRuntimePaths } from '../backend/state/paths.mjs';
 import { buildLaunchAgentPlist } from '../backend/automations.mjs';
 import { createAgentServer } from '../backend/server.mjs';
 
+test('model warm-up endpoint schedules only the configured Ollama model and coalesces concurrent requests', async () => {
+  const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-model-warmup-'));
+  const paths = getRuntimePaths(tmpHome);
+  const authToken = 'warmup-test-token';
+  let resolveWarm;
+  let warmCall;
+  let warmSignal;
+  let ensureCalls = 0;
+  const runCalls = [];
+  const warmModelFn = (model, options) => {
+    warmSignal = options.signal;
+    warmCall = { model, options: { numCtx: options.numCtx } };
+    return new Promise((resolve) => {
+      resolveWarm = resolve;
+      options.signal.addEventListener('abort', () => resolve({ status: 'aborted' }), { once: true });
+    });
+  };
+  const srv = createAgentServer({
+    authToken,
+    paths,
+    agendaNotifications: false,
+    warmModelFn,
+    ensureOllamaFn: async () => {
+      ensureCalls++;
+    },
+    runAgentTurnFn: async ({ userMessage }) => {
+      runCalls.push(userMessage);
+    },
+    unloadModelsFn: async () => ({ unloaded: ['qwen3.5:9b'] }),
+  });
+  try {
+    const { port } = await srv.start();
+    const base = `http://127.0.0.1:${port}`;
+    await fs.mkdir(paths.root, { recursive: true });
+    await fs.writeFile(
+      paths.configFile,
+      JSON.stringify({ provider: 'ollama', model: 'qwen3.5:9b', numCtx: 4096 }),
+      'utf8'
+    );
+    const request = () =>
+      fetch(`${base}/api/models/ollama/warm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+        body: '{}',
+      });
+
+    const first = await request();
+    const concurrent = await request();
+    assert.equal(first.status, 202);
+    assert.equal(concurrent.status, 202);
+    assert.deepEqual(warmCall, { model: 'qwen3.5:9b', options: { numCtx: 4096 } });
+    assert.equal(ensureCalls, 1);
+
+    const chat = fetch(`${base}/api/sessions/warmup-chat/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: JSON.stringify({ message: 'quick message' }),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(runCalls, []);
+
+    resolveWarm({ status: 'loaded' });
+    const chatResponse = await chat;
+    assert.equal(chatResponse.status, 200);
+    assert.deepEqual(runCalls, ['quick message']);
+
+    await fs.writeFile(
+      paths.configFile,
+      JSON.stringify({ provider: 'openai', model: 'gpt-4.1' }),
+      'utf8'
+    );
+    const cloud = await request();
+    assert.equal(cloud.status, 200);
+    assert.equal((await cloud.json()).status, 'skipped');
+    assert.equal(ensureCalls, 1);
+
+    await fs.writeFile(
+      paths.configFile,
+      JSON.stringify({ provider: 'ollama', model: 'qwen3.5:9b', numCtx: 4096 }),
+      'utf8'
+    );
+    const pendingWarm = await request();
+    assert.equal(pendingWarm.status, 202);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(warmSignal.aborted, false);
+
+    const unload = fetch(`${base}/api/models/ollama/unload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+      body: '{}',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(warmSignal.aborted, true);
+    assert.deepEqual(runCalls, ['quick message']);
+    resolveWarm({ status: 'loaded' });
+    assert.equal((await unload).status, 200);
+  } finally {
+    await srv.stop();
+    await fs.rm(tmpHome, { recursive: true, force: true });
+  }
+});
+
 test('server API enforces X-Auth-Token, masks API keys, and manages sessions, skills, knowledge, and automations', async () => {
   const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-api-'));
   const paths = getRuntimePaths(tmpHome);

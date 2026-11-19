@@ -181,6 +181,35 @@ export async function listRunningOllamaModels(baseUrl = DEFAULT_OLLAMA_URL) {
 /**
  * Unload one or all resident Ollama models (`keep_alive: 0`) to immediately reclaim Apple Silicon RAM.
  */
+export async function warmOllamaModel(model, { baseUrl = DEFAULT_OLLAMA_URL, numCtx = 8192, signal } = {}) {
+  const name = String(model || '').trim();
+  if (!name) return { status: 'invalid_model' };
+
+  const health = await checkOllamaHealth(baseUrl);
+  if (!health.running) return { status: 'unavailable' };
+  if (!health.models.some((installed) => installed.name === name)) return { status: 'not_installed' };
+  if (health.runningModels.some((running) => running.name === name)) return { status: 'already_loaded' };
+
+  const res = await fetch(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: name,
+      prompt: '',
+      stream: false,
+      keep_alive: '15m',
+      options: { num_ctx: Number(numCtx) || 8192 },
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Ollama model warm-up failed (${res.status}): ${errText}`);
+  }
+  await res.arrayBuffer();
+  return { status: 'loaded' };
+}
+
 export async function unloadOllamaModels(baseUrl = DEFAULT_OLLAMA_URL, modelName = '') {
   const targets = modelName
     ? [modelName]

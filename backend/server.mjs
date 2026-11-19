@@ -31,6 +31,7 @@ import {
   pullOllamaModel,
   selectBestInstalledOllamaModel,
   unloadOllamaModels,
+  warmOllamaModel,
 } from './providers/ollama.mjs';
 import { CLOUD_PRESETS } from './providers/openai-compat.mjs';
 import { importSkillsFromSource, listSkillSources } from './skill-sources.mjs';
@@ -328,9 +329,15 @@ export function createAgentServer({
   fetchFn = globalThis.fetch,
   skillHomeDir = os.homedir(),
   agendaNotifications = false,
+  ensureOllamaFn = ensureOllamaRunning,
+  warmModelFn = warmOllamaModel,
+  unloadModelsFn = unloadOllamaModels,
+  runAgentTurnFn = runAgentTurn,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
+  const modelWarmups = new Map();
+  const modelWarmupControllers = new Map();
   let cachedMetrics = null;
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
@@ -837,7 +844,10 @@ export function createAgentServer({
               ...(body.customBaseUrl ? { customBaseUrl: body.customBaseUrl } : {}),
             };
 
-            await runAgentTurn({
+            if (effectiveConfig.provider === 'ollama') {
+              await modelWarmups.get(effectiveConfig.model);
+            }
+            await runAgentTurnFn({
               session,
               userMessage: body.message || '',
               attachments: Array.isArray(body.attachments) ? body.attachments : [],
@@ -1143,9 +1153,41 @@ export function createAgentServer({
         return sendJson(res, 200, { ok: true, ollama });
       }
 
+      if (req.method === 'POST' && pathname === '/api/models/ollama/warm') {
+        const cfg = await loadConfig(paths);
+        if (cfg.provider !== 'ollama' || !cfg.model) {
+          return sendJson(res, 200, { ok: true, status: 'skipped' });
+        }
+        if (!modelWarmups.has(cfg.model)) {
+          const controller = new AbortController();
+          let warmup;
+          warmup = Promise.resolve()
+            .then(() => ensureOllamaFn())
+            .then(() => warmModelFn(cfg.model, { numCtx: cfg.numCtx, signal: controller.signal }))
+            .catch(() => {})
+            .finally(() => {
+              if (modelWarmups.get(cfg.model) === warmup) {
+                modelWarmups.delete(cfg.model);
+                modelWarmupControllers.delete(cfg.model);
+              }
+            });
+          modelWarmups.set(cfg.model, warmup);
+          modelWarmupControllers.set(cfg.model, controller);
+        }
+        return sendJson(res, 202, { ok: true, status: 'warming', model: cfg.model });
+      }
+
       if (req.method === 'POST' && pathname === '/api/models/ollama/unload') {
         const body = await readJsonBody(req);
-        const result = await unloadOllamaModels(undefined, typeof body.model === 'string' ? body.model.trim() : '');
+        const model = typeof body.model === 'string' ? body.model.trim() : '';
+        const pendingModels = model ? [model] : [...modelWarmups.keys()];
+        await Promise.all(
+          pendingModels.map(async (name) => {
+            modelWarmupControllers.get(name)?.abort();
+            await modelWarmups.get(name);
+          })
+        );
+        const result = await unloadModelsFn(undefined, model);
         const ollama = await checkOllamaHealth();
         return sendJson(res, 200, { ok: true, ...result, ollama });
       }
