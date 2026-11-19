@@ -2649,6 +2649,196 @@ button, input, textarea, select {
   }
 }
 
+@media (max-width: 600px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100dvh;
+  }
+
+  .sidebar {
+    min-inline-size: 0;
+    padding: 8px 10px;
+    gap: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .brand-row {
+    padding: 0 2px;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+
+  .brand-mark svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .brand-name {
+    font-size: 13px;
+  }
+
+  .brand-sub {
+    font-size: 10px;
+  }
+
+  .primary-action-btn {
+    width: auto;
+    align-self: flex-start;
+    padding: 5px 9px;
+    font-size: 12px;
+  }
+
+  .main-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 5px;
+    margin-inline: -10px;
+    padding-inline: 10px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .main-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-btn {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 7px 10px;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .sessions-section,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .workspace {
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+  }
+
+  .view {
+    min-height: 0;
+  }
+
+  .view-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .dash-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .dash-clock {
+    font-size: clamp(28px, 9vw, 36px);
+  }
+
+  .dash-greeting-block {
+    max-width: none;
+    margin-left: 0;
+    padding-left: 0;
+    text-align: left;
+  }
+
+  #dash-stats,
+  #monitor-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .stat-tile {
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .stat-value {
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+
+  .dash-columns,
+  .monitor-grid,
+  .schedule-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 0 12px 12px;
+  }
+
+  .schedule-week {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .week-day {
+    min-width: 0;
+  }
+
+  .toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .data-table th,
+  .data-table td {
+    white-space: nowrap;
+  }
+
+  .settings-section,
+  .settings-section > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .field-inline {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .runtime-controls > label.field-inline {
+    flex: 1 1 100%;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .runtime-controls > label.field-inline .select-input {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .settings-section pre,
+  .settings-section code {
+    overflow-wrap: anywhere;
+  }
+
+  .settings-scroll {
+    padding: 12px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .usage-bar > span {
     transition: none;

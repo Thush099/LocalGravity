@@ -89,6 +89,22 @@ test('runAgendaTick announces once and dedupes across ticks', async () => {
   assert.equal(calls, 2);
 });
 
+test('runAgendaTick retries when the notifier resolves with an error result', async () => {
+  const paths = tempPaths();
+  await saveSchedule([recurringEntry], paths);
+  let attempts = 0;
+  const notify = async () => {
+    attempts += 1;
+    return attempts === 1
+      ? { ok: false, output: 'Notification failed: permission denied' }
+      : { ok: true, output: 'Notification shown' };
+  };
+
+  assert.equal((await runAgendaTick({ paths, now: mondayMorning, notify })).length, 0);
+  assert.equal((await runAgendaTick({ paths, now: mondayMorning, notify })).length, 1);
+  assert.equal(attempts, 2);
+});
+
 test('runAgendaTick honors agenda settings from the app config', async () => {
   // Disabled: a due entry stays silent.
   const off = tempPaths();

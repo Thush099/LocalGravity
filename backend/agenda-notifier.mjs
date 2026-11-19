@@ -79,7 +79,8 @@ export async function runAgendaTick({ paths, now = new Date(), leadMinutes, noti
   const fired = [];
   for (const item of due) {
     try {
-      await notify({ title: 'LocalGravity agenda', message: announcementFor(item.entry, item.minutesUntil) });
+      const result = await notify({ title: 'LocalGravity agenda', message: announcementFor(item.entry, item.minutesUntil) });
+      if (result?.ok === false) continue;
       notified[item.key] = now.toISOString();
       fired.push(item.key);
     } catch {
