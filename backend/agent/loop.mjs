@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { ensureKnowledgeSeeded, listKnowledge, readKnowledge } from '../knowledge-engine.mjs';
 import { streamAnthropicChat } from '../providers/anthropic.mjs';
@@ -20,6 +21,8 @@ import {
 } from './self-improver.mjs';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.heic', '.gif', '.tiff', '.bmp']);
+const DIRECT_DIRECTORY_LIST_RE =
+  /\bwhat(?:'s| is) in (?:this|the current|my) (?:folder|directory)(?=\s*(?:[?.!]|$)|\s+(?:just|only|please|show|list|tell)\b)|\bwhat files (?:are )?here\b|\b(?:list|show)(?: me)? (?:the )?(?:top[- ]level )?(?:entries|files|folders|contents) (?:in|of|inside) (?:this|the current|my) (?:folder|directory)(?=\s*(?:[?.!]|$))|\b(?:list|show)(?: me)? (?:the )?(?:top[- ]level )?(?:entries|files|folders|contents) here\b/i;
 const seededRoots = new Set();
 
 function resolveProviderChatFn(providerConfig = {}) {
@@ -187,10 +190,50 @@ export async function runAgentTurn({
     if (persistSession) await saveSession(session, paths);
   }
 
+  const provider = providerConfig.provider || 'ollama';
+  if (
+    provider === 'ollama' &&
+    attachments.length === 0 &&
+    DIRECT_DIRECTORY_LIST_RE.test(fullUserText)
+  ) {
+    const toolCallId = `direct_list_${Date.now().toString(36)}`;
+    const args = { path: cwd || os.homedir(), recursive: false, max_entries: 50 };
+    onEvent?.({ type: 'tool_call', toolCallId, name: 'list_dir', arguments: args });
+    const result = await executeToolCall({ name: 'list_dir', args }, { paths, cwd });
+    onEvent?.({ type: 'tool_result', toolCallId, name: 'list_dir', ok: result.ok, output: result.output });
+
+    const directoryName = path.basename(args.path) || args.path;
+    const entries = result.ok
+      ? String(result.output || '')
+          .split(/\r?\n/)
+          .slice(1)
+          .map((line) =>
+            line
+              .replace(/^\[(?:DIR|FILE)\]\s*/, '')
+              .replace(/\s+\(\d+(?:\.\d+)?\s(?:B|KB|MB|GB)\)$/, '')
+          )
+          .filter(Boolean)
+      : [];
+    const content = !result.ok
+      ? `Could not list ${directoryName}: ${result.output || 'directory access failed.'}`
+      : entries.length
+        ? `Top-level entries in ${directoryName}:\n${entries.map((entry) => `- ${entry}`).join('\n')}`
+        : `The ${directoryName} folder is empty.`;
+    const usage = {
+      durationMs: Math.max(1, Date.now() - turnStartedAt),
+      model: providerConfig.model || '',
+    };
+    session.messages.push({ role: 'assistant', content, usage, createdAt: new Date().toISOString() });
+    session.updatedAt = new Date().toISOString();
+    if (persistSession) await saveSession(session, paths);
+    onEvent?.({ type: 'text_delta', text: content });
+    onEvent?.({ type: 'done', status: 'completed', usage });
+    return { session, status: 'completed' };
+  }
+
   const activeChatFn = chatFn || resolveProviderChatFn(providerConfig);
   const safetyMode = providerConfig.safetyMode || 'ask';
   const numCtx = Number(providerConfig.numCtx) || 8192;
-  const provider = providerConfig.provider || 'ollama';
   const tracker = new TurnStruggleTracker();
   const executedToolResults = [];
   let emptyOutputRetried = false;

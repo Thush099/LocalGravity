@@ -38,6 +38,104 @@ test('buildSystemPrompt includes skills, knowledge index, learned fixes, and MEM
   assert.match(prompt, /npm test/i);
 });
 
+test('runAgentTurn fulfills a simple current-folder listing without a model round-trip', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-direct-list-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  await fs.mkdir(path.join(tmpRoot, 'notes'));
+  await fs.writeFile(path.join(tmpRoot, 'README.md'), '# test');
+
+  let chatCalls = 0;
+  const events = [];
+  const session = { id: 'direct-list', title: 'Direct listing', messages: [] };
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'What is in this folder? Just tell me the top-level entries.',
+    paths,
+    cwd: tmpRoot,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:9b', safetyMode: 'auto' },
+    persistSession: false,
+    chatFn: async () => {
+      chatCalls++;
+      throw new Error('A direct directory listing should not call the model');
+    },
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(chatCalls, 0);
+  const response = result.session.messages.at(-1);
+  assert.equal(response.role, 'assistant');
+  assert.match(response.content, /README\.md/);
+  assert.match(response.content, /notes\//);
+  assert.doesNotMatch(response.content, new RegExp(tmpRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(response.content, /\d+(?:\.\d+)?\s(?:B|KB|MB|GB)\b/);
+  assert.ok(events.some((event) => event.type === 'tool_result' && event.name === 'list_dir' && event.ok));
+  assert.ok(events.some((event) => event.type === 'done' && event.status === 'completed'));
+});
+
+test('runAgentTurn shortcuts only explicit current-folder listing phrasing', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-list-phrases-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const directPhrases = [
+    'What files are here?',
+    'List the top-level entries here.',
+    'Show me the files in this folder.',
+  ];
+
+  for (const [index, userMessage] of directPhrases.entries()) {
+    let chatCalls = 0;
+    const result = await runAgentTurn({
+      session: { id: `direct-phrase-${index}`, title: 'Direct listing', messages: [] },
+      userMessage,
+      paths,
+      cwd: tmpRoot,
+      providerConfig: { provider: 'ollama', model: 'qwen3.5:9b', safetyMode: 'auto' },
+      persistSession: false,
+      chatFn: async () => {
+        chatCalls++;
+        throw new Error('Explicit current-folder listings should not call the model');
+      },
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(chatCalls, 0, userMessage);
+  }
+});
+
+test('runAgentTurn does not shortcut recursive, named-folder, or cloud listing requests', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-list-scope-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const cases = [
+    { provider: 'ollama', userMessage: 'List the contents recursively in this folder' },
+    { provider: 'ollama', userMessage: 'What is in this folder named archive?' },
+    { provider: 'ollama', userMessage: 'What\'s happening here?' },
+    { provider: 'anthropic', userMessage: 'What is in this folder?' },
+  ];
+
+  for (const [index, testCase] of cases.entries()) {
+    let chatCalls = 0;
+    const result = await runAgentTurn({
+      session: { id: `scoped-list-${index}`, title: 'Scoped listing', messages: [] },
+      userMessage: testCase.userMessage,
+      paths,
+      cwd: tmpRoot,
+      providerConfig: { provider: testCase.provider, model: 'test-model', safetyMode: 'auto' },
+      persistSession: false,
+      chatFn: async () => {
+        chatCalls++;
+        return { content: 'Handled by the regular agent path.', toolCalls: [] };
+      },
+    });
+
+    assert.equal(result.status, 'completed');
+    assert.equal(chatCalls, 1, `${testCase.provider}: ${testCase.userMessage} should use the regular agent path`);
+    assert.match(result.session.messages.at(-1).content, /regular agent path/);
+  }
+});
+
 test('normalizeToolCall repairs tool name and parameter aliases automatically', () => {
   const norm1 = normalizeToolCall({
     id: 'c1',
