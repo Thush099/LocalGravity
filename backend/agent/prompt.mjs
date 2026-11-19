@@ -34,9 +34,9 @@ export function buildSystemPrompt({
           .map((s) => {
             const slug = s.slug || s.name;
             if (compact) {
-              const rawDesc = String(s.description || '').replace(/\s+/g, ' ').trim();
-              const shortDesc = rawDesc.length > 68 ? `${rawDesc.slice(0, 65).trimEnd()}...` : rawDesc;
-              return `- ${slug}: ${shortDesc}`;
+              // Local models pay for every catalog token at prefill time; list names only and
+              // keep full descriptions for the turn's suggested skills below.
+              return `- ${slug}`;
             }
             const triggers = Array.isArray(s.triggers) ? s.triggers.slice(0, 6).join(', ') : '';
             return `- ${slug}: ${s.description}${triggers ? ` (triggers: ${triggers})` : ''}`;

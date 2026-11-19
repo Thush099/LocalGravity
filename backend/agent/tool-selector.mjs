@@ -1,9 +1,36 @@
 const MEDIA_EXT_RE = /\.(?:png|jpe?g|webp|heic|gif|tiff?|bmp|mp4|mov|mkv|webm|m4v|avi)$/i;
 
+// Actionable requests get a small tool core even when no domain pattern matched, so the
+// local model can always act instead of replying that it cannot.
+const MUTATING_TASK_RE = /\b(?:fix|edit|write|create|make|build|install|uninstall|clean|organize|sort|delete|remove|move|copy|rename|update|refactor|debug|implement|generate|convert|deploy|commit|test|run|execute|compile|repair|replace|set\s+up|configure)\b/i;
+const READ_TASK_RE = /\b(?:list|show|find|read|open|check|search|look|browse|summarize|analy[sz]e|review|inspect|locate)\b/i;
+const LOCAL_CONTEXT_RE =
+  /\b(?:this|that|these|those|my|our|here|current|local|the)\s+(?:folder|directory|files?|project|repo|codebase|app|screen|mac|computer|machine|laptop|desktop|documents?|downloads?|notes?|calendar|images?|photos?|videos?|inbox|drive|battery|ram|cpu|disk|memory|storage|scripts?|modules?|components?|functions?)\b/i;
+
+const TASK_FALLBACK_TOOLS = {
+  read: ['list_dir', 'read_file', 'search_files'],
+  mutating: ['list_dir', 'read_file', 'search_files', 'write_file', 'edit_file', 'run_command'],
+};
+// Once any of these investigative tools is selected, the request is already actionable.
+const DISCOVERY_TOOLS = new Set([
+  'list_dir',
+  'read_file',
+  'search_files',
+  'inspect_media',
+  'take_screenshot',
+  'system_stats',
+  'search_web',
+  'fetch_url',
+  'open_url',
+  'list_schedule_items',
+  'calculate',
+]);
+
 const DOMAIN_TOOL_GROUPS = [
   {
     tools: ['list_dir'],
-    pattern: /\b(?:list|show)\b.{0,60}\b(?:files?|folders?|directories|paths|contents|entries)\b|\b(?:directory|folder)\s+(?:contents|listing|entries)\b/i,
+    pattern:
+      /\b(?:list|show)\b.{0,60}\b(?:files?|folders?|directories|paths|contents|entries)\b|\b(?:directory|folder)\s+(?:contents|listing|entries)\b|\bwhat(?:'s| is| are)\s+(?:in|inside|under|within)\s+(?:this|that|my|our|here|these|those)\b|\b(?:what|which)\s+(?:files?|folders?|directories|items|entries)\b|\b(?:contents?|entries)\s+(?:of|in|inside)\b/i,
   },
   {
     tools: ['read_file', 'search_files'],
@@ -24,10 +51,11 @@ const DOMAIN_TOOL_GROUPS = [
   },
   {
     tools: ['system_stats'],
-    pattern: /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b/i,
+    pattern:
+      /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b|\b(?:battery|power|charge|charging|uptime|storage|free\s+(?:space|memory|ram)|slow|sluggish|overheat\w*|fans?|temperature)\b|\b(?:how(?:'s| is)\s+(?:my|the)|my|the|this)\s+(?:mac|computer|machine|laptop|system|pc)\b/i,
   },
   {
-    tools: ['inspect_media', 'take_screenshot'],
+    tools: ['inspect_media', 'take_screenshot', 'run_command'],
     pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|screen|display|desktop|on my screen|what'?s on|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
   },
   {
@@ -119,6 +147,15 @@ export function selectToolsForTurn(
     if (group.pattern.test(combinedText)) {
       for (const name of group.tools) selected.add(name);
     }
+  }
+
+  const isMutatingTask = MUTATING_TASK_RE.test(combinedText);
+  const isTaskLike = isMutatingTask || READ_TASK_RE.test(combinedText) || LOCAL_CONTEXT_RE.test(combinedText);
+  const hasDiscoveryTool = [...selected].some((name) => DISCOVERY_TOOLS.has(name));
+  if (isMutatingTask) {
+    for (const name of TASK_FALLBACK_TOOLS.mutating) selected.add(name);
+  } else if (isTaskLike && !hasDiscoveryTool) {
+    for (const name of TASK_FALLBACK_TOOLS.read) selected.add(name);
   }
 
   return allTools.filter((tool) => selected.has(tool?.function?.name));

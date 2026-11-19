@@ -41,6 +41,30 @@ test('selectToolsForTurn keeps general local conversation tool-free and adds onl
   assert.ok(!codingNames.has('system_stats'));
 });
 
+test('selectToolsForTurn understands everyday local phrasing and keeps abstract chat tool-free', () => {
+  const cases = [
+    ['What is in this folder?', 'list_dir'],
+    ['What files are here?', 'list_dir'],
+    ['Read the README', 'read_file'],
+    ['How much battery do I have?', 'system_stats'],
+    ['My Mac is slow', 'system_stats'],
+    ['Can you fix this for me?', 'edit_file'],
+    ['Open the project and tell me what it does', 'read_file'],
+    ['Summarize this document', 'read_file'],
+    ['Clean up my downloads folder', 'run_command'],
+  ];
+  for (const [message, expected] of cases) {
+    const selected = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message });
+    const names = selected.map((tool) => tool.function.name);
+    assert.ok(names.includes(expected), `${message} -> expected ${expected}, got ${names.join(',') || '(no tools)'}`);
+  }
+
+  for (const chat of ['Explain why sleep matters.', 'What is the capital of France?', 'Tell me about black holes.']) {
+    const selected = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: chat });
+    assert.deepEqual(selected.map((tool) => tool.function.name), [], `abstract chat should stay tool-free: ${chat}`);
+  }
+});
+
 test('selectToolsForTurn returns all tools for cloud providers and focused relevant tools for local Ollama', () => {
   const cloudTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'anthropic',
@@ -93,7 +117,7 @@ test('selectToolsForTurn returns all tools for cloud providers and focused relev
   assert.ok(stickyLocal.some((t) => t.function.name === 'copy_to_clipboard'));
 });
 
-test('compact local prompt + focused tools dramatically cut token overhead below 2200 tokens for 30 skills', () => {
+test('compact local prompt + focused tools dramatically cut token overhead below 1200 tokens for 30 skills', () => {
   const thirtySkills = Array.from({ length: 30 }, (_, i) => ({
     slug: `starter-skill-${i + 1}`,
     description: 'Comprehensive workflow guide for handling complex local macOS and engineering tasks safely.',
@@ -107,15 +131,27 @@ test('compact local prompt + focused tools dramatically cut token overhead below
     compact: true,
   });
 
-  assert.ok(compactPrompt.length < fullPrompt.length * 0.65, `Expected compact prompt (${compactPrompt.length}) < 65% of full (${fullPrompt.length})`);
+  assert.ok(compactPrompt.length < fullPrompt.length * 0.5, `Expected compact prompt (${compactPrompt.length}) < 50% of full (${fullPrompt.length})`);
   assert.match(compactPrompt, /starter-skill-1/);
   assert.match(compactPrompt, /starter-skill-30/);
+  // The full skill catalog is name-only locally; descriptions stay reserved for the turn's relevant skills.
+  assert.ok(
+    !compactPrompt.includes('Comprehensive workflow guide'),
+    'Compact prompt should not carry the full catalog descriptions'
+  );
+  const withSuggested = buildSystemPrompt({
+    skills: thirtySkills,
+    suggestedSkills: [{ slug: 'starter-skill-7', description: 'Comprehensive workflow guide for handling complex local macOS and engineering tasks safely.' }],
+    compact: true,
+  });
+  assert.match(withSuggested, /Most Relevant Skills/);
+  assert.match(withSuggested, /Comprehensive workflow guide/);
 
   const localTools = compactToolDefinitions(
     selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: 'Fix the bug in app.js' })
   );
   const overheadTokens = Math.ceil(compactPrompt.length / 3.5) + estimateToolsTokens(localTools);
-  assert.ok(overheadTokens < 2200, `Expected total local overhead < 2200 tokens, got ${overheadTokens}`);
+  assert.ok(overheadTokens < 1200, `Expected total local overhead < 1200 tokens, got ${overheadTokens}`);
 });
 
 test('compactConversation respects overheadTokens when checking numCtx threshold', async () => {

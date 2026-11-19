@@ -103,7 +103,8 @@ For local inference and optional media tools:
 brew install ollama ffmpeg imagemagick
 ollama serve
 ollama pull qwen3.5:4b   # Fast daily driver on 16 GB Macs (~3 GB RAM)
-# or: ollama pull qwen3.5:9b   # Stronger local reasoning (~7.6 GB)
+# or: ollama pull qwen3.5:9b   # Stronger local reasoning (~7.6 GB),
+#                             # noticeably slower on busy 16 GB Macs
 ```
 
 Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) and are stored locally in `~/.localgravity/config.json` with `0600` permissions.
@@ -113,7 +114,7 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 ## Key capabilities
 
 ### Engine & Performance on 16 GB Macs
-- **Turn-0 local overhead under 2,200 tokens:** Turn-aware tool routing (`backend/agent/tool-selector.mjs`) sends a focused 10-tool core in `Auto` mode on local Ollama models and activates domain tool groups on demand (or switches cleanly when you select `Engineer`, `Researcher`, `Writer`, or `Mac Ops`), keeping Turn-0 overhead under 2,200 tokens even with all 30 starter skills installed.
+- **Turn-0 local overhead under 1,200 tokens:** Intent-aware tool routing (`backend/agent/tool-selector.mjs`) sends local Ollama models no tools at all for plain conversation, a minimal file/task core for everyday requests ("What is in this folder?", "Read the README", "Fix this"), and domain tool groups only when the request calls for them (or when you select `Engineer`, `Researcher`, `Writer`, or `Mac Ops`). The skill catalog is listed name-only in compact mode, keeping Turn-0 overhead under 1,200 tokens even with all 30 starter skills installed.
 - **Zero mid-turn `terminated` timeouts:** Local Ollama streams over a dedicated `node:http` socket (`setTimeout(0)`, `TCP_NODELAY`) rather than hitting `undici`'s 5-minute cutoff, paired with 15-second SSE keepalives and automatic retry on transient local disconnects.
 - **One-click GPU RAM recovery:** Both the Dashboard and System Monitor show resident Ollama GPU memory and swap pressure, with an **Unload model (Free RAM)** action (`keep_alive: 0`) that frees unified memory immediately.
 - **Fast mode vs. Deep Think:** Toggle **Deep Think: Off / On** directly in the header, and track exact context window usage across the `8K` / `16K` / `32K` budget with automatic compaction at 70%.
