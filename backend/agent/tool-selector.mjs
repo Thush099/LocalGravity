@@ -42,12 +42,18 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:fix|debug|refactor|implement|edit|modify|rewrite|create|generate|update)\b.{0,80}\b(?:bug|issue|code|script|app|project|repo|file|component|function|module|website|page)\b|\b(?:bug|issue)\s+(?:in|with)\b|\b(?:[\w-]+\.(?:m?js|tsx?|jsx?|py|go|rs|swift|html|css|json))\b/i,
   },
   {
+    tools: ['move_file'],
+    pattern:
+      /\b(?:move|rename|relocate|reorganiz\w*|organize|tidy\s+up|declutter|clean\s+up|sort)\b.{0,80}\b(?:files?|folders?|photos?|videos?|images?|documents?|downloads?|desktop|into|subfolders?|directory|folder)\b/i,
+  },
+  {
     tools: ['run_command'],
     pattern: /\b(?:run|execute|test|build|compile|install|npm|node|git|shell|terminal|command)\b/i,
   },
   {
     tools: ['update_plan'],
-    pattern: /\b(?:plan|roadmap|checklist|break\s+down|multi[- ]step|then\s+(?:run|check|verify|fix|edit|test))\b/i,
+    pattern:
+      /\b(?:plan|roadmap|checklist|break\s+down|multi[- ]step|then\s+(?:run|check|verify|fix|edit|test))\b|\b(?:organize|clean\s+up|sort|tidy|declutter|reorganiz\w*|rename)\b.{0,60}\b(?:all|every|batch|bulk|multiple|entire|files?|folders?|photos?|videos?|downloads?|desktop|documents?|inbox|everything)\b/i,
   },
   {
     tools: ['system_stats'],

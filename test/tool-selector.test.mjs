@@ -182,3 +182,18 @@ test('compactConversation respects overheadTokens when checking numCtx threshold
   });
   assert.equal(withOverhead.compacted, true);
 });
+
+test('file-organization requests receive plan and move tools instead of shell-only fallback', () => {
+  const namesFor = (message) =>
+    new Set(
+      selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map((tool) => tool.function.name)
+    );
+
+  const organize = namesFor('Organize my Downloads folder into subfolders');
+  assert.ok(organize.has('update_plan'), 'multi-step organization should publish progress');
+  assert.ok(organize.has('move_file'), 'file moves must not require shell quoting');
+
+  const rename = namesFor('Rename these report files to include the date');
+  assert.ok(rename.has('move_file'));
+  assert.ok(rename.has('update_plan'));
+});

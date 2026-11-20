@@ -7,7 +7,7 @@ import { getRuntimePaths } from '../state/paths.mjs';
 import { runAppleScriptTool } from './applescript-tool.mjs';
 import { calculateTool } from './calc-tool.mjs';
 import { runCommandTool } from './exec-tool.mjs';
-import { buildCompactDiff, editFileTool, listDir, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
+import { buildCompactDiff, editFileTool, listDir, moveFileTool, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
 import { inspectMediaTool } from './media-tool.mjs';
 import {
   copyToClipboardTool,
@@ -94,6 +94,22 @@ export const TOOL_DEFINITIONS = [
           replacement: { type: 'string' },
         },
         required: ['path', 'target', 'replacement'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'move_file',
+      description: 'Move or rename a file or folder to a new path (no shell quoting needed).',
+      parameters: {
+        type: 'object',
+        properties: {
+          source: { type: 'string' },
+          destination: { type: 'string' },
+          overwrite: { type: 'boolean' },
+        },
+        required: ['source', 'destination'],
       },
     },
   },
@@ -688,6 +704,26 @@ export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, contex
       : { decision: 'ask', reason: `Modify file: ${expandUserPath(args.path || '')}` };
   }
 
+  if (name === 'move_file') {
+    // A move touches both paths: frictionless only when source and destination are app-managed.
+    const sourceInfo = classifyFileWrite(args.source || '', skillsDir, knowledgeDir);
+    const destInfo = classifyFileWrite(args.destination || '', skillsDir, knowledgeDir);
+    if (sourceInfo.autoAllowInAskMode && destInfo.autoAllowInAskMode) {
+      return { decision: 'allow' };
+    }
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow moving external files.' };
+    }
+    return safetyMode === 'auto'
+      ? { decision: 'allow' }
+      : {
+          decision: 'ask',
+          reason: `Move file: ${expandUserPath(args.source || '')} -> ${expandUserPath(args.destination || '')}`,
+        };
+  }
+
   return { decision: 'ask', reason: `Tool "${name}" requires approval.` };
 }
 
@@ -697,6 +733,9 @@ export async function generateToolPreview({ name: rawName, args: rawArgs = {} })
   const args = normalized.arguments;
 
   if (name === 'run_command') return String(args.command || '');
+  if (name === 'move_file') {
+    return `Move ${expandUserPath(args.source || '')} -> ${expandUserPath(args.destination || '')}`;
+  }
   if (name === 'run_applescript') return String(args.script || '');
   if (name === 'run_shortcut') return `shortcuts run ${String(args.name || '')}`;
   if (name === 'open_url') return String(args.url || '');
@@ -746,6 +785,14 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       }
       case 'edit_file': {
         const result = await editFileTool(args);
+        if (result.ok) {
+          invalidateSkillsCache(paths.skillsDir);
+          invalidateKnowledgeCache(paths.knowledgeDir);
+        }
+        return result;
+      }
+      case 'move_file': {
+        const result = await moveFileTool(args);
         if (result.ok) {
           invalidateSkillsCache(paths.skillsDir);
           invalidateKnowledgeCache(paths.knowledgeDir);

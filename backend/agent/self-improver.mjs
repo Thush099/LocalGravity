@@ -30,6 +30,11 @@ const TOOL_NAME_ALIASES = {
   patch_file: 'edit_file',
   str_replace: 'edit_file',
   modify_file: 'edit_file',
+  mv: 'move_file',
+  move: 'move_file',
+  rename: 'move_file',
+  rename_file: 'move_file',
+  relocate: 'move_file',
   grep: 'search_files',
   find_files: 'search_files',
   search: 'search_files',
@@ -95,6 +100,10 @@ export function normalizeToolCall(rawCall = {}) {
       aliasKey('query', ['q', 'pattern', 'keyword', 'search', 'term', 'text']);
       aliasKey('glob', ['ext', 'extension', 'filter', 'file_pattern']);
       if (!rawArgs.root) rawArgs.root = '.';
+      break;
+    case 'move_file':
+      aliasKey('source', ['from', 'src', 'source_path', 'file', 'file_path', 'filepath', 'path', 'old_path', 'old_name']);
+      aliasKey('destination', ['to', 'dest', 'destination_path', 'target', 'target_path', 'new_path', 'new_name', 'new_location']);
       break;
     case 'run_command':
       aliasKey('command', ['cmd', 'shell', 'script', 'command_line', 'commandLine', 'bash', 'zsh']);

@@ -111,6 +111,58 @@ export async function writeFileTool({ path: filePath, content, overwrite = true 
   };
 }
 
+/**
+ * Move or rename a file or folder without shell quoting. Creates missing destination folders,
+ * refuses to clobber existing paths unless overwrite=true, and falls back to copy+delete across volumes.
+ */
+export async function moveFileTool({ source, destination, overwrite = false }) {
+  if (!source || !destination) {
+    return { ok: false, output: 'move_file requires both "source" and "destination" paths.' };
+  }
+  const resolvedSource = expandUserPath(String(source));
+  const resolvedDest = expandUserPath(String(destination));
+  if (resolvedSource === resolvedDest) {
+    return { ok: false, output: 'Source and destination are the same path.' };
+  }
+  if (resolvedDest.startsWith(resolvedSource + path.sep)) {
+    return { ok: false, output: `Cannot move "${resolvedSource}" into its own subfolder "${resolvedDest}".` };
+  }
+
+  let srcStat;
+  try {
+    srcStat = await fs.stat(resolvedSource);
+  } catch {
+    return { ok: false, output: `Source not found: ${resolvedSource}` };
+  }
+
+  const destExists = await fs
+    .stat(resolvedDest)
+    .then(() => true)
+    .catch(() => false);
+  if (destExists && !overwrite) {
+    return { ok: false, output: `Destination already exists and overwrite=false: ${resolvedDest}` };
+  }
+  if (destExists) {
+    await fs.rm(resolvedDest, { recursive: true, force: true });
+  }
+
+  await fs.mkdir(path.dirname(resolvedDest), { recursive: true });
+  try {
+    await fs.rename(resolvedSource, resolvedDest);
+  } catch (err) {
+    if (err.code === 'EXDEV') {
+      // Cross-volume move: copy then delete the original.
+      await fs.cp(resolvedSource, resolvedDest, { recursive: true, force: true });
+      await fs.rm(resolvedSource, { recursive: true, force: true });
+    } else {
+      return { ok: false, output: `move_file failed: ${err.message}` };
+    }
+  }
+
+  const kind = srcStat.isDirectory() ? 'folder' : 'file';
+  return { ok: true, output: `Moved ${kind} ${resolvedSource} -> ${resolvedDest}` };
+}
+
 function tryWhitespaceNormalizedReplace(original, target, replacement) {
   const origLines = original.split(/\r?\n/);
   const targetLines = String(target || '')

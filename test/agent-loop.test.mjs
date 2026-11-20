@@ -501,3 +501,14 @@ test('runAgentTurn executes tools, injects inspect_media images, enforces approv
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
+
+test('normalizeToolCall maps move_file tool and argument aliases', () => {
+  const norm = normalizeToolCall({
+    id: 'm1',
+    name: 'mv',
+    arguments: { from: '/tmp/My File.txt', to: '/tmp/archive/My File.txt' },
+  });
+  assert.equal(norm.name, 'move_file');
+  assert.equal(norm.arguments.source, '/tmp/My File.txt');
+  assert.equal(norm.arguments.destination, '/tmp/archive/My File.txt');
+});

@@ -64,3 +64,33 @@ test('evaluateToolSafety enforces ask, auto, and headless allowAutoRun policies'
   assert.equal(evaluateToolSafety({ name: 'run_command', args: { command: 'mv a b' } }, headlessAuditCtx).decision, 'block');
   assert.equal(evaluateToolSafety({ name: 'write_file', args: { path: '/tmp/x.txt', content: 'hi' } }, headlessAuditCtx).decision, 'block');
 });
+
+test('move_file follows the mutating-file approval policy for both paths', () => {
+  const skillsDir = path.join(os.tmpdir(), 'lg-skills');
+  const knowledgeDir = path.join(os.tmpdir(), 'lg-knowledge');
+  const askCtx = { safetyMode: 'ask', skillsDir, knowledgeDir };
+  const autoCtx = { safetyMode: 'auto', skillsDir, knowledgeDir };
+  const auditCtx = { safetyMode: 'ask', skillsDir, knowledgeDir, isHeadless: true, allowAutoRun: false };
+  const externalMove = { name: 'move_file', args: { source: '/tmp/clip.mp4', destination: path.join(os.homedir(), 'Movies', 'clip.mp4') } };
+
+  assert.equal(evaluateToolSafety(externalMove, askCtx).decision, 'ask');
+  assert.equal(evaluateToolSafety(externalMove, autoCtx).decision, 'allow');
+  assert.equal(evaluateToolSafety(externalMove, auditCtx).decision, 'block');
+
+  // Moves entirely inside managed skill/knowledge folders are frictionless like other internal edits.
+  assert.equal(
+    evaluateToolSafety(
+      { name: 'move_file', args: { source: path.join(skillsDir, 'a.md'), destination: path.join(skillsDir, 'b', 'a.md') } },
+      askCtx
+    ).decision,
+    'allow'
+  );
+  // But moving managed content out to external storage still needs approval.
+  assert.equal(
+    evaluateToolSafety(
+      { name: 'move_file', args: { source: path.join(skillsDir, 'a.md'), destination: path.join(os.homedir(), 'Desktop', 'a.md') } },
+      askCtx
+    ).decision,
+    'ask'
+  );
+});

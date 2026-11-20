@@ -177,3 +177,49 @@ test('inspect_media degrades gracefully when ffprobe output is unparseable', asy
     process.env.PATH = prevPath;
   }
 });
+
+test('move_file relocates files and folders with spaces, creating destination folders safely', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-move-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+
+  const srcDir = path.join(tmpRoot, 'Downloads');
+  await fs.mkdir(srcDir, { recursive: true });
+  const src = path.join(srcDir, 'WhatsApp Video 2026-11-19 at 1.39.46 AM.mp4');
+  await fs.writeFile(src, 'clip-bytes');
+  const dest = path.join(tmpRoot, 'Media & Photos', 'Videos & Movies', 'WhatsApp Video 2026-11-19 at 1.39.46 AM.mp4');
+
+  const moved = await executeToolCall({ name: 'move_file', args: { source: src, destination: dest } }, ctx);
+  assert.equal(moved.ok, true);
+  assert.equal(await fs.readFile(dest, 'utf8'), 'clip-bytes');
+  await assert.rejects(fs.stat(src));
+
+  // Refuses to overwrite by default; explicit overwrite replaces the destination.
+  const clashSrc = path.join(srcDir, 'clash.txt');
+  await fs.writeFile(clashSrc, 'new');
+  const clashDest = path.join(tmpRoot, 'Media & Photos', 'clash.txt');
+  await fs.writeFile(clashDest, 'old');
+  const refused = await executeToolCall({ name: 'move_file', args: { source: clashSrc, destination: clashDest } }, ctx);
+  assert.equal(refused.ok, false);
+  assert.match(refused.output, /exists/i);
+  assert.equal(await fs.readFile(clashDest, 'utf8'), 'old');
+  const replaced = await executeToolCall({ name: 'move_file', args: { source: clashSrc, destination: clashDest, overwrite: true } }, ctx);
+  assert.equal(replaced.ok, true);
+  assert.equal(await fs.readFile(clashDest, 'utf8'), 'new');
+
+  // Directories move recursively.
+  const dirSrc = path.join(tmpRoot, 'Album');
+  await fs.mkdir(dirSrc);
+  await fs.writeFile(path.join(dirSrc, 'a photo.png'), 'png');
+  const movedDir = await executeToolCall({ name: 'move_file', args: { source: dirSrc, destination: path.join(tmpRoot, 'Media & Photos', 'Album') } }, ctx);
+  assert.equal(movedDir.ok, true);
+  assert.equal(await fs.readFile(path.join(tmpRoot, 'Media & Photos', 'Album', 'a photo.png'), 'utf8'), 'png');
+
+  // A missing source fails cleanly instead of throwing.
+  const missing = await executeToolCall(
+    { name: 'move_file', args: { source: path.join(tmpRoot, 'nope.txt'), destination: path.join(tmpRoot, 'Media & Photos', 'nope.txt') } },
+    ctx
+  );
+  assert.equal(missing.ok, false);
+});
