@@ -173,12 +173,17 @@ const HUMAN_TOOL_META = {
   save_knowledge: { label: 'Save Knowledge', summarize: (a) => a.name || '' },
 };
 
-const requestOllamaWarmup = createOllamaWarmupRequester(() =>
-  apiRequest('/api/models/ollama/warm', {
-    method: 'POST',
-    body: '{}',
-    priority: 'low',
-  })
+const requestOllamaWarmup = createOllamaWarmupRequester(
+  () =>
+    apiRequest('/api/models/ollama/warm', {
+      method: 'POST',
+      body: '{}',
+      priority: 'low',
+    }),
+  {
+    getStatus: (model) =>
+      apiRequest(`/api/models/ollama/warm/status?model=${encodeURIComponent(model)}`, { priority: 'low' }),
+  }
 );
 
 const state = {

@@ -338,6 +338,7 @@ export function createAgentServer({
   const activeRuns = new Map();
   const modelWarmups = new Map();
   const modelWarmupControllers = new Map();
+  const modelWarmupStatuses = new Map();
   let cachedMetrics = null;
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
@@ -1154,6 +1155,19 @@ export function createAgentServer({
         return sendJson(res, 200, { ok: true, ollama });
       }
 
+      if (req.method === 'GET' && pathname === '/api/models/ollama/warm/status') {
+        const cfg = await loadConfig(paths);
+        const model = url.searchParams.get('model') || '';
+        if (cfg.provider !== 'ollama' || !cfg.model || model !== cfg.model) {
+          return sendJson(res, 200, { ok: true, status: 'idle' });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          status: modelWarmups.has(model) ? 'warming' : modelWarmupStatuses.get(model) || 'idle',
+          model,
+        });
+      }
+
       if (req.method === 'POST' && pathname === '/api/models/ollama/warm') {
         const cfg = await loadConfig(paths);
         if (cfg.provider !== 'ollama' || !cfg.model) {
@@ -1161,11 +1175,18 @@ export function createAgentServer({
         }
         if (!modelWarmups.has(cfg.model)) {
           const controller = new AbortController();
+          modelWarmupStatuses.set(cfg.model, 'warming');
           let warmup;
           warmup = Promise.resolve()
             .then(() => ensureOllamaFn())
             .then(() => warmModelFn(cfg.model, { numCtx: cfg.numCtx, signal: controller.signal }))
-            .catch(() => {})
+            .then((result) =>
+              modelWarmupStatuses.set(
+                cfg.model,
+                ['loaded', 'already_loaded'].includes(result?.status) ? 'loaded' : 'failed'
+              )
+            )
+            .catch(() => modelWarmupStatuses.set(cfg.model, 'failed'))
             .finally(() => {
               if (modelWarmups.get(cfg.model) === warmup) {
                 modelWarmups.delete(cfg.model);

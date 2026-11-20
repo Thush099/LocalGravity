@@ -16,6 +16,46 @@ test('Ollama warm-up requester retries after a failed request and deduplicates s
   assert.equal(calls, 2);
 });
 
+test('Ollama warm-up requester retries immediately when background loading fails', async () => {
+  let warmCalls = 0;
+  const statuses = ['failed', 'loaded'];
+  const warmup = createOllamaWarmupRequester(
+    async () => {
+      warmCalls++;
+      return { status: 'warming' };
+    },
+    {
+      getStatus: async () => ({ status: statuses.shift() }),
+      sleep: async () => {},
+    }
+  );
+
+  await assert.rejects(warmup('qwen3.5:9b'), /warm-up failed/);
+  await warmup('qwen3.5:9b');
+
+  assert.equal(warmCalls, 2);
+});
+
+test('Ollama warm-up requester releases its guard after status polling times out', async () => {
+  let warmCalls = 0;
+  const warmup = createOllamaWarmupRequester(
+    async () => {
+      warmCalls++;
+      return { status: 'warming' };
+    },
+    {
+      getStatus: async () => ({ status: 'warming' }),
+      sleep: async () => {},
+      maxStatusPolls: 2,
+    }
+  );
+
+  await assert.rejects(warmup('qwen3.5:9b'), /timed out/);
+  assert.equal(warmCalls, 1);
+  await assert.rejects(warmup('qwen3.5:9b'), /timed out/);
+  assert.equal(warmCalls, 2);
+});
+
 test('Ollama warm-up requester shares a single in-flight request', async () => {
   let calls = 0;
   let resolveRequest;
