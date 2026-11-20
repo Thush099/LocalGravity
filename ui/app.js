@@ -2,6 +2,7 @@ import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } 
 import { escapeHtml, highlightCode, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
+import { getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
@@ -1704,16 +1705,9 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
       </div>`
     : '';
 
-  const phaseLabel =
-    item.thinking?.length > 0 && !item.content && item.tools?.length === 0
-      ? 'Deep thinking'
-      : item.tools?.some((t) => t.status === 'wait')
-        ? 'Waiting for your approval'
-        : item.tools?.some((t) => t.status === 'running')
-          ? 'Running tools'
-          : !item.content
-            ? `Running ${escapeHtml(state.config?.model || 'model')}`
-            : 'Streaming reply';
+  const model = state.config?.model || 'model';
+  const isWarming = state.config?.provider === 'ollama' && requestOllamaWarmup.isPending(model);
+  const phaseLabel = escapeHtml(getLivePhase(item, model, isWarming));
 
   const elapsedSec = Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000));
   const liveStatusHtml = item.isStreaming
@@ -1815,16 +1809,9 @@ function scheduleLiveUpdate() {
 
     const phaseEl = liveRow.querySelector('#live-status-phase');
     if (phaseEl) {
-      phaseEl.textContent =
-        item.thinking?.length > 0 && !item.content && item.tools?.length === 0
-          ? 'Deep thinking'
-          : item.tools?.some((t) => t.status === 'wait')
-            ? 'Waiting for your approval'
-            : item.tools?.some((t) => t.status === 'running')
-              ? 'Running tools'
-              : !item.content
-                ? `Running ${state.config?.model || 'model'}`
-                : 'Streaming reply';
+      const model = state.config?.model || 'model';
+      const isWarming = state.config?.provider === 'ollama' && requestOllamaWarmup.isPending(model);
+      phaseEl.textContent = getLivePhase(item, model, isWarming);
     }
 
     const thinkingCombined = (item.thinking || []).join('').trim();
@@ -2179,6 +2166,13 @@ async function sendPrompt(overridePayload = null) {
     const elapsedEl = $('#live-elapsed-seconds');
     if (elapsedEl && state.isRunning) {
       elapsedEl.textContent = String(Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000)));
+      const phaseEl = $('#live-status-phase');
+      const item = state.liveAssistantMsg;
+      if (phaseEl && item) {
+        const model = state.config?.model || 'model';
+        const isWarming = state.config?.provider === 'ollama' && requestOllamaWarmup.isPending(model);
+        phaseEl.textContent = getLivePhase(item, model, isWarming);
+      }
     }
   }, 1000);
 

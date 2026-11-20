@@ -52,6 +52,10 @@ export function createOllamaWarmupRequester(
     return requestState.promise;
   };
 
+  warmup.isPending = (model) => {
+    const requestState = requestedModels.get(model);
+    return Boolean(requestState && requestState.expiresAt === null);
+  };
   warmup.reset = () => requestedModels.clear();
   return warmup;
 }

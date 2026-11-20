@@ -93,7 +93,10 @@ test('Ollama warm-up requester allows a new model and can be reset after unload'
   const models = [];
   const warmup = createOllamaWarmupRequester(async (model) => models.push(model));
 
-  await warmup('qwen3.5:9b');
+  const pendingWarmup = warmup('qwen3.5:9b');
+  assert.equal(warmup.isPending('qwen3.5:9b'), true);
+  await pendingWarmup;
+  assert.equal(warmup.isPending('qwen3.5:9b'), false);
   await warmup('qwen3.5:4b');
   warmup.reset();
   await warmup('qwen3.5:4b');
