@@ -11,7 +11,7 @@ import { ensureKnowledgeSeeded, readKnowledge } from '../backend/knowledge-engin
 import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { compactConversation, estimateMessagesTokens } from '../backend/agent/compactor.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
-import { AUTO_LEARNED_SKILL, LEARNED_FIXES_DOC, normalizeToolCall } from '../backend/agent/self-improver.mjs';
+import { AUTO_LEARNED_SKILL, LEARNED_FIXES_DOC, normalizeToolCall, TurnStruggleTracker } from '../backend/agent/self-improver.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +36,13 @@ test('buildSystemPrompt includes skills, knowledge index, learned fixes, and MEM
   assert.match(prompt, /Do NOT call `list_skills`/i);
   assert.match(prompt, /\/tmp\/my-localgravity-repo/);
   assert.match(prompt, /npm test/i);
+  assert.doesNotMatch(prompt, /minimum 8.hour|indefinite continuous enhancement|never stop/i);
+});
+
+test('compact prompt tells local models to finish the requested task without endless work', () => {
+  const prompt = buildSystemPrompt({ compact: true });
+  assert.match(prompt, /finish the requested task/i);
+  assert.doesNotMatch(prompt, /minimum 8.hour|indefinite continuous enhancement|never stop/i);
 });
 
 test('runAgentTurn fulfills a simple current-folder listing without a model round-trip', async (t) => {
@@ -136,6 +143,48 @@ test('runAgentTurn does not shortcut recursive, named-folder, or cloud listing r
   }
 });
 
+test('runAgentTurn does not persist narration as an answer when a tool is called', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-tool-narration-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  await fs.writeFile(path.join(tmpRoot, 'result.txt'), 'verified');
+
+  let step = 0;
+  const events = [];
+  const session = { id: 'tool-narration', title: 'Tool narration', messages: [] };
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'Read result.txt and report what it contains.',
+    paths,
+    cwd: tmpRoot,
+    providerConfig: { provider: 'ollama', safetyMode: 'auto' },
+    persistSession: false,
+    onEvent: (event) => events.push(event),
+    chatFn: async () => {
+      step++;
+      if (step === 1) {
+        return {
+          content: 'Let me inspect the file now.',
+          toolCalls: [{ id: 'narration-read', name: 'read_file', arguments: { path: path.join(tmpRoot, 'result.txt') } }],
+        };
+      }
+      return { content: 'The file contains verified.', toolCalls: [] };
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  const assistantMessages = session.messages.filter((message) => message.role === 'assistant');
+  assert.equal(assistantMessages.length, 2);
+  assert.equal(assistantMessages[0].content, '');
+  assert.equal(assistantMessages.at(-1).content, 'The file contains verified.');
+
+  // The UI relies on response_reset clearing narration before the tool step renders.
+  const resetIdx = events.findIndex((event) => event.type === 'response_reset');
+  const toolIdx = events.findIndex((event) => event.type === 'tool_call');
+  assert.ok(resetIdx >= 0, 'expected a response_reset event before tool execution');
+  assert.ok(toolIdx > resetIdx, 'response_reset must precede the tool_call event');
+});
+
 test('normalizeToolCall repairs tool name and parameter aliases automatically', () => {
   const norm1 = normalizeToolCall({
     id: 'c1',
@@ -157,6 +206,37 @@ test('normalizeToolCall repairs tool name and parameter aliases automatically', 
   assert.equal(norm2.arguments.target, 'foo');
   assert.equal(norm2.arguments.replacement, 'bar');
   assert.equal(norm2.repaired, true);
+});
+
+test('loop breaker treats the same arguments in a different key order as a duplicate', () => {
+  const tracker = new TurnStruggleTracker();
+  const first = tracker.checkDuplicateCall('run_command', { command: 'ls -la', cwd: '/tmp' });
+  const second = tracker.checkDuplicateCall('run_command', { cwd: '/tmp', command: 'ls -la' });
+  assert.equal(first.isDuplicate, false);
+  assert.equal(second.isDuplicate, true);
+});
+
+test('self-healing hint escalates to a stop directive after three failures of the same tool', () => {
+  const tracker = new TurnStruggleTracker();
+  const fail = (command) =>
+    tracker.recordToolOutcome({
+      name: 'run_command',
+      args: { command },
+      ok: false,
+      output: `Exit code: 1\nSTDERR:\nfailed: ${command}`,
+    });
+
+  const first = fail('python3 broken1.py');
+  const second = fail('python3 broken2.py');
+  const third = fail('python3 broken3.py');
+  assert.doesNotMatch(first.hint, /stop/i);
+  assert.doesNotMatch(second.hint, /stop/i);
+  assert.match(third.hint, /stop/i);
+  assert.match(third.hint, /failed 3 times/i);
+
+  // A success resets the escalation so a later failure is not over-punished.
+  tracker.recordToolOutcome({ name: 'run_command', args: { command: 'python3 ok.py' }, ok: true, output: 'Exit code: 0' });
+  assert.doesNotMatch(fail('python3 broken4.py').hint, /failed 3 times/i);
 });
 
 test('compactConversation summarizes older turns when exceeding 70% of numCtx', async () => {

@@ -374,7 +374,7 @@ export async function runAgentTurn({
 
       const assistantEntry = {
         role: 'assistant',
-        content: finalContent || response.content || '',
+        content: normalizedCalls.length > 0 ? '' : finalContent || response.content || '',
         thinking: response.thinking || '',
         toolCalls: normalizedCalls.length > 0 ? normalizedCalls : undefined,
         createdAt: new Date().toISOString(),
@@ -472,6 +472,10 @@ export async function runAgentTurn({
           images: result.images,
         });
       };
+
+      if (normalizedCalls.length > 0 && response.content) {
+        onEvent?.({ type: 'response_reset' });
+      }
 
       const calls = assistantEntry.toolCalls;
       for (let callIdx = 0; callIdx < calls.length; callIdx++) {

@@ -170,12 +170,28 @@ export function diagnoseToolFailure({ name, args = {}, output = '' }) {
 }
 
 /**
+ * Stable JSON for duplicate signatures: key order must not change the signature, because
+ * models re-emit the same arguments in different orders across retries.
+ */
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
  * Track struggles, tool failures, loop attempts, and recoveries during a single agent turn.
  */
 export class TurnStruggleTracker {
   constructor() {
     this.callCounts = new Map();
     this.failedByTool = new Map();
+    this.consecutiveFailures = new Map();
     this.struggles = [];
     this.recoveredFixes = [];
     this.emptyOutputRecovered = false;
@@ -199,7 +215,7 @@ export class TurnStruggleTracker {
   }
 
   checkDuplicateCall(name, args) {
-    const signature = `${name}:${JSON.stringify(args || {})}`;
+    const signature = `${name}:${stableStringify(args || {})}`;
     const count = (this.callCounts.get(signature) || 0) + 1;
     this.callCounts.set(signature, count);
     // Mutating write/edit/save calls with different state are fine, but repeating the exact same call 2+ times in one turn is a loop
@@ -224,7 +240,12 @@ export class TurnStruggleTracker {
     const failed = !ok || nonZeroExit;
 
     if (failed) {
-      const hint = diagnoseToolFailure({ name, args, output: outStr });
+      const failures = (this.consecutiveFailures.get(name) || 0) + 1;
+      this.consecutiveFailures.set(name, failures);
+      let hint = diagnoseToolFailure({ name, args, output: outStr });
+      if (failures >= 3) {
+        hint = `STOP: "${name}" has now failed ${failures} times in this turn. Do not retry variants of it—report the blocker to the user or take a completely different approach. ${hint}`;
+      }
       const summary = outStr.split('\n').slice(0, 3).join(' ').slice(0, 180);
       this.failedByTool.set(name, { args, summary, hint });
       this.struggles.push({
@@ -239,6 +260,7 @@ export class TurnStruggleTracker {
     }
 
     // If this tool previously failed in the same turn and now succeeded, capture the exact Broken -> Working pair!
+    this.consecutiveFailures.delete(name);
     if (this.failedByTool.has(name)) {
       const prev = this.failedByTool.get(name);
       this.failedByTool.delete(name);

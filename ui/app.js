@@ -2202,6 +2202,9 @@ async function sendPrompt(overridePayload = null) {
           state.liveAssistantMsg.thinking.push(evt.text);
         } else if (evt.type === 'text_delta') {
           state.liveAssistantMsg.content += evt.text;
+        } else if (evt.type === 'response_reset') {
+          // Tool-step narration is not the answer: drop it from the live bubble before the tool runs.
+          state.liveAssistantMsg.content = '';
         } else if (evt.type === 'plan_update') {
           state.liveAssistantMsg.plan = Array.isArray(evt.plan) ? evt.plan : null;
         } else if (evt.type === 'tool_call') {
