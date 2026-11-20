@@ -306,6 +306,34 @@ test('warmOllamaModel loads only installed models and skips models already resid
   }
 });
 
+test('warmOllamaModel bounds a wedged generate request with its timeout', async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const endpoint = new URL(String(url));
+    if (endpoint.pathname === '/api/tags') {
+      return new Response(JSON.stringify({ models: [{ name: 'qwen3.5:9b' }] }), { status: 200 });
+    }
+    if (endpoint.pathname === '/api/ps') {
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }
+    if (endpoint.pathname === '/api/generate') {
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+      });
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  try {
+    await assert.rejects(
+      () => warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local', timeoutMs: 25 }),
+      (err) => err.name === 'TimeoutError' || err.name === 'AbortError'
+    );
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
 test('Ollama ps/unload helpers, RAM-aware selection, and transient disconnect retry work cleanly', async () => {
   assert.equal(
     selectBestInstalledOllamaModel([{ name: 'qwen3.5:9b' }, { name: 'qwen3.5:4b' }], '', { totalRamGb: 16 }),

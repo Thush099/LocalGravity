@@ -181,7 +181,7 @@ export async function listRunningOllamaModels(baseUrl = DEFAULT_OLLAMA_URL) {
 /**
  * Unload one or all resident Ollama models (`keep_alive: 0`) to immediately reclaim Apple Silicon RAM.
  */
-export async function warmOllamaModel(model, { baseUrl = DEFAULT_OLLAMA_URL, numCtx = 8192, signal } = {}) {
+export async function warmOllamaModel(model, { baseUrl = DEFAULT_OLLAMA_URL, numCtx = 8192, signal, timeoutMs = 180000 } = {}) {
   const name = String(model || '').trim();
   if (!name) return { status: 'invalid_model' };
 
@@ -190,6 +190,8 @@ export async function warmOllamaModel(model, { baseUrl = DEFAULT_OLLAMA_URL, num
   if (!health.models.some((installed) => installed.name === name)) return { status: 'not_installed' };
   if (health.runningModels.some((running) => running.name === name)) return { status: 'already_loaded' };
 
+  // Bound the load so a wedged Ollama request can never leave chat turns awaiting it forever.
+  const timeoutSignal = AbortSignal.timeout(Number(timeoutMs) || 180000);
   const res = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -200,7 +202,7 @@ export async function warmOllamaModel(model, { baseUrl = DEFAULT_OLLAMA_URL, num
       keep_alive: '15m',
       options: { num_ctx: Number(numCtx) || 8192 },
     }),
-    signal,
+    signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
   });
   if (!res.ok) {
     const errText = await res.text();
