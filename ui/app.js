@@ -1,6 +1,7 @@
 import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } from './lib/api.js';
 import { escapeHtml, highlightCode, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
+import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
@@ -172,7 +173,13 @@ const HUMAN_TOOL_META = {
   save_knowledge: { label: 'Save Knowledge', summarize: (a) => a.name || '' },
 };
 
-let warmupRequestedModel = '';
+const requestOllamaWarmup = createOllamaWarmupRequester(() =>
+  apiRequest('/api/models/ollama/warm', {
+    method: 'POST',
+    body: '{}',
+    priority: 'low',
+  })
+);
 
 const state = {
   view: 'dashboard',
@@ -3211,7 +3218,7 @@ async function unloadOllamaMemory() {
     });
     await Promise.all([refreshHealth(), refreshSystemMetrics()]);
     const count = Array.isArray(res.unloaded) ? res.unloaded.length : 0;
-    if (count > 0) warmupRequestedModel = '';
+    if (count > 0) requestOllamaWarmup.reset();
     showToast(count > 0 ? `Unloaded ${res.unloaded.join(', ')} (RAM freed)` : 'No Ollama models were loaded');
   } catch (err) {
     showToast(err.message || 'Could not unload Ollama models');
@@ -3894,9 +3901,8 @@ function wireEvents() {
   const promptInput = $('#prompt-input');
   promptInput.addEventListener('focus', () => {
     const model = state.config?.model;
-    if (state.config?.provider !== 'ollama' || !model || warmupRequestedModel === model) return;
-    warmupRequestedModel = model;
-    apiRequest('/api/models/ollama/warm', { method: 'POST', body: '{}' }).catch(() => {});
+    if (state.config?.provider !== 'ollama' || !model) return;
+    requestOllamaWarmup(model).catch(() => {});
   });
   promptInput.addEventListener('input', () => {
     promptInput.style.height = 'auto';
