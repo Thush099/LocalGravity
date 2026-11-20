@@ -1141,10 +1141,9 @@ export function createAgentServer({
           apiKeys: nextKeys,
         };
         const updated = await saveConfig(patch, paths);
-        for (const [model, warmup] of modelWarmups) {
+        for (const model of modelWarmups.keys()) {
           if (updated.provider !== 'ollama' || updated.model !== model) {
             modelWarmupControllers.get(model)?.abort();
-            await warmup;
           }
         }
         return sendJson(res, 200, { ok: true, ...maskConfigForClient(updated) });
