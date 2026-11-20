@@ -1711,7 +1711,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
 
   const elapsedSec = Math.max(0, Math.floor((Date.now() - state.runStartedAt) / 1000));
   const liveStatusHtml = item.isStreaming
-    ? `<div class="live-status-line"><span class="pulse-dot"></span><span id="live-status-phase">${phaseLabel}</span> (<span id="live-elapsed-seconds">${elapsedSec}</span>s)...</div>`
+    ? `<div class="live-status-line"><span class="pulse-dot" aria-hidden="true"></span><span id="live-status-phase" aria-live="polite">${phaseLabel}</span> (<span id="live-elapsed-seconds">${elapsedSec}</span>s)...</div>`
     : '';
 
   return `
