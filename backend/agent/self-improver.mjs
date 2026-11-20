@@ -160,11 +160,11 @@ export function diagnoseToolFailure({ name, args = {}, output = '' }) {
     return 'Read the exact target lines with `read_file` first or copy the snippet verbatim (or use `write_file` if replacing the whole file).';
   }
   if (/ENOENT|no such file or directory/i.test(text)) {
-    return `Path "${args.path || args.root || args.cwd || ''}" does not exist. Use \`list_dir\` or \`search_files\` to verify the exact path before retrying.`;
+    return `Path "${args.path || args.root || args.cwd || ''}" does not exist. Use \`list_dir\` or \`search_files\` to verify the exact path before retrying. For moving or renaming files, use \`move_file\`—it handles spaces in names without shell quoting.`;
   }
   if (/command not found/i.test(text)) {
     const missingCmd = text.match(/:\s*([a-zA-Z0-9_.-]+):\s*command not found/i)?.[1] || 'binary';
-    return `Command "${missingCmd}" is not installed or not in PATH. Check \`/opt/homebrew/bin/${missingCmd}\`, use an alternative built-in macOS tool (\`sips\`, \`osascript\`, \`python3\`, \`node\`), or install it via \`brew install\`.`;
+    return `Command "${missingCmd}" is not installed or not in PATH. Check \`/opt/homebrew/bin/${missingCmd}\`, use an alternative built-in macOS tool (\`sips\`, \`osascript\`, \`python3\`, \`node\`), or install it via \`brew install\`. If "${missingCmd}" is part of a filename with spaces, quote the whole path or use the file tools (\`read_file\`/\`write_file\`/\`move_file\`) instead of shell commands.`;
   }
   if (/timed out/i.test(text)) {
     return 'The command timed out. Avoid interactive flags (add `-y` for ffmpeg, `--non-interactive`), scope `find` to a specific folder instead of `~`, or raise `timeout_ms`.';

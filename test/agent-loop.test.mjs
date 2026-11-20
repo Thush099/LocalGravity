@@ -11,7 +11,7 @@ import { ensureKnowledgeSeeded, readKnowledge } from '../backend/knowledge-engin
 import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { compactConversation, estimateMessagesTokens } from '../backend/agent/compactor.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
-import { AUTO_LEARNED_SKILL, LEARNED_FIXES_DOC, normalizeToolCall, TurnStruggleTracker } from '../backend/agent/self-improver.mjs';
+import { AUTO_LEARNED_SKILL, LEARNED_FIXES_DOC, diagnoseToolFailure, normalizeToolCall, TurnStruggleTracker } from '../backend/agent/self-improver.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -511,4 +511,22 @@ test('normalizeToolCall maps move_file tool and argument aliases', () => {
   assert.equal(norm.name, 'move_file');
   assert.equal(norm.arguments.source, '/tmp/My File.txt');
   assert.equal(norm.arguments.destination, '/tmp/archive/My File.txt');
+});
+
+test('failure hints steer shell-quoting problems to the file tools', () => {
+  // An unquoted path with spaces looks like "command not found: WhatsApp".
+  const splitHint = diagnoseToolFailure({
+    name: 'run_command',
+    args: { command: 'mv WhatsApp Video 2026.mp4 ~/Videos/' },
+    output: 'zsh: command not found: WhatsApp',
+  });
+  assert.match(splitHint, /quote/i);
+  assert.match(splitHint, /move_file/);
+
+  const enoentHint = diagnoseToolFailure({
+    name: 'run_command',
+    args: { command: 'mv a b' },
+    output: 'mv: rename a to b: No such file or directory',
+  });
+  assert.match(enoentHint, /move_file/);
 });

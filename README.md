@@ -28,7 +28,7 @@ Most AI tools force a compromise: browser chats are siloed from your Mac and cha
 | --- | --- | --- | --- |
 | **Zero-subscription local models** | No | Sometimes | **Yes** (Ollama tuned for 16 GB Apple Silicon + 1-click RAM unload) |
 | **Live split-pane Artifact Canvas** | Cloud-only | None | **Side-by-side HTML/SVG preview in an isolated sandbox + Save/Copy** |
-| **Native Mac control (34 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
+| **Native Mac control (35 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
 | **Full conversation control & modes** | Varies | Rare | **Inline Edit & re-run, Branch, Pin/Rename, Engineer/Researcher/Writer/Mac Ops modes** |
 | **Live hardware & schedule visibility** | None | None | **Real-time SVG CPU/RAM/GPU graphs, Memory donut & Timetable** |
 | **Voice, LaTeX & persistent skills** | Paid / online | Flags only | **Offline macOS Read Aloud, zero-dep LaTeX math, callouts, 30+ `SKILL.md` & `LEARNED_FIXES.md`** |
@@ -170,7 +170,7 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 │  ├── backend/agent/              (ReAct loop, tool-selector,     │
 │  │                                prompt builder, compactor)     │
 │  ├── backend/providers/          (Ollama stream, OpenAI, Claude) │
-│  ├── backend/tools/              (34 tools + safety policies)    │
+│  ├── backend/tools/              (35 tools + safety policies)    │
 │  ├── backend/skills-engine.mjs   (30 starter SKILL.md + imports) │
 │  └── backend/knowledge-engine.mjs(MEMORY.md + docs search)       │
 └───────────────────────────────┬──────────────────────────────────┘
