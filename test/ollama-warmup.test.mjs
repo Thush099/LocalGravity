@@ -35,6 +35,20 @@ test('Ollama warm-up requester shares a single in-flight request', async () => {
   await Promise.all([first, second]);
 });
 
+test('Ollama warm-up requester retries after its keep-alive window expires', async () => {
+  let now = 0;
+  let calls = 0;
+  const warmup = createOllamaWarmupRequester(async () => calls++, { ttlMs: 100, now: () => now });
+
+  await warmup('qwen3.5:9b');
+  now = 99;
+  await warmup('qwen3.5:9b');
+  now = 100;
+  await warmup('qwen3.5:9b');
+
+  assert.equal(calls, 2);
+});
+
 test('Ollama warm-up requester allows a new model and can be reset after unload', async () => {
   const models = [];
   const warmup = createOllamaWarmupRequester(async (model) => models.push(model));

@@ -1,20 +1,29 @@
-export function createOllamaWarmupRequester(request) {
+const DEFAULT_WARMUP_TTL_MS = 14 * 60 * 1000;
+
+export function createOllamaWarmupRequester(request, { ttlMs = DEFAULT_WARMUP_TTL_MS, now = Date.now } = {}) {
   const requestedModels = new Map();
 
   const warmup = (model) => {
     if (!model) return Promise.resolve();
     const existing = requestedModels.get(model);
-    if (existing) return existing;
+    if (existing && (existing.expiresAt === null || now() < existing.expiresAt)) return existing.promise;
+    if (existing) requestedModels.delete(model);
 
-    let pending;
-    pending = Promise.resolve()
+    const requestState = { promise: null, expiresAt: null };
+    requestedModels.set(model, requestState);
+    requestState.promise = Promise.resolve()
       .then(() => request(model))
+      .then((result) => {
+        if (requestedModels.get(model) === requestState) {
+          requestState.expiresAt = now() + ttlMs;
+        }
+        return result;
+      })
       .catch((error) => {
-        if (requestedModels.get(model) === pending) requestedModels.delete(model);
+        if (requestedModels.get(model) === requestState) requestedModels.delete(model);
         throw error;
       });
-    requestedModels.set(model, pending);
-    return pending;
+    return requestState.promise;
   };
 
   warmup.reset = () => requestedModels.clear();
