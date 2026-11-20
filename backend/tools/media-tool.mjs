@@ -48,7 +48,12 @@ async function probeVideo(resolvedPath) {
     '-show_streams',
     resolvedPath,
   ]);
-  const parsed = JSON.parse(stdout || '{}');
+  let parsed = {};
+  try {
+    parsed = JSON.parse(stdout || '{}');
+  } catch {
+    // Corrupt or truncated probe output: degrade to unknown metadata like probeImage instead of failing.
+  }
   const vStream = (parsed.streams || []).find((s) => s.codec_type === 'video') || {};
   const duration = Number(parsed.format?.duration || vStream.duration || 0);
   return {

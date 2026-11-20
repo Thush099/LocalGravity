@@ -149,3 +149,31 @@ test('registry tools perform fs ops, shell execution, skill/knowledge management
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
+
+test('inspect_media degrades gracefully when ffprobe output is unparseable', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-bad-probe-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+
+  const vidPath = path.join(tmpRoot, 'clip.mp4');
+  await execFileAsync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=1', '-pix_fmt', 'yuv420p', vidPath]);
+
+  // Stub ffprobe to emit broken JSON (exit 0), as a corrupt/truncated probe can.
+  const stubDir = path.join(tmpRoot, 'stub-bin');
+  await fs.mkdir(stubDir);
+  const badProbe = path.join(stubDir, 'ffprobe');
+  await fs.writeFile(badProbe, '#!/bin/sh\necho "not json {{{"\n');
+  await fs.chmod(badProbe, 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${stubDir}:${prevPath}`;
+  try {
+    const mediaVid = await executeToolCall({ name: 'inspect_media', args: { path: vidPath, timestamp_sec: 0.2 } }, ctx);
+    assert.equal(mediaVid.ok, true);
+    assert.equal(mediaVid.images.length, 1);
+    assert.match(mediaVid.output, /codec=\?/);
+  } finally {
+    process.env.PATH = prevPath;
+  }
+});
