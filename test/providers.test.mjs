@@ -325,10 +325,16 @@ test('warmOllamaModel bounds a wedged generate request with its timeout', async 
   };
 
   try {
-    await assert.rejects(
-      () => warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local', timeoutMs: 25 }),
-      (err) => err.name === 'TimeoutError' || err.name === 'AbortError'
-    );
+    // AbortSignal.timeout() uses an unref'd timer; hold the event loop until the timeout fires.
+    const keepAlive = setInterval(() => {}, 10);
+    try {
+      await assert.rejects(
+        () => warmOllamaModel('qwen3.5:9b', { baseUrl: 'http://mock-ollama.local', timeoutMs: 25 }),
+        (err) => err.name === 'TimeoutError' || err.name === 'AbortError'
+      );
+    } finally {
+      clearInterval(keepAlive);
+    }
   } finally {
     globalThis.fetch = origFetch;
   }
