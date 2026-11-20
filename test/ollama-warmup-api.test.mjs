@@ -74,6 +74,7 @@ test('Ollama warm-up status reports pending, failed, and successful model loads'
       if (warmCalls === 3) return Promise.resolve({ status: 'unavailable' });
       return Promise.resolve({ status: 'loaded' });
     },
+    unloadModelsFn: async () => ({ unloaded: ['qwen3.5:9b'] }),
   });
 
   try {
@@ -102,6 +103,20 @@ test('Ollama warm-up status reports pending, failed, and successful model loads'
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal((await status()).status, 'failed');
     assert.equal(warmCalls, 3);
+
+    // An explicit unload evicts the model, so its warm-up status must fall back to idle.
+    assert.equal((await warm()).status, 202);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal((await status()).status, 'loaded');
+
+    const unload = await fetch(`${base}/api/models/ollama/unload`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+    });
+    assert.equal(unload.status, 200);
+    assert.equal((await status()).status, 'idle');
+    assert.equal(warmCalls, 4);
   } finally {
     await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });

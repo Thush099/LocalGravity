@@ -1215,6 +1215,11 @@ export function createAgentServer({
           })
         );
         const result = await unloadModelsFn(undefined, model);
+        if (model) {
+          modelWarmupStatuses.delete(model);
+        } else {
+          modelWarmupStatuses.clear();
+        }
         const ollama = await checkOllamaHealth();
         return sendJson(res, 200, { ok: true, ...result, ollama });
       }
