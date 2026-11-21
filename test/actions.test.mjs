@@ -126,6 +126,19 @@ test('largestFiles ranks by size, skips hidden files, and never mutates', async 
   await fs.access(path.join(dir, 'sub', 'mid.bin'));
 });
 
+test('largestFiles bounds its directory walk so huge folders cannot run away', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-large-bound-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  for (const name of ['a', 'b', 'c']) {
+    await fs.mkdir(path.join(root, name), { recursive: true });
+    await fs.writeFile(path.join(root, name, 'f.bin'), 'x'.repeat(100));
+  }
+  const dirs = ['a', 'b', 'c'].map((n) => path.join(root, n));
+  const { scanned, files } = await largestFiles(dirs, { maxDirs: 2 });
+  assert.equal(scanned, 2, 'stops after maxDirs folders are visited');
+  assert.equal(files.length, 2);
+});
+
 test('large_files is a registered read-only instant action', () => {
   const action = getInstantAction('large_files');
   assert.ok(action, 'large_files resolves');

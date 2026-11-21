@@ -242,11 +242,13 @@ export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 
  * sequential scan. Hidden files are skipped as noise. Returns a top-N plus the count
  * of files scanned.
  */
-export async function largestFiles(dirs, { limit = 15, maxEntries = 20000 } = {}) {
+export async function largestFiles(dirs, { limit = 15, maxEntries = 20000, maxDirs = 2000 } = {}) {
   const paths = [];
   const queue = [...dirs];
-  while (queue.length && paths.length < maxEntries) {
+  let visitedDirs = 0;
+  while (queue.length && paths.length < maxEntries && visitedDirs < maxDirs) {
     const dir = queue.shift();
+    visitedDirs += 1;
     let entries = [];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
