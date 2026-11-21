@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchWithRetry } from '../backend/providers/http-retry.mjs';
-import { extractFallbackToolCalls, extractInlineThinking } from '../backend/providers/tool-parser.mjs';
+import { extractFallbackToolCalls, extractInlineThinking, safeParseArguments } from '../backend/providers/tool-parser.mjs';
 import {
   listRunningOllamaModels,
   selectBestInstalledOllamaModel,
@@ -397,4 +397,45 @@ test('Ollama ps/unload helpers, RAM-aware selection, and transient disconnect re
   } finally {
     globalThis.fetch = origFetch;
   }
+});
+
+test('tool-call JSON repair recovers common model mistakes instead of erroring', () => {
+  const OPEN = '<' + 'tool_call>';
+  const CLOSE = '<' + '/tool_call>';
+  const cases = [
+    [`{'name':'run_command','arguments':{'command':'ls'}}`, 'run_command', { command: 'ls' }],
+    [`{name:"run_command",arguments:{command:"pwd"}}`, 'run_command', { command: 'pwd' }],
+    [`{"name":"x","arguments":{"a":True,"b":False,"c":None}}`, 'x', { a: true, b: false, c: null }],
+    [`{"name":"x", // note
+ "arguments":{"a":1, /* mid */ "b":2}}`, 'x', { a: 1, b: 2 }],
+    [`{"name":"x","arguments":{"a":1,"b":[1,2,],},}`, 'x', { a: 1, b: [1, 2] }],
+    [`{"name":"run_command","arguments":{"command":"ls`, 'run_command', { command: 'ls' }],
+    [`{"name":"x","arguments":{"msg":"don't do it"}}`, 'x', { msg: "don't do it" }],
+    [`{"name":"x","arguments":{"msg":"a, } b"}}`, 'x', { msg: 'a, } b' }],
+    [`{'name':'run_command', // run
+ 'arguments':{'command':'ls', 'cwd':'/tmp',},}`, 'run_command', { command: 'ls', cwd: '/tmp' }],
+  ];
+  for (const [inner, expName, expArgs] of cases) {
+    const { toolCalls } = extractFallbackToolCalls(OPEN + '\n' + inner + '\n' + CLOSE);
+    assert.equal(toolCalls.length, 1, `should recover: ${inner}`);
+    const call = toolCalls[0];
+    assert.ok(!call.parseError, `should not error: ${inner} -> ${call.parseError}`);
+    assert.equal(call.name, expName);
+    assert.deepEqual(call.arguments, expArgs);
+  }
+});
+
+test('tool-call JSON repair never corrupts valid JSON or string contents', () => {
+  const OPEN = '<' + 'tool_call>';
+  const CLOSE = '<' + '/tool_call>';
+  const { toolCalls } = extractFallbackToolCalls(
+    OPEN + '\n' + `{"name":"x","arguments":{"msg":"a, } b, then {braces} and [brackets]"}}` + '\n' + CLOSE,
+  );
+  assert.ok(!toolCalls[0].parseError);
+  assert.deepEqual(toolCalls[0].arguments, { msg: 'a, } b, then {braces} and [brackets]' });
+
+  // safeParseArguments handles the same repairs for bare args
+  assert.deepEqual(safeParseArguments(`{a:True}`).arguments, { a: true });
+  assert.deepEqual(safeParseArguments(`{'a':'b'}`).arguments, { a: 'b' });
+  assert.ok(safeParseArguments(`{"a":"don't"}`).arguments.a === "don't");
 });

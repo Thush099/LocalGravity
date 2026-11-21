@@ -1,10 +1,102 @@
 import crypto from 'node:crypto';
 
-function repairLooseJson(str) {
-  return String(str || '')
-    .trim()
-    // Remove trailing commas before } or ]
-    .replace(/,\s*([}\]])/g, '$1');
+/**
+ * Repair the common ways a local model mangles tool-call JSON so the call
+ * executes instead of surfacing a parse error and forcing a slow re-emit:
+ * single-quoted strings, unquoted keys, Python True/False/None, comments,
+ * trailing commas, and truncated (unclosed) output. String-aware so it never
+ * corrupts string contents. Only ever used as a fallback after strict
+ * JSON.parse has already failed.
+ */
+function repairLooseJson(input) {
+  let s = String(input || '').trim();
+  s = s.replace(/^```(?:json|tool_call|tool)?\s*\r?\n?/i, '').replace(/\r?\n?```\s*$/, '').trim();
+
+  const n = s.length;
+  const out = [];
+  const stack = [];
+
+  // Advance past whitespace and comments to the next meaningful character.
+  const skipTrivia = (start) => {
+    let i = start;
+    while (i < n) {
+      const c = s[i];
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i += 1; continue; }
+      if (c === '/' && s[i + 1] === '/') { while (i < n && s[i] !== '\n') i += 1; continue; }
+      if (c === '/' && s[i + 1] === '*') { i += 2; while (i < n && !(s[i] === '*' && s[i + 1] === '/')) i += 1; i += 2; continue; }
+      break;
+    }
+    return i;
+  };
+
+  let i = 0;
+  while (i < n) {
+    const c = s[i];
+
+    // Single- or double-quoted string -> emit a correctly escaped double-quoted string.
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i += 1;
+      let content = '';
+      while (i < n) {
+        const ch = s[i];
+        if (ch === '\\') {
+          const next = s[i + 1];
+          if (next === "'") { content += "'"; i += 2; continue; } // \' -> '
+          content += ch + (next || ''); i += 2; continue;
+        }
+        if (ch === quote) { i += 1; break; }
+        if (ch === '"' && quote === "'") { content += '\\"'; i += 1; continue; } // " inside ' -> \"
+        content += ch; i += 1;
+      }
+      out.push('"', content, '"');
+      continue;
+    }
+
+    // Comments -> drop.
+    if (c === '/' && s[i + 1] === '/') { while (i < n && s[i] !== '\n') i += 1; continue; }
+    if (c === '/' && s[i + 1] === '*') { i += 2; while (i < n && !(s[i] === '*' && s[i + 1] === '/')) i += 1; i += 2; continue; }
+
+    if (c === '{' || c === '[') { stack.push(c); out.push(c); i += 1; continue; }
+    if (c === '}' || c === ']') { stack.pop(); out.push(c); i += 1; continue; }
+
+    // Trailing comma (comma before a closing bracket) -> drop it.
+    if (c === ',') {
+      const nx = skipTrivia(i + 1);
+      if (nx < n && (s[nx] === '}' || s[nx] === ']')) { i += 1; continue; }
+      out.push(c); i += 1; continue;
+    }
+
+    // Bare word: an unquoted key (before ':'), a JSON/Python literal, or a bare value.
+    if (/[A-Za-z_$]/.test(c)) {
+      let j = i;
+      while (j < n && /[\w$]/.test(s[j])) j += 1;
+      const word = s.slice(i, j);
+      const nx = skipTrivia(j);
+      if (s[nx] === ':') {
+        out.push('"', word, '"'); // quote the key
+      } else if (word === 'true' || word === 'false' || word === 'null') {
+        out.push(word);
+      } else if (word === 'True') {
+        out.push('true');
+      } else if (word === 'False') {
+        out.push('false');
+      } else if (word === 'None' || word === 'undefined') {
+        out.push('null');
+      } else {
+        out.push('"', word, '"'); // bare value -> string
+      }
+      i = j;
+      continue;
+    }
+
+    out.push(c);
+    i += 1;
+  }
+
+  // Close any containers left open by truncated output.
+  while (stack.length) out.push(stack.pop() === '{' ? '}' : ']');
+  return out.join('');
 }
 
 function parseToolBlock(inner) {
