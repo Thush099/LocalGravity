@@ -263,9 +263,13 @@ function showToast(msg) {
   const container = $('#toast-container');
   const el = document.createElement('div');
   el.className = 'toast';
+  el.setAttribute('role', 'status');
   el.textContent = msg;
   container.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+  setTimeout(() => {
+    el.classList.add('toast-out');
+    setTimeout(() => el.remove(), 200);
+  }, 3200);
 }
 
 function formatBytes(bytes) {
