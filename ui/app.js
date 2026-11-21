@@ -126,6 +126,7 @@ const TASK_STARTERS = [
 const INSTANT_ACTIONS = [
   { id: 'system_health', label: 'System health', desc: 'CPU, memory, GPU, disk and top processes' },
   { id: 'storage_audit', label: 'Storage & clutter', desc: 'What is taking up space in Downloads, Desktop and Documents' },
+  { id: 'large_files', label: 'Largest files', desc: 'Biggest files in Downloads and Desktop to review and clean' },
   { id: 'clipboard_read', label: 'Read clipboard', desc: 'Show what is on the macOS clipboard' },
   { id: 'schedule_today', label: 'Today’s schedule', desc: 'Timetable entries for today' },
   { id: 'organize_plan', label: 'Organize preview', desc: 'Preview how loose files would sort, without moving anything' },

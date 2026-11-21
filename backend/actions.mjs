@@ -236,6 +236,43 @@ export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 
   return bounded(`${dirName}: ${files} loose file${files === 1 ? '' : 's'}${truncated ? ' (capped)' : ''} — ${parts.join(' · ')}`);
 }
 
+/**
+ * Find the largest files under the given folders via a bounded walk and concurrent
+ * stats, so "what's eating my disk" answers from real file sizes without a slow
+ * sequential scan. Hidden files are skipped as noise. Returns a top-N plus the count
+ * of files scanned.
+ */
+export async function largestFiles(dirs, { limit = 15, maxEntries = 20000 } = {}) {
+  const paths = [];
+  const queue = [...dirs];
+  while (queue.length && paths.length < maxEntries) {
+    const dir = queue.shift();
+    let entries = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (paths.length >= maxEntries) break;
+      if (entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) queue.push(full);
+      else if (entry.isFile()) paths.push(full);
+    }
+  }
+  const stats = await mapWithConcurrency(paths, STAT_CONCURRENCY, async (file) => {
+    try {
+      const st = await fs.stat(file);
+      return { file, size: st.size, mtimeMs: st.mtimeMs };
+    } catch {
+      return null;
+    }
+  });
+  const files = stats.filter(Boolean).sort((a, b) => b.size - a.size).slice(0, limit);
+  return { files, scanned: paths.length };
+}
+
 const ACTIONS = {
   system_health: {
     title: 'System health',
@@ -305,6 +342,39 @@ const ACTIONS = {
     async run(ctx) {
       const result = await executeToolCall({ name: 'docker_op', args: { action: 'ps' } }, ctx);
       return bounded(JSON.stringify(result, null, 2));
+    },
+  },
+  large_files: {
+    title: 'Largest files to clean',
+    async run() {
+      const home = os.homedir();
+      const dirs = [];
+      for (const name of ['Downloads', 'Desktop']) {
+        const dir = path.join(home, name);
+        try {
+          await fs.access(dir);
+        } catch {
+          continue;
+        }
+        dirs.push(dir);
+      }
+      if (dirs.length === 0) return 'No Downloads or Desktop folder found.';
+      const { files, scanned } = await largestFiles(dirs, { limit: 15 });
+      if (files.length === 0) return `No files found in ${dirs.map((d) => path.basename(d)).join(' or ')}.`;
+      const age = (mtimeMs) => {
+        const days = Math.floor((Date.now() - mtimeMs) / 86400000);
+        if (days < 1) return 'today';
+        if (days < 30) return `${days}d ago`;
+        if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+        return `${Math.floor(days / 365)}y ago`;
+      };
+      const lines = files.map((f, i) => `${i + 1}. ${formatBytes(f.size).padStart(9)}  ${age(f.mtimeMs).padStart(8)}  ${path.basename(f.file)}`);
+      return bounded([
+        `Largest files in ${dirs.map((d) => path.basename(d)).join(' and ')} (largest first, ${scanned} scanned):`,
+        ...lines,
+        '',
+        'Review and delete or archive what you no longer need — nothing is removed automatically.',
+      ].join('\n'));
     },
   },
 };

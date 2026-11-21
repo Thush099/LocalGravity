@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { runInstantAction, getInstantAction, INSTANT_ACTION_IDS, storageAudit, organizePreview } from '../backend/actions.mjs';
+import { runInstantAction, getInstantAction, INSTANT_ACTION_IDS, storageAudit, organizePreview, largestFiles } from '../backend/actions.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
 import { evaluateToolSafety } from '../backend/tools/registry.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
@@ -103,6 +103,34 @@ test('organizePreview groups loose files by type and never moves anything', asyn
   const after = await fs.readdir(dir);
   assert.equal(after.length, 8);
   assert.ok(after.includes('a.jpg') && after.includes('existing-folder'));
+});
+
+test('largestFiles ranks by size, skips hidden files, and never mutates', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-large-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.mkdir(path.join(dir, 'sub'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'small.txt'), 'x'.repeat(10));
+  await fs.writeFile(path.join(dir, 'big.bin'), 'x'.repeat(4096));
+  await fs.writeFile(path.join(dir, 'sub', 'mid.bin'), 'x'.repeat(1024));
+  await fs.writeFile(path.join(dir, '.hidden.bin'), 'x'.repeat(9999));
+  const { files, scanned } = await largestFiles([dir]);
+  const names = files.map((f) => path.basename(f.file));
+  assert.equal(names[0], 'big.bin', 'largest file ranks first');
+  assert.ok(names.includes('mid.bin'), 'finds files in subfolders');
+  assert.ok(names.includes('small.txt'));
+  assert.ok(!names.includes('.hidden.bin'), 'hidden files are skipped as noise');
+  assert.equal(scanned, 3, 'counts the non-hidden files scanned');
+  for (let i = 1; i < files.length; i += 1) assert.ok(files[i - 1].size >= files[i].size, 'sorted largest first');
+  // Read-only: the files are all still there.
+  await fs.access(path.join(dir, 'big.bin'));
+  await fs.access(path.join(dir, 'sub', 'mid.bin'));
+});
+
+test('large_files is a registered read-only instant action', () => {
+  const action = getInstantAction('large_files');
+  assert.ok(action, 'large_files resolves');
+  assert.equal(typeof action.run, 'function');
+  assert.ok(action.title.length > 0);
 });
 
 test('organize_plan is a registered read-only instant action', () => {
