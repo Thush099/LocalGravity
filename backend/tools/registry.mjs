@@ -4,6 +4,7 @@ import { invalidateKnowledgeCache, listKnowledge, readKnowledge, saveKnowledge, 
 import { safePublicFetch } from '../net-guard.mjs';
 import { invalidateSkillsCache, listSkills, readSkill, saveSkill } from '../skills-engine.mjs';
 import { getRuntimePaths } from '../state/paths.mjs';
+import { recordFileMove, undoFileMoves } from '../state/file-journal.mjs';
 import { runAppleScriptTool } from './applescript-tool.mjs';
 import { calculateTool } from './calc-tool.mjs';
 import { runCommandTool } from './exec-tool.mjs';
@@ -30,6 +31,10 @@ import {
   loadSchedule,
   upsertScheduleEntry,
 } from '../schedule.mjs';
+import { gitTool } from './git-tool.mjs';
+import { sqliteTool } from './sqlite-tool.mjs';
+import { dockerTool } from './docker-tool.mjs';
+import { delegateTaskTool } from './agent-tool.mjs';
 import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
 
 export const TOOL_DEFINITIONS = [
@@ -110,6 +115,19 @@ export const TOOL_DEFINITIONS = [
           overwrite: { type: 'boolean' },
         },
         required: ['source', 'destination'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'undo_file_moves',
+      description: 'Reverse recent move_file operations (e.g. undo a file organization), restoring files to their original paths. Skips any move that can no longer be reversed safely.',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'How many recent moves to reverse (default 1).' },
+        },
       },
     },
   },
@@ -547,6 +565,73 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'git_op',
+      description: 'Perform Git operations (status, diff, log, commit, branch).',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['status', 'diff', 'log', 'commit', 'branch'] },
+          directory: { type: 'string', description: 'Repo path (default current).' },
+          message: { type: 'string', description: 'Commit message.' },
+          branch: { type: 'string', description: 'Branch name for checkout -b.' },
+          count: { type: 'number', description: 'Log count (default 20).' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'sqlite_query',
+      description: 'Inspect or query a local SQLite database file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          db_path: { type: 'string' },
+          query: { type: 'string' },
+        },
+        required: ['db_path', 'query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'docker_op',
+      description: 'Monitor Docker containers (ps, logs, stats).',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['ps', 'logs', 'stats'] },
+          container_id: { type: 'string' },
+          lines: { type: 'number', description: 'Tail lines for logs.' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delegate_task',
+      description: 'Delegate a sub-task to a fresh agent instance for parallel processing.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'The task for the sub-agent.' },
+          mode: { type: 'string', enum: ['auto', 'engineer', 'researcher', 'writer', 'macops'] },
+          provider: { type: 'string' },
+          model: { type: 'string' },
+          cwd: { type: 'string' },
+        },
+        required: ['task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'open_url',
       description: 'Open an http or https URL in the default macOS web browser.',
       parameters: {
@@ -724,6 +809,21 @@ export function evaluateToolSafety({ name: rawName, args: rawArgs = {} }, contex
         };
   }
 
+  if (name === 'undo_file_moves') {
+    // Reversing moves restores external files: frictionless only in Auto mode.
+    if (isHeadless) {
+      return allowAutoRun
+        ? { decision: 'allow' }
+        : { decision: 'block', reason: 'Scheduled audit mode does not allow moving external files.' };
+    }
+    return safetyMode === 'auto'
+      ? { decision: 'allow' }
+      : {
+          decision: 'ask',
+          reason: `Undo ${Math.max(1, Number(args.count) || 1)} recent file move(s), restoring files to their original paths.`,
+        };
+  }
+
   return { decision: 'ask', reason: `Tool "${name}" requires approval.` };
 }
 
@@ -735,6 +835,9 @@ export async function generateToolPreview({ name: rawName, args: rawArgs = {} })
   if (name === 'run_command') return String(args.command || '');
   if (name === 'move_file') {
     return `Move ${expandUserPath(args.source || '')} -> ${expandUserPath(args.destination || '')}`;
+  }
+  if (name === 'undo_file_moves') {
+    return `Undo ${Math.max(1, Number(args.count) || 1)} recent file move(s), restoring files to their original paths.`;
   }
   if (name === 'run_applescript') return String(args.script || '');
   if (name === 'run_shortcut') return `shortcuts run ${String(args.name || '')}`;
@@ -794,10 +897,25 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'move_file': {
         const result = await moveFileTool(args);
         if (result.ok) {
+          await recordFileMove(paths, { from: result.from, to: result.to, createdDirs: result.createdDirs });
           invalidateSkillsCache(paths.skillsDir);
           invalidateKnowledgeCache(paths.knowledgeDir);
         }
         return result;
+      }
+      case 'undo_file_moves': {
+        const { undone, skipped } = await undoFileMoves(paths, args.count);
+        invalidateSkillsCache(paths.skillsDir);
+        invalidateKnowledgeCache(paths.knowledgeDir);
+        const lines = [];
+        if (undone.length === 0 && skipped.length === 0) {
+          lines.push('No file moves to undo.');
+        } else {
+          lines.push(`Undid ${undone.length} move${undone.length === 1 ? '' : 's'}.`);
+          for (const u of undone) lines.push(`  restored ${u.from} <- ${u.to}`);
+          for (const s of skipped) lines.push(`  skipped ${s.to}: ${s.reason}`);
+        }
+        return { ok: true, output: lines.join('\n') };
       }
       case 'search_files':
         return await searchFilesTool(args);
@@ -840,6 +958,14 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await manageNotesTool(args);
       case 'open_url':
         return await openUrlTool(args);
+      case 'git_op':
+        return await gitTool(args);
+      case 'sqlite_query':
+        return await sqliteTool(args);
+      case 'docker_op':
+        return await dockerTool(args);
+      case 'delegate_task':
+        return await delegateTaskTool(args, context);
       case 'search_web':
         return await searchWebTool(args, { fetchFn: context.fetchFn || globalThis.fetch });
       case 'inspect_media':

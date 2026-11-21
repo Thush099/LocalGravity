@@ -115,6 +115,22 @@ export async function writeFileTool({ path: filePath, content, overwrite = true 
  * Move or rename a file or folder without shell quoting. Creates missing destination folders,
  * refuses to clobber existing paths unless overwrite=true, and falls back to copy+delete across volumes.
  */
+/**
+ * Ancestors of `dir` that do not exist yet (deepest first), so a move can report which folders
+ * it created and undo can remove them again only if they end up empty.
+ */
+async function collectMissingDirs(dir) {
+  const missing = [];
+  let cur = dir;
+  while (cur && cur !== path.dirname(cur)) {
+    const exists = await fs.stat(cur).then(() => true).catch(() => false);
+    if (exists) break;
+    missing.push(cur);
+    cur = path.dirname(cur);
+  }
+  return missing;
+}
+
 export async function moveFileTool({ source, destination, overwrite = false }) {
   if (!source || !destination) {
     return { ok: false, output: 'move_file requires both "source" and "destination" paths.' };
@@ -135,18 +151,20 @@ export async function moveFileTool({ source, destination, overwrite = false }) {
     return { ok: false, output: `Source not found: ${resolvedSource}` };
   }
 
-  const destExists = await fs
-    .stat(resolvedDest)
-    .then(() => true)
-    .catch(() => false);
-  if (destExists && !overwrite) {
+  const destStat = await fs.stat(resolvedDest).catch(() => null);
+  if (destStat && !overwrite) {
     return { ok: false, output: `Destination already exists and overwrite=false: ${resolvedDest}` };
   }
-  if (destExists) {
-    await fs.rm(resolvedDest, { recursive: true, force: true });
+  if (destStat && (srcStat.isDirectory() || destStat.isDirectory())) {
+    return { ok: false, output: 'move_file cannot overwrite a directory; move the folder to a new destination instead.' };
+  }
+  if (destStat) {
+    await fs.rm(resolvedDest, { force: true });
   }
 
-  await fs.mkdir(path.dirname(resolvedDest), { recursive: true });
+  const destDir = path.dirname(resolvedDest);
+  const createdDirs = await collectMissingDirs(destDir);
+  await fs.mkdir(destDir, { recursive: true });
   try {
     await fs.rename(resolvedSource, resolvedDest);
   } catch (err) {
@@ -160,7 +178,7 @@ export async function moveFileTool({ source, destination, overwrite = false }) {
   }
 
   const kind = srcStat.isDirectory() ? 'folder' : 'file';
-  return { ok: true, output: `Moved ${kind} ${resolvedSource} -> ${resolvedDest}` };
+  return { ok: true, output: `Moved ${kind} ${resolvedSource} -> ${resolvedDest}`, from: resolvedSource, to: resolvedDest, createdDirs };
 }
 
 function tryWhitespaceNormalizedReplace(original, target, replacement) {
