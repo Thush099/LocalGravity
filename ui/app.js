@@ -122,6 +122,16 @@ const TASK_STARTERS = [
   },
 ];
 
+// Deterministic on-device lookups that answer instantly with no model inference.
+const INSTANT_ACTIONS = [
+  { id: 'system_health', label: 'System health', desc: 'CPU, memory, GPU, disk and top processes' },
+  { id: 'storage_audit', label: 'Storage & clutter', desc: 'What is taking up space in Downloads, Desktop and Documents' },
+  { id: 'clipboard_read', label: 'Read clipboard', desc: 'Show what is on the macOS clipboard' },
+  { id: 'schedule_today', label: 'Today’s schedule', desc: 'Timetable entries for today' },
+  { id: 'organize_plan', label: 'Organize preview', desc: 'Preview how loose files would sort, without moving anything' },
+  { id: 'docker_ps', label: 'Docker status', desc: 'List running containers' },
+];
+
 const SLASH_COMMANDS = [
   { cmd: '/health', desc: 'Audit CPU, swap, GPU RAM, storage & top processes', tag: 'Run', prompt: 'Run system_stats (with top processes) and check swap pressure, GPU RAM, and disk usage. Give me 3 concrete ways to speed up this Mac right now.', autoRun: true },
   { cmd: '/brief', desc: 'Morning briefing: today’s timetable + Mac health', tag: 'Run', prompt: 'Check list_schedule_items (today_only: true) and system_stats, then give me a crisp briefing for today.', autoRun: true },
@@ -142,6 +152,8 @@ const HUMAN_TOOL_META = {
   read_file: { label: 'Read File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
   write_file: { label: 'Write File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
   edit_file: { label: 'Edit File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  move_file: { label: 'Move File', summarize: (a) => `${String(a.source || '').split('/').pop()} → ${String(a.destination || '').split('/').pop()}` },
+  undo_file_moves: { label: 'Undo File Moves', summarize: (a) => `${a.count || 1} move${(a.count || 1) === 1 ? '' : 's'}` },
   search_files: { label: 'Search Files', summarize: (a) => a.query || a.root || '' },
   spotlight_search: { label: 'Spotlight Search', summarize: (a) => a.query || '' },
   run_command: { label: 'Shell Command', summarize: (a) => String(a.command || '').split('\n')[0].slice(0, 48) },
@@ -153,6 +165,10 @@ const HUMAN_TOOL_META = {
   take_screenshot: { label: 'Take Screenshot', summarize: (a) => a.mode || 'screen' },
   search_web: { label: 'Web Search', summarize: (a) => a.query || '' },
   fetch_url: { label: 'Fetch Page', summarize: (a) => a.url || '' },
+  git_op: { label: 'Git Operation', summarize: (a) => `${a.action || 'status'}${a.message ? ` · ${a.message}` : ''}` },
+  sqlite_query: { label: 'SQLite Query', summarize: (a) => a.db_path ? String(a.db_path).split('/').pop() : '' },
+  docker_op: { label: 'Docker Monitor', summarize: (a) => `${a.action || 'ps'}${a.container_id ? ` · ${a.container_id.slice(0, 8)}` : ''}` },
+  delegate_task: { label: 'Delegate Sub-task', summarize: (a) => a.task.slice(0, 50) },
   open_url: { label: 'Open URL', summarize: (a) => a.url || '' },
   copy_to_clipboard: { label: 'Copy to Clipboard', summarize: (a) => `${String(a.text || '').length} chars` },
   paste_from_clipboard: { label: 'Read Clipboard', summarize: () => 'pbpaste' },
@@ -274,14 +290,15 @@ function formatRelativeTime(value) {
 }
 
 function applyTheme(mode = 'auto', persist = true) {
-  const valid = mode === 'dark' || mode === 'light' ? mode : 'auto';
+  const themes = ['dark', 'light', 'nord', 'cyberpunk', 'auto'];
+  const valid = themes.includes(mode) ? mode : 'auto';
   state.themeMode = valid;
   if (valid === 'auto') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = valid;
 
   const btn = $('#theme-toggle-btn');
   if (btn) {
-    btn.textContent = valid === 'dark' ? 'Dark' : valid === 'light' ? 'Light' : 'Auto';
+    btn.textContent = valid.charAt(0).toUpperCase() + valid.slice(1);
     btn.title = `Theme: ${btn.textContent} (click to switch)`;
   }
   if (hasSwiftBridge()) {
@@ -297,9 +314,18 @@ function applyTheme(mode = 'auto', persist = true) {
 }
 
 function cycleTheme() {
-  const next = state.themeMode === 'auto' ? 'dark' : state.themeMode === 'dark' ? 'light' : 'auto';
+  const themes = ['auto', 'dark', 'light', 'nord', 'cyberpunk'];
+  const idx = themes.indexOf(state.themeMode);
+  const next = themes[(idx + 1) % themes.length];
   applyTheme(next, true);
-  showToast(`Theme: ${next === 'auto' ? 'Auto (System)' : next === 'dark' ? 'Obsidian Dark' : 'Porcelain Light'}`);
+  const labels = {
+    auto: 'Auto (System)',
+    dark: 'Obsidian Dark',
+    light: 'Porcelain Light',
+    nord: 'Nordic Frost',
+    cyberpunk: 'Cyberpunk Neon'
+  };
+  showToast(`Theme: ${labels[next] || next}`);
 }
 
 function renderWelcomeTaskGrid() {
@@ -317,7 +343,6 @@ function renderWelcomeTaskGrid() {
       <button type="button" class="quick-card" data-starter-id="${escapeHtml(item.id)}" data-prompt="${escapeHtml(item.prompt)}">
         <div class="quick-card-top">
           <span class="quick-cat">${escapeHtml(item.catLabel)}</span>
-          <span class="quick-arrow" aria-hidden="true">↗</span>
         </div>
         <strong>${escapeHtml(item.title)}</strong>
         <span class="quick-card-desc">${escapeHtml(item.desc)}</span>
@@ -337,6 +362,22 @@ function renderWelcomeTaskGrid() {
       if (e.shiftKey && !text.endsWith(' ')) {
         sendPrompt();
       }
+    });
+  });
+}
+
+function renderInstantActions() {
+  const row = $('#instant-actions-row');
+  if (!row) return;
+  row.innerHTML = INSTANT_ACTIONS.map(
+    (a) => `
+      <button type="button" class="instant-chip" data-instant-id="${escapeHtml(a.id)}" data-instant-label="${escapeHtml(a.label)}" title="${escapeHtml(a.desc)}">
+        <span>${escapeHtml(a.label)}</span>
+      </button>`
+  ).join('');
+  row.querySelectorAll('.instant-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      runInstantActionTurn(chip.dataset.instantId, chip.dataset.instantLabel);
     });
   });
 }
@@ -409,7 +450,20 @@ function updateContextMeter(tokens, numCtx) {
   }
 }
 
-// Swift native bridges
+function renderThinkingTree(thinkingText) {
+  if (!thinkingText) return '';
+  const lines = thinkingText.split('\n').filter(Boolean);
+  return `
+    <details class="thinking-tree">
+      <summary class="thinking-tree-summary">Chain of Thought (${lines.length} steps)</summary>
+      <div class="thinking-tree-content">
+        <ul>
+          ${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
+        </ul>
+      </div>
+    </details>
+  `;
+}
 window.__lgSetToken = (token) => setAuthToken(token);
 window.__lgFileSaved = (savedPath) => {
   const base = String(savedPath || '').split('/').pop() || 'file';
@@ -1455,13 +1509,15 @@ function groupMessagesForDisplay(messages = []) {
         }
         const out = String(msg.content || '');
         const exitNonZero = /^Exit code:\s*(?!0\b)\d+/m.test(out);
-        const failed =
+        const heuristicFailed =
           out.startsWith('Blocked') ||
           out.startsWith('User denied') ||
           out.startsWith('Tool ') ||
           out.startsWith('[Self-Healing Loop Breaker]') ||
           out.includes('failed') ||
           exitNonZero;
+        // Prefer the tool's real ok flag; fall back to output heuristics for older sessions.
+        const failed = typeof msg.ok === 'boolean' ? !msg.ok : heuristicFailed;
         toolEntry.status = failed ? 'fail' : 'ok';
       }
     }
@@ -1550,7 +1606,7 @@ function buildToolsHtml(tools = []) {
         t.status === 'ok'
           ? 'Done'
           : t.status === 'fail'
-            ? 'Self-Healed / Error'
+            ? 'Failed'
             : t.status === 'wait'
               ? 'Needs approval'
               : 'Running';
@@ -1992,6 +2048,12 @@ async function createNewTask() {
 
 function getSlashCandidates(query = '') {
   const q = String(query || '').toLowerCase();
+  const instantItems = INSTANT_ACTIONS.map((a) => ({
+    cmd: `/${a.id.replace(/_/g, '-')}`,
+    desc: `${a.desc} (on-device · no AI)`,
+    tag: 'Instant',
+    action: () => runInstantActionTurn(a.id, a.label),
+  }));
   const skillItems = (state.skills || []).map((s) => ({
     cmd: `/${s.slug}`,
     desc: s.description || 'Installed skill playbook',
@@ -1999,10 +2061,15 @@ function getSlashCandidates(query = '') {
     prompt: `Use the "${s.slug}" skill (call read_skill first) to help with: `,
     autoRun: false,
   }));
-  const all = [...SLASH_COMMANDS, ...skillItems];
+  const all = [...instantItems, ...SLASH_COMMANDS, ...skillItems];
   return all
     .filter((item) => !q || item.cmd.toLowerCase().includes(q) || item.desc.toLowerCase().includes(q))
     .slice(0, 12);
+}
+
+async function runInstantActionTurn(id, label) {
+  if (!id) return;
+  await sendPrompt({ text: label, attachments: [], instantAction: id });
 }
 
 function hideSlashMenu() {
@@ -2195,6 +2262,7 @@ async function sendPrompt(overridePayload = null) {
         safetyMode: state.config?.safetyMode,
         cwd: state.activeSession?.cwd || undefined,
         mode: $('#composer-mode-select')?.value || state.activeSession?.mode || 'auto',
+        instantAction: overridePayload?.instantAction || undefined,
       },
       (evt) => {
         if (!state.liveAssistantMsg) return;
@@ -4337,6 +4405,7 @@ async function init() {
     applyTheme('auto', false);
   }
   renderWelcomeTaskGrid();
+  renderInstantActions();
   wireEvents();
   tickClock();
   setInterval(tickClock, 1000);
