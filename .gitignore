@@ -10,3 +10,4 @@ dist/
 .worktrees/
 .freebuff/
 tmp/
+graphify-out/
