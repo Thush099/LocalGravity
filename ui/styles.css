@@ -3951,6 +3951,18 @@ button, input, textarea, select {
   line-height: 1.5;
 }
 
+/* Transparent, border-less inputs suppress the default outline, so restore a clear
+   keyboard focus ring (the global :focus-visible loses the specificity contest). */
+.user-inline-edit textarea:focus-visible,
+.palette-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.palette-input-row:focus-within {
+  border-bottom-color: var(--accent);
+}
+
 .user-inline-edit-actions {
   display: flex;
   justify-content: flex-end;
