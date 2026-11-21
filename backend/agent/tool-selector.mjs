@@ -7,6 +7,39 @@ const READ_TASK_RE = /\b(?:list|show|find|read|open|check|search|look|browse|sum
 const LOCAL_CONTEXT_RE =
   /\b(?:this|that|these|those|my|our|here|current|local|the)\s+(?:folder|directory|files?|project|repo|codebase|app|screen|mac|computer|machine|laptop|desktop|documents?|downloads?|notes?|calendar|images?|photos?|videos?|inbox|drive|battery|ram|cpu|disk|memory|storage|scripts?|modules?|components?|functions?)\b/i;
 
+// A request to transform text the user just supplied (rewrite / humanize / summarize …) is a
+// pure language task. Selecting tools drags their schemas into prefill — slowing the first
+// token on a local model — and tempts it to call system_stats on a rewrite. Keep those turns
+// tool-free unless the request points at a real file or folder to act on instead.
+const TEXT_VERB_STRONG_RE =
+  /\b(?:humaniz\w*|rewrite|reword|rephras\w*|paraphras\w*|summariz\w*|summaris\w*|condens\w*|shorten|tighten|polish|simplif\w*|proofread|translat\w*|restyle|restructur\w*|expand)\b/i;
+const TEXT_VERB_WEAK_RE = /\b(?:make|fix|improv\w*|clean\s*up|tidy\s*up)\b/i;
+const TEXT_NOUN_RE =
+  /\b(?:text|paragraph|copy|prose|passage|content|answer|message|description|writing|note|sentence|grammar|spelling|typo\w*|tone|style|wording|email|letter|post|caption|intro|summary)\b/i;
+const TEXT_ADJ_RE = /\b(?:concise|shorter|clearer|nicer|natural\w*|readable|professional|casual|formal|polished|simpler|fluid|smooth)\b/i;
+const LOCAL_FS_REF_RE =
+  /(?:~\/|\.\/|\/Users\/|\b[\w-]+\.(?:m?js|tsx?|jsx?|py|go|rs|swift|html|css|json|txt|md|pdf|docx?|xlsx?|csv|png|jpe?g|mp4|mov)\b)|\b(?:my|the|this|that)\s+(?:folder|directory|documents?|project|repo|codebase|downloads?|desktop|inbox|drive|files?|code|script|app|component|function|module|page|website|class|method|variable|endpoint|button|view|screen|element|widget|api|database|table|form)\b/i;
+
+/** True when the request is purely to rewrite/summarize text the user pasted, not to act on files. */
+function isPureTextTransform(msg) {
+  const s = String(msg || '');
+  // Only the request phrasing matters; anything pasted after a colon is data to transform.
+  const request = s.split(/[:\n]/)[0].slice(0, 200);
+  if (LOCAL_FS_REF_RE.test(request)) return false;
+  const strong = TEXT_VERB_STRONG_RE.test(request);
+  const weak = TEXT_VERB_WEAK_RE.test(request);
+  if (!strong && !weak) return false;
+  // An explicit text noun ("this paragraph", "my prose") is a provided-text transform.
+  if (/\b(?:this|that|it|the|my)\b/i.test(request) && TEXT_NOUN_RE.test(request)) return true;
+  // Bare "this/that/it" with a text adjective ("make this concise").
+  if (/\b(?:this|that|it)\b/i.test(request) && TEXT_ADJ_RE.test(request)) return true;
+  // Pasted content after a colon ("humanize this: …", "summarize: …") is a transform — unless
+  // the "content" is really just a file reference ("summarize: README.md"), which needs tools.
+  const content = s.split(/[:\n]/).slice(1).join(' ').trim();
+  const contentIsFileRef = /^[\w./~-]+\.[a-z0-9]{1,5}$/i.test(content);
+  return strong && /:\s*\S[\s\S]{4,}/.test(s) && !contentIsFileRef;
+}
+
 const TASK_FALLBACK_TOOLS = {
   read: ['list_dir', 'read_file', 'search_files'],
   mutating: ['list_dir', 'read_file', 'search_files', 'write_file', 'edit_file', 'run_command'],
@@ -23,6 +56,9 @@ const DISCOVERY_TOOLS = new Set([
   'fetch_url',
   'open_url',
   'list_schedule_items',
+  'git_op',
+  'sqlite_query',
+  'docker_op',
   'calculate',
 ]);
 
@@ -39,16 +75,28 @@ const DOMAIN_TOOL_GROUPS = [
   {
     tools: ['read_file', 'write_file', 'edit_file', 'search_files'],
     pattern:
-      /\b(?:fix|debug|refactor|implement|edit|modify|rewrite|create|generate|update)\b.{0,80}\b(?:bug|issue|code|script|app|project|repo|file|component|function|module|website|page)\b|\b(?:bug|issue)\s+(?:in|with)\b|\b(?:[\w-]+\.(?:m?js|tsx?|jsx?|py|go|rs|swift|html|css|json))\b/i,
+      /\b(?:fix|debug|refactor|implement|edit|modify|rewrite|create|generate|update)\b.{0,80}\b(?:bug|issue|code|script|app|project|repo|file|component|function|module|website|page)\b|\b(?:bug|issue)\s+(?:in|with)\b|\b(?:[\w-]+\.(?:m?js|tsx?|jsx?|py|go|rs|swift|html|css|json|txt|md|pdf|docx?|xlsx?|csv|rtf|pages|numbers|key|log|sql|ya?ml|toml))\b/i,
   },
   {
-    tools: ['move_file'],
+    tools: ['move_file', 'undo_file_moves'],
     pattern:
-      /\b(?:move|rename|relocate|reorganiz\w*|organize|tidy\s+up|declutter|clean\s+up|sort)\b.{0,80}\b(?:files?|folders?|photos?|videos?|images?|documents?|downloads?|desktop|into|subfolders?|directory|folder)\b/i,
+      /\b(?:move|rename|relocate|reorganiz\w*|organize|tidy\s+up|declutter|clean\s+up|sort|undo|revert|put|place|restore)\b.{0,80}\b(?:files?|folders?|photos?|videos?|images?|documents?|downloads?|desktop|into|subfolders?|directory|folder|moves?|back|that|last|recent|organiz\w*|chang\w*)\b/i,
   },
   {
     tools: ['run_command'],
     pattern: /\b(?:run|execute|test|build|compile|install|npm|node|git|shell|terminal|command)\b/i,
+  },
+  {
+    tools: ['git_op'],
+    pattern: /\b(?:git|commit|push|pull|branch|checkout|diff|log|status|stage|repository|repo)\b/i,
+  },
+  {
+    tools: ['sqlite_query'],
+    pattern: /\b(?:sqlite|database|db|query|table|schema|sql)\b/i,
+  },
+  {
+    tools: ['docker_op'],
+    pattern: /\b(?:docker|container|images|ps|logs|stats|daemon)\b/i,
   },
   {
     tools: ['update_plan'],
@@ -109,6 +157,10 @@ export function selectToolsForTurn(
 ) {
   if (!Array.isArray(allTools) || allTools.length === 0) return [];
   if (provider !== 'ollama') return allTools;
+
+  // Pure provided-text turns (rewrite / humanize / summarize a pasted block) need no tools:
+  // keep them tool-free so the lean prompt runs and the first token lands sooner.
+  if (isPureTextTransform(userMessage)) return [];
 
   const selected = new Set();
 

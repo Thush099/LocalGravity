@@ -143,6 +143,44 @@ test('runAgentTurn does not shortcut recursive, named-folder, or cloud listing r
   }
 });
 
+test('persisted tool messages carry the real ok flag for success and failure', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-tool-ok-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  await fs.writeFile(path.join(tmpRoot, 'good.txt'), 'hello');
+
+  let step = 0;
+  const session = { id: 'tool-ok', title: 'Tool ok', messages: [] };
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'Read good.txt and missing.txt.',
+    paths,
+    cwd: tmpRoot,
+    providerConfig: { provider: 'ollama', safetyMode: 'auto' },
+    persistSession: false,
+    chatFn: async () => {
+      step++;
+      if (step === 1) {
+        return {
+          content: '',
+          toolCalls: [
+            { id: 'read-good', name: 'read_file', arguments: { path: path.join(tmpRoot, 'good.txt') } },
+            { id: 'read-missing', name: 'read_file', arguments: { path: path.join(tmpRoot, 'missing.txt') } },
+          ],
+        };
+      }
+      return { content: 'Done.', toolCalls: [] };
+    },
+  });
+
+  assert.equal(result.status, 'completed');
+  const toolMessages = session.messages.filter((m) => m.role === 'tool');
+  const good = toolMessages.find((m) => m.toolCallId === 'read-good');
+  const missing = toolMessages.find((m) => m.toolCallId === 'read-missing');
+  assert.equal(good.ok, true, 'a successful tool result should persist ok: true');
+  assert.equal(missing.ok, false, 'a failed tool result should persist ok: false');
+});
+
 test('runAgentTurn does not persist narration as an answer when a tool is called', async (t) => {
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-tool-narration-'));
   t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));

@@ -525,3 +525,50 @@ test('server API enforces X-Auth-Token, masks API keys, and manages sessions, sk
     await fs.rm(tmpHome, { recursive: true, force: true });
   }
 });
+
+test('POST /api/sessions validates field types, ids, and title bounds', async () => {
+  const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-session-validate-'));
+  const paths = getRuntimePaths(tmpHome);
+  const authToken = 'session-validate-token';
+  const srv = createAgentServer({
+    authToken,
+    paths,
+    agendaNotifications: false,
+    runAgentTurnFn: async () => {},
+  });
+  try {
+    const { port } = await srv.start();
+    const base = `http://127.0.0.1:${port}`;
+    await fs.mkdir(paths.root, { recursive: true });
+    const post = (body) =>
+      fetch(`${base}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+        body: JSON.stringify(body),
+      });
+
+    // A non-string title must be rejected — an object title would crash the sidebar's
+    // (s.title || '').toLowerCase() when rendering.
+    const badTitle = await post({ id: 'validate-1', title: { evil: true } });
+    assert.equal(badTitle.status, 400);
+
+    // An invalid id string returns 400 (not a 500 from sanitizeId).
+    const badId = await post({ id: 'not a valid id!', title: 'ok' });
+    assert.equal(badId.status, 400);
+    assert.equal((await badId.json()).ok, false);
+
+    // An overlong title is capped at 80 chars, matching PATCH /api/sessions/:id.
+    const long = await post({ id: 'validate-2', title: 'T'.repeat(500) });
+    assert.equal(long.status, 200);
+    const created = await long.json();
+    assert.equal(created.session.title.length, 80);
+
+    // Defaults still work with an empty body.
+    const empty = await post({});
+    assert.equal(empty.status, 200);
+    assert.equal((await empty.json()).session.title, 'New Task');
+  } finally {
+    await srv.stop().catch(() => {});
+    await fs.rm(tmpHome, { recursive: true, force: true });
+  }
+});

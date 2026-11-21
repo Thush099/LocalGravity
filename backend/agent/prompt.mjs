@@ -25,6 +25,7 @@ export function buildSystemPrompt({
   isHeadless = false,
   allowAutoRun = false,
   compact = false,
+  hasTools = true,
   mode = 'auto',
   cwd,
 }) {
@@ -66,6 +67,26 @@ export function buildSystemPrompt({
 
   const modeDirective = MODE_DIRECTIVES[mode] || '';
 
+  if (!hasTools) {
+    // Pure text turn (rewrite / summarize / explain): no tools are exposed, so the
+    // tool-capability rules and the skill/knowledge catalogs below are dead weight at
+    // prefill time. Keep identity, mode, tone, and memory; drop the rest so the first
+    // token arrives sooner on a local model.
+    return [
+      `You are LocalGravity, a fast autonomous macOS agent (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}). ${modeLine}`,
+      ...(modeDirective ? [modeDirective] : ''),
+      '',
+      '## Rules',
+      '1. Answer directly and concisely. Return the result itself—no preamble, no tool narration.',
+      '2. Expand only when the user asks for detail, and include every requested point.',
+      '3. Finish the requested task, then stop.',
+      trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+    ]
+      .filter((line) => line !== '' && line !== undefined)
+      .join('\n')
+      .trim();
+  }
+
   if (compact) {
     return [
       `You are LocalGravity, a fast autonomous macOS agent (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}). ${modeLine}`,
@@ -78,7 +99,7 @@ export function buildSystemPrompt({
         ? `3. Self-upgrade LocalGravity at \`${repoPath}\` via \`read_skill("self-upgrade")\`, then verify \`npm test\` and \`npm run build:app\`.`
         : '',
       '4. Never repeat a failing call identically—diagnose from `[Self-Healing Hint]`, pivot, and verify edits with real commands/tests.',
-      '5. For 2+ step tasks, publish progress with `update_plan`. Use `system_stats` for Mac health and schedule tools for timetable changes. Always end with a clear, direct answer.',
+      '5. For 2+ step tasks, publish progress with `update_plan`. Use `system_stats` for Mac health and schedule tools for timetable changes. After organizing files with `move_file`, note they are reversible with `undo_file_moves`. Always end with a clear, direct answer.',
       '6. For ordinary conversational questions, give the shortest complete answer; expand only when the user asks for detail, and include every requested point.',
       '7. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
       '',
@@ -109,7 +130,7 @@ export function buildSystemPrompt({
     '4. **Autonomous Self-Healing & Mistake Learning:** If a command, edit, or tool call fails, never repeat the identical failing call. Diagnose the root cause from the `[Self-Healing Hint]`, pivot immediately, and call `self_improve` (or `save_skill`) to program the verified fix and helper script so you never repeat that mistake.',
     '5. **Plan & Verify:** For any task with 2+ distinct steps, call `update_plan` first to publish a checklist (mark steps `active`/`done` as you go) so the user can watch progress. Read files before editing (`read_file`/`search_files`). After editing code or running scripts, execute real tests/checks (`run_command`) and report only directly observed results. Use `calculate` for exact arithmetic instead of guessing numbers.',
     '6. **Visual Media Inspection:** When editing photos or videos, call `inspect_media` before and after edits to visually verify framing, lighting, and text.',
-    '7. **macOS Automation & Quick Actions:** Use `run_applescript` for deep Finder/Notes/Safari/System Events automation and `run_shortcut` to invoke the Shortcuts the user has built. For everyday actions use `copy_to_clipboard` / `paste_from_clipboard`, `show_notification`, `open_app`, and `set_reminder` (background timer) rather than shelling out.',
+    '7. **macOS Automation & Quick Actions:** Use `run_applescript` for deep Finder/Notes/Safari/System Events automation and `run_shortcut` to invoke the Shortcuts the user has built. For everyday actions use `copy_to_clipboard` / `paste_from_clipboard`, `show_notification`, `open_app`, and `set_reminder` (background timer) rather than shelling out. After organizing files with `move_file`, tell the user they can reverse it with `undo_file_moves`.',
     '8. **Everyday Dashboard Tools:** For "how is my Mac" questions call `system_stats` (CPU, memory, GPU, storage, top processes) and quote its numbers. For "what\'s next", "add X at Y", or planning requests use `list_schedule_items` / `add_schedule_item` (recurring days, or `date` for one-offs) / `remove_schedule_item` instead of shelling out.',
     '9. **Always provide a direct final response:** Never end a turn with an empty reply. Skip throat-clearing and state exact actions, file paths, and results.',
     '10. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',

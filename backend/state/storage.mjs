@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getRuntimePaths } from './paths.mjs';
 
-const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$/;
+export const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$/;
 const writeQueues = new Map();
 const sessionSummariesCache = new Map();
 const configCache = new Map();
@@ -198,6 +198,9 @@ async function ensureSessionCachePopulated(paths = getRuntimePaths()) {
   return dirCache;
 }
 
+/** Cap on the session-list response; pinned and most-recent sessions sort first. */
+export const MAX_LISTED_SESSIONS = 300;
+
 export async function listSessions(paths = getRuntimePaths()) {
   try {
     const dirCache = await ensureSessionCachePopulated(paths);
@@ -207,7 +210,7 @@ export async function listSessions(paths = getRuntimePaths()) {
         Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
         (b.updatedAt || '').localeCompare(a.updatedAt || '')
     );
-    return summaries;
+    return summaries.slice(0, MAX_LISTED_SESSIONS);
   } catch {
     return [];
   }

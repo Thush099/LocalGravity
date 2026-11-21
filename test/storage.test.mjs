@@ -12,6 +12,7 @@ import {
   saveSession,
   loadSession,
   listSessions,
+  MAX_LISTED_SESSIONS,
   deleteSession,
   saveAutomations,
   loadAutomations,
@@ -75,5 +76,28 @@ test('storage persists config with 0600 mode, isolates sessions, and handles con
   assert.equal(await deleteSession('sess-1', paths), true);
   assert.equal(await loadSession('sess-1', paths), null);
 
+  await fs.rm(tmpHome, { recursive: true, force: true });
+});
+
+test('listSessions caps its response at MAX_LISTED_SESSIONS', async () => {
+  const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-session-cap-'));
+  const paths = getRuntimePaths(tmpHome);
+  await fs.mkdir(paths.sessionsDir, { recursive: true });
+  for (let i = 0; i < 305; i += 1) {
+    await fs.writeFile(
+      path.join(paths.sessionsDir, `cap-${i}.json`),
+      JSON.stringify({
+        id: `cap-${i}`,
+        title: `Session ${i}`,
+        updatedAt: new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString(),
+        messages: [],
+      }),
+      'utf8'
+    );
+  }
+  const list = await listSessions(paths);
+  assert.equal(list.length, MAX_LISTED_SESSIONS);
+  // Most recent sessions sort first.
+  assert.equal(list[0].id, 'cap-304');
   await fs.rm(tmpHome, { recursive: true, force: true });
 });

@@ -155,15 +155,28 @@ export function safeParseArguments(rawArgs) {
 
 /**
  * Read a fetch Response body line-by-line cleanly without duplicating buffer logic across providers.
+ *
+ * `idleTimeoutMs` guards against a wedged stream: a local model runner that stops sending bytes
+ * without closing the socket would otherwise hang the turn forever. This is an IDLE timeout, not
+ * a total-duration cap, so long generations that keep streaming are never interrupted.
  */
-export async function readResponseLines(response, onLine) {
+export async function readResponseLines(response, onLine, { idleTimeoutMs = 0 } = {}) {
   if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk;
+    try {
+      chunk = await readWithIdleGuard(reader, idleTimeoutMs);
+    } catch (err) {
+      if (err?.code === 'STREAM_STALLED') {
+        await reader.cancel().catch(() => {});
+      }
+      throw err;
+    }
+    const { done, value } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let idx;
@@ -175,4 +188,34 @@ export async function readResponseLines(response, onLine) {
   }
   const tail = buffer.replace(/\r$/, '');
   if (tail) await onLine(tail);
+}
+
+/**
+ * Await the next stream chunk, rejecting if no bytes arrive for `idleTimeoutMs`.
+ * Disabled entirely when `idleTimeoutMs` is 0 or not a positive number.
+ */
+async function readWithIdleGuard(reader, idleTimeoutMs) {
+  const ms = Number(idleTimeoutMs);
+  if (!Number.isFinite(ms) || ms <= 0) return reader.read();
+
+  let timer;
+  const stall = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const waited = ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms)}ms`;
+      const err = new Error(
+        `The local model stalled: no output for ${waited}. ` +
+          'Ollama may be out of memory or its runner wedged — the turn was stopped instead of hanging. ' +
+          'Try again, or free up memory first.'
+      );
+      err.code = 'STREAM_STALLED';
+      reject(err);
+    }, ms);
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([reader.read(), stall]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

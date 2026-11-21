@@ -208,6 +208,21 @@ test('move_file relocates files and folders with spaces, creating destination fo
   assert.equal(replaced.ok, true);
   assert.equal(await fs.readFile(clashDest, 'utf8'), 'new');
 
+  const folderSrc = path.join(srcDir, 'folder-to-move');
+  const folderDest = path.join(tmpRoot, 'existing-folder');
+  await fs.mkdir(folderSrc);
+  await fs.writeFile(path.join(folderSrc, 'source.txt'), 'keep source');
+  await fs.mkdir(folderDest);
+  await fs.writeFile(path.join(folderDest, 'destination.txt'), 'keep destination');
+  const refusedFolderReplace = await executeToolCall(
+    { name: 'move_file', args: { source: folderSrc, destination: folderDest, overwrite: true } },
+    ctx
+  );
+  assert.equal(refusedFolderReplace.ok, false);
+  assert.match(refusedFolderReplace.output, /directory|folder/i);
+  assert.equal(await fs.readFile(path.join(folderSrc, 'source.txt'), 'utf8'), 'keep source');
+  assert.equal(await fs.readFile(path.join(folderDest, 'destination.txt'), 'utf8'), 'keep destination');
+
   // Directories move recursively.
   const dirSrc = path.join(tmpRoot, 'Album');
   await fs.mkdir(dirSrc);

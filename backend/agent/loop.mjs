@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { runInstantAction } from '../actions.mjs';
 import { ensureKnowledgeSeeded, listKnowledge, readKnowledge } from '../knowledge-engine.mjs';
 import { streamAnthropicChat } from '../providers/anthropic.mjs';
 import { DEFAULT_OLLAMA_URL, streamOllamaChat } from '../providers/ollama.mjs';
@@ -27,9 +28,11 @@ const seededRoots = new Set();
 
 function resolveProviderChatFn(providerConfig = {}) {
   const provider = providerConfig.provider || 'ollama';
-  if (provider === 'ollama') {
-    return (req) =>
-      streamOllamaChat({
+  const fallbackProviders = Array.isArray(providerConfig.fallbackProviders) ? providerConfig.fallbackProviders : [];
+
+  const primaryFn = (req) => {
+    if (provider === 'ollama') {
+      return streamOllamaChat({
         baseUrl: providerConfig.ollamaUrl || DEFAULT_OLLAMA_URL,
         model: providerConfig.model || 'qwen3.5:4b',
         messages: req.messages,
@@ -39,12 +42,11 @@ function resolveProviderChatFn(providerConfig = {}) {
         signal: req.signal,
         onEvent: req.onEvent,
       });
-  }
+    }
 
-  if (provider === 'anthropic') {
-    const apiKey = providerConfig.apiKeys?.anthropic || providerConfig.apiKey || '';
-    return (req) =>
-      streamAnthropicChat({
+    if (provider === 'anthropic') {
+      const apiKey = providerConfig.apiKeys?.anthropic || providerConfig.apiKey || '';
+      return streamAnthropicChat({
         baseUrl: providerConfig.customBaseUrl || CLOUD_PRESETS.anthropic.baseUrl,
         apiKey,
         model: providerConfig.model || CLOUD_PRESETS.anthropic.defaultModel,
@@ -53,16 +55,20 @@ function resolveProviderChatFn(providerConfig = {}) {
         signal: req.signal,
         onEvent: req.onEvent,
       });
-  }
+    }
 
-  const preset = CLOUD_PRESETS[provider] || CLOUD_PRESETS.custom;
-  const baseUrl =
-    provider === 'custom'
-      ? providerConfig.customBaseUrl || preset.baseUrl
-      : preset.baseUrl;
-  const apiKey = providerConfig.apiKeys?.[provider] || providerConfig.apiKey || '';
-  return (req) =>
-    streamOpenAIChat({
+    const preset = CLOUD_PRESETS[provider] || CLOUD_PRESETS.custom;
+    const baseUrl =
+      provider === 'custom'
+        ? providerConfig.customBaseUrl || preset.baseUrl
+        : preset.baseUrl;
+    const apiKey = providerConfig.apiKeys?.[provider] || providerConfig.apiKey || '';
+    const extraH = providerConfig.customHeaders || {};
+    if (provider === 'openrouter' && !extraH['HTTP-Referer']) {
+      extraH['HTTP-Referer'] = 'https://github.com/Thush099/LocalGravity';
+      extraH['X-Title'] = 'LocalGravity';
+    }
+    return streamOpenAIChat({
       baseUrl,
       apiKey,
       model: providerConfig.model || preset.defaultModel,
@@ -70,11 +76,32 @@ function resolveProviderChatFn(providerConfig = {}) {
       tools: req.tools,
       signal: req.signal,
       onEvent: req.onEvent,
-      extraHeaders:
-        provider === 'openrouter'
-          ? { 'HTTP-Referer': 'https://github.com/Thush099/LocalGravity', 'X-Title': 'LocalGravity' }
-          : {},
+      extraHeaders: extraH,
     });
+  };
+
+  if (fallbackProviders.length === 0) return primaryFn;
+
+  return async (req) => {
+    let lastErr;
+    try {
+      return await primaryFn(req);
+    } catch (err) {
+      lastErr = err;
+      onEvent?.({ type: 'text_delta', text: `\n[Primary provider failed: ${err.message}. Trying fallback...]\n` });
+    }
+
+    for (const fb of fallbackProviders) {
+      try {
+        const fbConfig = { ...providerConfig, provider: fb.provider, model: fb.model || providerConfig.model };
+        const fbFn = resolveProviderChatFn({ ...fbConfig, fallbackProviders: [] });
+        return await fbFn(req);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  };
 }
 
 async function prepareAttachmentContext(attachments = [], paths) {
@@ -163,6 +190,7 @@ export async function runAgentTurn({
   persistSession = true,
   mode = 'auto',
   cwd,
+  instantAction,
 }) {
   const turnStartedAt = Date.now();
   if (!seededRoots.has(paths.root)) {
@@ -191,6 +219,21 @@ export async function runAgentTurn({
   }
 
   const provider = providerConfig.provider || 'ollama';
+
+  // Instant actions run deterministically on-device with no model round-trip, so the
+  // common Mac lookups answer immediately instead of waiting on local inference.
+  if (instantAction) {
+    const result = await runInstantAction(instantAction, { paths, cwd });
+    const content = `**${result.title}** — ran on your Mac\n\n${result.output}`;
+    const usage = { durationMs: Math.max(1, Date.now() - turnStartedAt), model: '' };
+    session.messages.push({ role: 'assistant', content, usage, createdAt: new Date().toISOString() });
+    session.updatedAt = new Date().toISOString();
+    if (persistSession) await saveSession(session, paths);
+    onEvent?.({ type: 'text_delta', text: content });
+    onEvent?.({ type: 'done', status: result.ok ? 'completed' : 'error', usage });
+    return { session, status: result.ok ? 'completed' : 'error' };
+  }
+
   if (
     provider === 'ollama' &&
     attachments.length === 0 &&
@@ -248,6 +291,15 @@ export async function runAgentTurn({
   const suggestedSkills = selectRelevantSkills(skills, fullUserText);
 
   const isLocalOllama = provider === 'ollama';
+  const selectedTools = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider,
+    userMessage: fullUserText,
+    sessionMessages: session.messages,
+    attachments,
+    mode,
+  });
+  const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
+
   const systemPrompt = buildSystemPrompt({
     skills,
     suggestedSkills,
@@ -259,18 +311,11 @@ export async function runAgentTurn({
     isHeadless,
     allowAutoRun,
     compact: isLocalOllama,
+    hasTools: activeTools.length > 0,
     mode,
     cwd,
   });
 
-  const selectedTools = selectToolsForTurn(TOOL_DEFINITIONS, {
-    provider,
-    userMessage: fullUserText,
-    sessionMessages: session.messages,
-    attachments,
-    mode,
-  });
-  const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
   const systemTokens = Math.ceil(systemPrompt.length / 3.5) + 8;
   const toolsTokens = estimateToolsTokens(activeTools);
 
@@ -457,6 +502,7 @@ export async function runAgentTurn({
           role: 'tool',
           toolCallId: tc.id,
           toolName: tc.name,
+          ok: result.ok,
           content: enrichedOutput,
           images: result.images,
           diff: result.diff,
@@ -525,6 +571,7 @@ export async function runAgentTurn({
                 role: 'tool',
                 toolCallId: batchTc.id,
                 toolName: batchTc.name,
+                ok: false,
                 content: out.message,
               });
               onEvent?.({
@@ -545,7 +592,7 @@ export async function runAgentTurn({
         if (tc.parseError) {
           tracker.recordParseError(tc.name, tc.parseError);
           const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid double-quoted JSON arguments.`;
-          session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, content: errOut });
+          session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: errOut });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: errOut });
           continue;
         }
@@ -560,6 +607,7 @@ export async function runAgentTurn({
             role: 'tool',
             toolCallId: tc.id,
             toolName: tc.name,
+            ok: false,
             content: dupCheck.message,
           });
           onEvent?.({
@@ -586,7 +634,7 @@ export async function runAgentTurn({
 
         if (gate.decision === 'block') {
           const blockedMsg = `Blocked by safety policy: ${gate.reason}`;
-          session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, content: blockedMsg });
+          session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
           continue;
         }
@@ -608,7 +656,7 @@ export async function runAgentTurn({
 
           if (!decision?.approved) {
             const deniedMsg = `User denied ${tc.name}: ${decision?.reason || 'Cancelled by user.'}`;
-            session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, content: deniedMsg });
+            session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: deniedMsg });
             onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: deniedMsg });
             continue;
           }
@@ -621,7 +669,7 @@ export async function runAgentTurn({
             );
             if (recheck.decision === 'block') {
               const blockedMsg = `Blocked edited command: ${recheck.reason}`;
-              session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, content: blockedMsg });
+              session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
               onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
               continue;
             }

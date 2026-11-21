@@ -12,6 +12,70 @@ test('compact local-agent prompts prefer the shortest complete response unless d
   assert.match(prompt, /include every requested point/i);
 });
 
+test('pure provided-text turns stay tool-free while referenced-file turns keep tools', () => {
+  const transforms = [
+    'Humanize this paragraph so it reads naturally: The utilization of the system facilitates many workflows.',
+    'Summarize this text in one line: The quick brown fox jumps over the lazy dog and keeps running.',
+    'Rewrite this to be concise: The utilization of the system facilitates many things.',
+    'Paraphrase this sentence: The quick brown fox jumps over the lazy dog and keeps going.',
+  ];
+  for (const message of transforms) {
+    const selected = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message });
+    assert.deepEqual(selected.map((t) => t.function.name), [], `provided-text transform should stay tool-free: ${message}`);
+  }
+  // Requests that point at real files or actions still get tools (regression guards).
+  const referenced = [
+    ['Summarize this document', 'read_file'],
+    ['Clean up my downloads folder', 'run_command'],
+    ['Can you fix this for me?', 'edit_file'],
+    ['Clean up and organize files in my Downloads folder by moving them into subfolders.', 'move_file'],
+  ];
+  for (const [message, expected] of referenced) {
+    const selected = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message });
+    const names = selected.map((t) => t.function.name);
+    assert.ok(names.includes(expected), `${message} -> expected ${expected}, got ${names.join(',') || '(no tools)'}`);
+  }
+});
+
+test('tool-free turns get a lean prompt without tool or skill catalog overhead', () => {
+  const shared = {
+    compact: true,
+    skills: [{ slug: 'a-skill', description: 'does a thing' }],
+    knowledgeDocs: [{ name: 'doc', title: 'A doc' }],
+  };
+  const lean = buildSystemPrompt({ ...shared, hasTools: false });
+  const full = buildSystemPrompt({ ...shared, hasTools: true });
+  assert.match(lean, /concisely/i);
+  assert.doesNotMatch(lean, /read_skill|## Skills|## Knowledge/);
+  assert.ok(lean.length < full.length, `lean (${lean.length}) should be shorter than full (${full.length})`);
+});
+
+test('pasted prose after a colon stays tool-free even when it mentions system words', () => {
+  // The text after the colon is content to rewrite, not a request to inspect the system.
+  for (const message of [
+    'Humanize this: The system is fast',
+    'Rewrite this: the quick brown fox jumps over the lazy dog while the disk spins',
+  ]) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map((t) => t.function.name);
+    assert.equal(names.length, 0, `${message} should be tool-free, got ${names.join(',')}`);
+  }
+  // A code request ("this component") or a file reference keeps its tools.
+  for (const fileWork of ['Rewrite this component to be faster', 'Rewrite README.md', 'Rewrite this: README.md', 'Translate report.pdf to English']) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: fileWork }).map((t) => t.function.name);
+    assert.ok(names.includes('edit_file'), `${fileWork} should keep file tools, got ${names.join(',') || 'none'}`);
+  }
+});
+
+test('undo phrasings surface undo_file_moves while ordinary edits do not', () => {
+  const undoPhrasings = ['Undo the file moves', 'Revert the organize I just did', 'Put the files back where they were'];
+  for (const message of undoPhrasings) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map((t) => t.function.name);
+    assert.ok(names.includes('undo_file_moves'), `${message} -> expected undo_file_moves, got ${names.join(',') || '(no tools)'}`);
+  }
+  const editNames = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: 'Can you fix this for me?' }).map((t) => t.function.name);
+  assert.ok(!editNames.includes('undo_file_moves'), 'ordinary edits should not surface undo_file_moves');
+});
+
 test('selectToolsForTurn keeps general local conversation tool-free and adds only task-relevant tools', () => {
   const general = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { INSTANT_ACTION_IDS, runInstantAction } from './actions.mjs';
 import { compactConversation } from './agent/compactor.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
@@ -46,6 +47,7 @@ import {
 } from './skills-engine.mjs';
 import { getRuntimePaths } from './state/paths.mjs';
 import {
+  SAFE_ID_RE,
   deleteSession,
   listSessions,
   searchSessions,
@@ -605,6 +607,18 @@ export function createAgentServer({
         return;
       }
 
+      // Instant actions: deterministic, read-only Mac lookups with no model round-trip.
+      if (req.method === 'GET' && pathname === '/api/actions') {
+        sendJson(res, 200, { ok: true, actions: INSTANT_ACTION_IDS });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/actions/run') {
+        const body = await readJsonBody(req);
+        const result = await runInstantAction(body.action, { paths, cwd: body.cwd });
+        return sendJson(res, result.ok ? 200 : 400, result);
+      }
+
       // Sessions
       if (req.method === 'GET' && pathname === '/api/sessions') {
         const sessions = await listSessions(paths);
@@ -614,14 +628,22 @@ export function createAgentServer({
 
       if (req.method === 'POST' && pathname === '/api/sessions') {
         const body = await readJsonBody(req);
+        for (const field of ['id', 'title', 'provider', 'model']) {
+          if (body[field] !== undefined && typeof body[field] !== 'string') {
+            return sendJson(res, 400, { ok: false, error: `${field} must be a string` });
+          }
+        }
+        if (body.id !== undefined && !SAFE_ID_RE.test(body.id)) {
+          return sendJson(res, 400, { ok: false, error: 'id may only contain letters, digits, - and _ (max 81 chars)' });
+        }
         const cfg = await loadConfig(paths);
         const session = await saveSession(
           {
             id: body.id || `task-${Date.now()}`,
-            title: body.title || 'New Task',
+            title: body.title?.trim() ? body.title.trim().slice(0, 80) : 'New Task',
             source: 'interactive',
-            provider: body.provider || cfg.provider,
-            model: body.model || cfg.model,
+            provider: (body.provider || cfg.provider).trim().slice(0, 120),
+            model: (body.model || cfg.model).trim().slice(0, 120),
             messages: [],
           },
           paths
@@ -846,7 +868,7 @@ export function createAgentServer({
               ...(body.customBaseUrl ? { customBaseUrl: body.customBaseUrl } : {}),
             };
 
-            if (effectiveConfig.provider === 'ollama') {
+            if (effectiveConfig.provider === 'ollama' && !body.instantAction) {
               await modelWarmups.get(effectiveConfig.model);
             }
             await runAgentTurnFn({
@@ -857,6 +879,7 @@ export function createAgentServer({
               providerConfig: effectiveConfig,
               mode: body.mode || session.mode || 'auto',
               cwd: session.cwd || undefined,
+              instantAction: body.instantAction || undefined,
               onEvent: emitSse,
               abortSignal: abortController.signal,
               requestApproval: (approvalReq) =>

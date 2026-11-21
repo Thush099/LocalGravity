@@ -11,6 +11,23 @@ import {
 } from './tool-parser.mjs';
 
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
+/**
+ * Local streams are opened with zero socket timeouts so heavy prefill is not killed, which
+ * means a wedged runner would hang forever. This is the idle ceiling: no bytes at all for
+ * three minutes (roughly 3x the observed worst-case cold prefill) stops the turn with a
+ * clear message instead of leaving the UI spinning.
+ */
+const LOCAL_STREAM_IDLE_TIMEOUT_MS = 180000;
+
+/**
+ * Effective idle ceiling for local streams. `LOCALGRAVITY_STREAM_IDLE_MS` overrides the
+ * default so a slower machine (or a test) can tune how long a silent stream is tolerated.
+ * Non-numeric or non-positive values fall back to the default.
+ */
+function localStreamIdleTimeoutMs() {
+  const raw = Number(process.env.LOCALGRAVITY_STREAM_IDLE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : LOCAL_STREAM_IDLE_TIMEOUT_MS;
+}
 const PREFERRED_LOCAL_MODELS_16GB = ['qwen3.5:4b', 'qwen3.5:9b', 'gemma4:12b'];
 const PREFERRED_LOCAL_MODELS_LARGE = ['qwen3.5:9b', 'qwen3.5:4b', 'gemma4:12b'];
 const NATIVE_FETCH = globalThis.fetch;
@@ -503,7 +520,7 @@ export async function streamOllamaChat({
           completionTokens: chunk.eval_count || 0,
         };
       }
-    });
+    }, { idleTimeoutMs: isLocalHttpUrl(endpoint) ? localStreamIdleTimeoutMs() : 0 });
   };
 
   for (let attempt = 0; attempt < 2; attempt++) {
