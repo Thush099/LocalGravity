@@ -455,6 +455,28 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'large_files',
+      description:
+        'Find the largest files in folders to free up disk space. Read-only; reports sizes and ages, never deletes. Defaults to Downloads, Desktop, and Documents.',
+      parameters: {
+        type: 'object',
+        properties: {
+          folders: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Folder names or paths to scan (e.g. ["Downloads","~/Movies"]). Defaults to common user folders.',
+          },
+          limit: {
+            type: 'number',
+            description: 'How many of the largest files to return (default 15, max 50).',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'add_schedule_item',
       description:
         'Add a timetable entry. Recurring: supply days (0=Sunday..6=Saturday, default every day). One-off on a specific date: supply date as YYYY-MM-DD and omit days. Times are local 24-hour HH:MM.',
@@ -974,6 +996,12 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         const metrics = await collectSystemMetrics();
         if (args.include_processes === false) metrics.processes = [];
         return { ok: true, output: summarizeSystemMetrics(metrics) };
+      }
+      case 'large_files': {
+        // Lazy-loaded: actions.mjs imports executeToolCall from this module, so a
+        // static import would close a cycle. Deferring keeps the module graph acyclic.
+        const { largeFilesTool } = await import('../actions.mjs');
+        return await largeFilesTool(args);
       }
       case 'add_schedule_item': {
         const result = await upsertScheduleEntry(

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInstantAction, getInstantAction, INSTANT_ACTION_IDS, storageAudit, organizePreview, largestFiles } from '../backend/actions.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
-import { evaluateToolSafety } from '../backend/tools/registry.mjs';
+import { evaluateToolSafety, executeToolCall, TOOL_DEFINITIONS } from '../backend/tools/registry.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
 
 test('instant action ids are exposed and resolve to titled actions', () => {
@@ -144,6 +144,26 @@ test('large_files is a registered read-only instant action', () => {
   assert.ok(action, 'large_files resolves');
   assert.equal(typeof action.run, 'function');
   assert.ok(action.title.length > 0);
+});
+
+test('large_files agent tool ranks files across folders, honors limit, and stays read-only', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-largefiles-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.writeFile(path.join(root, 'big.bin'), Buffer.alloc(2048));
+  await fs.writeFile(path.join(root, 'small.txt'), 'hi');
+  await fs.mkdir(path.join(root, 'sub'));
+  await fs.writeFile(path.join(root, 'sub', 'mid.bin'), Buffer.alloc(1024));
+
+  assert.ok(TOOL_DEFINITIONS.some((tt) => tt.function?.name === 'large_files'), 'large_files is a registered tool');
+
+  const r = await executeToolCall({ name: 'large_files', args: { folders: [root], limit: 2 } }, {});
+  assert.equal(r.ok, true);
+  assert.match(r.output, /Largest files in/i);
+  assert.match(r.output, /big\.bin/);
+  assert.match(r.output, /nothing is removed automatically/i);
+  const listed = r.output.split('\n').filter((l) => /^\d+\.\s/.test(l.trim()));
+  assert.equal(listed.length, 2, 'limit is honored');
+  assert.match(listed[0], /big\.bin/, 'largest file is listed first');
 });
 
 test('organize_plan is a registered read-only instant action', () => {

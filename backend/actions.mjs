@@ -275,6 +275,65 @@ export async function largestFiles(dirs, { limit = 15, maxEntries = 20000, maxDi
   return { files, scanned: paths.length };
 }
 
+/**
+ * Format a largest-files report for a set of directories. Shared by the
+ * `large_files` instant action and the `large_files` agent tool so both render
+ * identically.
+ */
+export async function largestFilesReport(dirs, { limit = 15, maxEntries = 20000, maxDirs = 2000 } = {}) {
+  const { files, scanned } = await largestFiles(dirs, { limit, maxEntries, maxDirs });
+  if (files.length === 0) return `No files found in ${dirs.map((d) => path.basename(d)).join(' or ')}.`;
+  const age = (mtimeMs) => {
+    const days = Math.floor((Date.now() - mtimeMs) / 86400000);
+    if (days < 1) return 'today';
+    if (days < 30) return `${days}d ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+  };
+  const lines = files.map((f, i) => `${i + 1}. ${formatBytes(f.size).padStart(9)}  ${age(f.mtimeMs).padStart(8)}  ${path.basename(f.file)}`);
+  return bounded([
+    `Largest files in ${dirs.map((d) => path.basename(d)).join(' and ')} (largest first, ${scanned} scanned):`,
+    ...lines,
+    '',
+    'Review and delete or archive what you no longer need — nothing is removed automatically.',
+  ].join('\n'));
+}
+
+/**
+ * `large_files` agent tool: report the largest files across the requested folders
+ * (defaulting to the common user folders) so the agent answers "what's eating my
+ * disk" in one call. Read-only — nothing is deleted.
+ */
+export async function largeFilesTool({ folders, limit } = {}) {
+  const home = os.homedir();
+  const requested = (Array.isArray(folders) ? folders : []).filter((f) => typeof f === 'string' && f.trim());
+  const resolveDir = (f) => (path.isAbsolute(f) ? f : path.join(home, f.replace(/^~\/?/, '')));
+  const dirs = [];
+  for (const f of requested) {
+    const abs = resolveDir(f.trim());
+    try {
+      await fs.access(abs);
+    } catch {
+      continue;
+    }
+    if (!dirs.includes(abs)) dirs.push(abs);
+  }
+  if (dirs.length === 0) {
+    for (const name of ['Downloads', 'Desktop', 'Documents']) {
+      const dir = path.join(home, name);
+      try {
+        await fs.access(dir);
+      } catch {
+        continue;
+      }
+      dirs.push(dir);
+    }
+  }
+  if (dirs.length === 0) return { ok: false, output: 'No matching folders found to scan.' };
+  const capped = Math.max(1, Math.min(50, Number(limit) || 15));
+  return { ok: true, output: await largestFilesReport(dirs, { limit: capped }) };
+}
+
 const ACTIONS = {
   system_health: {
     title: 'System health',
@@ -361,22 +420,7 @@ const ACTIONS = {
         dirs.push(dir);
       }
       if (dirs.length === 0) return 'No Downloads or Desktop folder found.';
-      const { files, scanned } = await largestFiles(dirs, { limit: 15 });
-      if (files.length === 0) return `No files found in ${dirs.map((d) => path.basename(d)).join(' or ')}.`;
-      const age = (mtimeMs) => {
-        const days = Math.floor((Date.now() - mtimeMs) / 86400000);
-        if (days < 1) return 'today';
-        if (days < 30) return `${days}d ago`;
-        if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-        return `${Math.floor(days / 365)}y ago`;
-      };
-      const lines = files.map((f, i) => `${i + 1}. ${formatBytes(f.size).padStart(9)}  ${age(f.mtimeMs).padStart(8)}  ${path.basename(f.file)}`);
-      return bounded([
-        `Largest files in ${dirs.map((d) => path.basename(d)).join(' and ')} (largest first, ${scanned} scanned):`,
-        ...lines,
-        '',
-        'Review and delete or archive what you no longer need — nothing is removed automatically.',
-      ].join('\n'));
+      return largestFilesReport(dirs, { limit: 15 });
     },
   },
 };

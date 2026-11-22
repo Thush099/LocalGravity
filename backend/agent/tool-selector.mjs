@@ -109,6 +109,11 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b|\b(?:battery|power|charge|charging|uptime|storage|free\s+(?:space|memory|ram)|slow|sluggish|overheat\w*|fans?|temperature)\b|\b(?:how(?:'s| is)\s+(?:my|the)|my|the|this)\s+(?:mac|computer|machine|laptop|system|pc)\b/i,
   },
   {
+    tools: ['large_files'],
+    pattern:
+      /\b(?:large|big|biggest|largest|huge|massive)\s+(?:files?|items?|documents?|videos?|photos?)\b|\b(?:what'?s|what is)\s+(?:taking|eating|using|hogging|filling)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space|drive)\b|\b(?:disk|storage|drive)\s+(?:cleanup|clean\s?up|usage|full|clutter)\b|\bfree\s*up\s+(?:disk|space|storage)\b/i,
+  },
+  {
     tools: ['inspect_media', 'take_screenshot', 'run_command'],
     pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|screen|display|desktop|on my screen|what'?s on|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
   },

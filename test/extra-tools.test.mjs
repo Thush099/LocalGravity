@@ -99,7 +99,7 @@ test('spotlightSearchTool validates empty query and executes safely via registry
 });
 
 test('new domain tools route cleanly via tool-selector without inflating baseline coding prompts', () => {
-  assert.equal(TOOL_DEFINITIONS.length, 40);
+  assert.equal(TOOL_DEFINITIONS.length, 41);
 
   const webTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',
@@ -125,4 +125,11 @@ test('new domain tools route cleanly via tool-selector without inflating baselin
     userMessage: 'Check Apple Notes for my grocery list',
   }).map((t) => t.function.name);
   assert.ok(notesTools.includes('manage_notes'));
+
+  // A new domain tool must stay out of lean coding prompts so it never slows them.
+  const codingTools = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Fix the bug in the login form validation and run the tests',
+  }).map((t) => t.function.name);
+  assert.ok(!codingTools.includes('large_files'), 'large_files stays out of coding prompts');
 });
