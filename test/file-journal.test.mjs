@@ -104,6 +104,36 @@ test('undo_file_moves(count) reverses several moves and reports each restoration
   assert.equal((await recentFileMoves(paths, 10)).length, 0);
 });
 
+test('undo_file_moves with no count reverses a whole batch move at once', async (t) => {
+  const home = await makeTmp(t);
+  const paths = getRuntimePaths(home);
+  const dir = path.join(home, 'src');
+  await fs.mkdir(dir, { recursive: true });
+  const a = path.join(dir, 'a.txt');
+  const b = path.join(dir, 'b.txt');
+  const c = path.join(dir, 'c.txt');
+  await fs.writeFile(a, 'A');
+  await fs.writeFile(b, 'B');
+  await fs.writeFile(c, 'C');
+
+  // One batch move of three files (a single move_file call).
+  await executeToolCall({ name: 'move_file', args: { moves: [
+    { source: a, destination: path.join(home, 'out', 'a.txt') },
+    { source: b, destination: path.join(home, 'out', 'b.txt') },
+    { source: c, destination: path.join(home, 'out', 'c.txt') },
+  ] } }, { paths });
+  assert.equal((await recentFileMoves(paths, 10)).length, 3);
+
+  // A single undo (no count) reverses the whole batch.
+  const undoRes = await executeToolCall({ name: 'undo_file_moves', args: {} }, { paths });
+  assert.equal(undoRes.ok, true);
+  assert.match(undoRes.output, /Undid 3 moves/);
+  assert.equal(await exists(a), true);
+  assert.equal(await exists(b), true);
+  assert.equal(await exists(c), true);
+  assert.equal((await recentFileMoves(paths, 10)).length, 0);
+});
+
 test('undo_file_moves with an empty journal reports there is nothing to undo', async (t) => {
   const home = await makeTmp(t);
   const paths = getRuntimePaths(home);

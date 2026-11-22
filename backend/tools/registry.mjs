@@ -931,8 +931,10 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         const result = await moveFileTool(args, { cwd: context.cwd });
         const movedList =
           result.moved || (result.ok ? [{ from: result.from, to: result.to, createdDirs: result.createdDirs }] : []);
+        // One opId per move_file call so a batch of moves undoes as a single unit.
+        const moveOpId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         for (const m of movedList) {
-          await recordFileMove(paths, { from: m.from, to: m.to, createdDirs: m.createdDirs });
+          await recordFileMove(paths, { from: m.from, to: m.to, createdDirs: m.createdDirs, opId: moveOpId });
         }
         if (movedList.length > 0) {
           invalidateSkillsCache(paths.skillsDir);

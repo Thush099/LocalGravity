@@ -25,11 +25,11 @@ async function writeJournal(paths, entries) {
 }
 
 /** Record a completed move so it can be undone. Best-effort: never fails the move itself. */
-export async function recordFileMove(paths, { from, to, createdDirs }) {
+export async function recordFileMove(paths, { from, to, createdDirs, opId }) {
   if (!paths?.fileJournalFile) return;
   try {
     const entries = await readJournal(paths);
-    entries.push({ ts: Date.now(), op: 'move', from, to, createdDirs: Array.isArray(createdDirs) ? createdDirs : [] });
+    entries.push({ ts: Date.now(), op: 'move', from, to, createdDirs: Array.isArray(createdDirs) ? createdDirs : [], opId: opId ?? null });
     await writeJournal(paths, entries);
   } catch {
     // A journal write failure must not turn a successful move into an error.
@@ -41,15 +41,33 @@ export async function recentFileMoves(paths, count = 10) {
 }
 
 /**
- * Reverse the last `count` recorded moves, most recent first. A move is skipped (never
- * clobbered) when its target has already been moved away or its original path is occupied
- * again. Reversed entries are dropped from the journal so a later undo advances to earlier
- * moves instead of repeating the same reversals.
+ * Reverse recorded moves, most recent first. With no `count`, reverses the whole most
+ * recent move operation — one file, or every file in the last batch. With a `count`,
+ * reverses exactly that many recent moves. A move is skipped (never clobbered) when its
+ * target has already been moved away or its original path is occupied again. Reversed
+ * entries are dropped from the journal so a later undo advances to earlier moves.
  */
-export async function undoFileMoves(paths, count = 1) {
+export async function undoFileMoves(paths, count = null) {
   const entries = await readJournal(paths);
-  const n = Math.min(Math.max(1, Math.floor(count) || 1), entries.length);
-  const toUndo = entries.slice(-n);
+  // With no explicit count, reverse the whole most recent move operation: a single
+  // move, or every file in the last batch (entries recorded together share an opId).
+  let toUndo;
+  if (count == null) {
+    const last = entries[entries.length - 1];
+    if (!last) {
+      toUndo = [];
+    } else if (last.opId == null) {
+      toUndo = [last];
+    } else {
+      toUndo = [];
+      for (let i = entries.length - 1; i >= 0 && entries[i].opId === last.opId; i -= 1) {
+        toUndo.unshift(entries[i]);
+      }
+    }
+  } else {
+    const n = Math.min(Math.max(1, Math.floor(count) || 1), entries.length);
+    toUndo = entries.slice(-n);
+  }
   const undone = [];
   const skipped = [];
   const undoneRefs = new Set();
