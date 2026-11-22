@@ -1542,7 +1542,7 @@ button, input, textarea, select {
 }
 
 #composer-voice-btn.listening {
-  color: #f43f5e;
+  color: var(--signal-red);
   border-color: rgba(255, 69, 58, 0.45);
   background: rgba(255, 69, 58, 0.12);
   animation: lg-pulse 1.2s ease-in-out infinite;
