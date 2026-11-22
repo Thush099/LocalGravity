@@ -305,3 +305,16 @@ test('filesystem tools resolve relative paths against the session cwd, not proce
   assert.equal(mv.ok, true, 'relative move resolves to the session cwd');
   assert.equal(await fs.readFile(path.join(tmpRoot, 'moved.txt'), 'utf8'), 'here');
 });
+
+test('sqlite_query resolves a relative db_path against the session cwd', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-sqliterel-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+  const r = await executeToolCall(
+    { name: 'sqlite_query', args: { db_path: 'rel.db', query: 'CREATE TABLE t(a); INSERT INTO t VALUES(1); SELECT * FROM t;' } },
+    ctx
+  );
+  assert.equal(r.ok, true);
+  await fs.access(path.join(tmpRoot, 'rel.db'), fs.constants.F_OK);
+});

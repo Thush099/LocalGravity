@@ -996,9 +996,9 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'open_url':
         return await openUrlTool(args);
       case 'git_op':
-        return await gitTool(args);
+        return await gitTool(args, { cwd: context.cwd });
       case 'sqlite_query':
-        return await sqliteTool(args);
+        return await sqliteTool(args, { cwd: context.cwd });
       case 'docker_op':
         return await dockerTool(args);
       case 'delegate_task':
@@ -1006,7 +1006,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'search_web':
         return await searchWebTool(args, { fetchFn: context.fetchFn || globalThis.fetch });
       case 'inspect_media':
-        return await inspectMediaTool(args);
+        return await inspectMediaTool(args, { cwd: context.cwd });
       case 'system_stats': {
         const metrics = await collectSystemMetrics();
         if (args.include_processes === false) metrics.processes = [];

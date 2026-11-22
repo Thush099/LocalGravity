@@ -5,10 +5,10 @@ import fs from 'node:fs/promises';
 
 const execAsync = promisify(exec);
 
-export async function gitTool(args = {}) {
-  const { action = 'status', directory = process.cwd(), message, branch, remote, count = 20 } = args;
+export async function gitTool(args = {}, opts = {}) {
+  const { action = 'status', directory, message, branch, remote, count = 20 } = args;
   try {
-    const cwd = path.resolve(directory);
+    const cwd = path.resolve(opts.cwd || process.cwd(), directory || '.');
     switch (action) {
       case 'status': {
         const { stdout } = await execAsync('git status -s', { cwd });

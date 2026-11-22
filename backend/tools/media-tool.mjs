@@ -68,8 +68,8 @@ async function probeVideo(resolvedPath) {
  * Inspect an image or extract a video frame / contact sheet so multimodal models can view media cleanly.
  * Uses an MTime-validated LRU cache so previewing + attaching the same file does not spawn duplicate sips/ffmpeg processes.
  */
-export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edge = 1280 }) {
-  const resolved = expandUserPath(mediaPath);
+export async function inspectMediaTool({ path: mediaPath, timestamp_sec, max_edge = 1280 }, opts = {}) {
+  const resolved = expandUserPath(mediaPath, opts.cwd);
   const ext = path.extname(resolved).toLowerCase();
   const edge = Math.min(Math.max(64, Number(max_edge) || 1280), 2048);
   const tmpPng = path.join(os.tmpdir(), `localgravity-inspect-${crypto.randomUUID()}.png`);
