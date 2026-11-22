@@ -1337,7 +1337,7 @@ function renderSessionItemHtml(s) {
     <div class="session-item ${state.activeSession?.id === s.id ? 'active' : ''}${s.pinned ? ' is-pinned' : ''}" data-id="${escapeHtml(s.id)}">
       ${state.isRunning && state.runningSessionId === s.id ? '<span class="session-running-dot" title="Running"></span>' : ''}
       <span class="session-title-wrap">
-        <span class="session-title" title="${escapeHtml(s.title)}">${s.pinned ? '<span class="session-pin-badge" title="Pinned">📌</span>' : ''}${escapeHtml(s.title)}</span>
+        <span class="session-title" title="${escapeHtml(s.title)}">${s.pinned ? '<span class="session-pin-badge" title="Pinned"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 3h6l-1 7 3 3H7l3-3-1-7z"/></svg></span>' : ''}${escapeHtml(s.title)}</span>
         ${s.snippet ? `<span class="session-snippet" title="${escapeHtml(s.snippet)}">${escapeHtml(s.snippet)}</span>` : ''}
       </span>
       ${s.source === 'scheduled' ? '<span class="session-badge">Auto</span>' : ''}

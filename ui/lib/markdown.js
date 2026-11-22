@@ -201,7 +201,7 @@ function renderCodeBlock(rawCode, codeLang) {
     ? `<button type="button" class="open-artifact-btn" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(rawCode)}">${isPreviewable ? 'Preview in Canvas' : 'Open in Canvas'}</button>`
     : '';
   const artifactPill = isPreviewable
-    ? `<button type="button" class="artifact-card-trigger open-artifact-btn" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(rawCode)}"><span><strong>${lang === 'svg' ? 'SVG Vector Graphic' : 'Interactive HTML Artifact'}</strong> · Isolated Sandbox</span><span>Open Canvas ↗</span></button>`
+    ? `<button type="button" class="artifact-card-trigger open-artifact-btn" data-lang="${escapeHtml(lang)}" data-code="${escapeHtml(rawCode)}"><span><strong>${lang === 'svg' ? 'SVG Vector Graphic' : 'Interactive HTML Artifact'}</strong> · Isolated Sandbox</span><span>Open Canvas</span></button>`
     : '';
   return `<div class="code-block"><div class="code-header"><span>${escapeHtml(lang)}</span><span class="code-header-actions">${canvasBtn}<button type="button" class="copy-code-btn" data-code="${escapeHtml(rawCode)}">Copy</button></span></div><pre><code>${highlighted}</code></pre>${artifactPill}</div>`;
 }

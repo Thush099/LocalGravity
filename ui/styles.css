@@ -3975,8 +3975,11 @@ button, input, textarea, select {
 }
 
 .session-pin-badge {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -1px;
   margin-right: 4px;
+  color: var(--accent);
 }
 
 .session-actions {
