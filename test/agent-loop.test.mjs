@@ -570,6 +570,24 @@ test('normalizeToolCall maps sql, start, title, and folder aliases for the newer
   assert.equal(calc.arguments.expression, '2 + 3 * 4');
 });
 
+test('normalizeToolCall maps common model tool-name aliases to registered tools', () => {
+  // A model may guess a friendlier name; the alias table resolves it to the registered
+  // tool and never shadows a real tool name.
+  assert.equal(normalizeToolCall({ name: 'bash', arguments: {} }).name, 'run_command');
+  assert.equal(normalizeToolCall({ name: 'read', arguments: {} }).name, 'read_file');
+  assert.equal(normalizeToolCall({ name: 'calc', arguments: {} }).name, 'calculate');
+  assert.equal(normalizeToolCall({ name: 'math', arguments: {} }).name, 'calculate');
+  assert.equal(normalizeToolCall({ name: 'sql', arguments: {} }).name, 'sqlite_query');
+  assert.equal(normalizeToolCall({ name: 'git', arguments: {} }).name, 'git_op');
+  assert.equal(normalizeToolCall({ name: 'screenshot', arguments: {} }).name, 'take_screenshot');
+  assert.equal(normalizeToolCall({ name: 'health', arguments: {} }).name, 'system_stats');
+  assert.equal(normalizeToolCall({ name: 'browse', arguments: {} }).name, 'open_url');
+  assert.equal(normalizeToolCall({ name: 'big_files', arguments: {} }).name, 'large_files');
+  // Real tool names pass through unchanged.
+  assert.equal(normalizeToolCall({ name: 'run_command', arguments: {} }).name, 'run_command');
+  assert.equal(normalizeToolCall({ name: 'calculate', arguments: {} }).name, 'calculate');
+});
+
 test('failure hints steer shell-quoting problems to the file tools', () => {
   // An unquoted path with spaces looks like "command not found: WhatsApp".
   const splitHint = diagnoseToolFailure({
