@@ -67,7 +67,7 @@ test('renderMarkdown renders GitHub callouts and artifact canvas buttons safely'
 
   const html = renderMarkdown(md);
   assert.match(html, /class="md-callout md-callout-tip"/);
-  assert.match(html, /class="md-callout-title">TIP<\/div>/);
+  assert.match(html, /class="md-callout-title">Tip<\/div>/);
   assert.match(html, /class="open-artifact-btn" data-lang="html"/);
   assert.match(html, /class="artifact-card-trigger open-artifact-btn"/);
   assert.doesNotMatch(html, /<script>bad/i);

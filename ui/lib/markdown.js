@@ -211,7 +211,7 @@ function renderQuoteOrCallout(bqLines) {
   const calloutMatch = bqLines[0].match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
   if (calloutMatch) {
     const kind = calloutMatch[1].toLowerCase();
-    const label = calloutMatch[1].toUpperCase();
+    const label = calloutMatch[1].charAt(0).toUpperCase() + calloutMatch[1].slice(1).toLowerCase();
     const bodyLines = [];
     if (calloutMatch[2]) bodyLines.push(calloutMatch[2]);
     for (let k = 1; k < bqLines.length; k++) {

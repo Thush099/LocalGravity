@@ -2146,8 +2146,7 @@ button, input, textarea, select {
   justify-content: space-between;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
   margin-bottom: 7px;
 }
@@ -2428,8 +2427,7 @@ button, input, textarea, select {
   color: var(--text-muted);
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .palette-item {
@@ -2905,8 +2903,7 @@ button, input, textarea, select {
   color: var(--text-secondary);
   font-size: 11.5px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
 }
 
 .stat-sub {
@@ -3412,8 +3409,7 @@ button, input, textarea, select {
 .week-day-name {
   font-size: 12px;
   font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
   color: var(--text-secondary);
   margin-bottom: 10px;
 }
@@ -3973,8 +3969,7 @@ button, input, textarea, select {
 .session-group-label {
   font-size: 10px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
   padding: 8px 10px 4px;
 }
@@ -4083,8 +4078,7 @@ button, input, textarea, select {
 .md-callout-title {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   margin-bottom: 4px;
   color: var(--accent);
 }
