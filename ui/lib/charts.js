@@ -27,7 +27,7 @@ function formatGb(bytes) {
  */
 export function renderSparkline(
   values = [],
-  { color = '#38bdf8', width = 148, height = 34, min = 0, max = 100, label = 'trend' } = {}
+  { color = 'var(--accent)', width = 148, height = 34, min = 0, max = 100, label = 'trend' } = {}
 ) {
   const w = Math.max(48, Number(width) || 148);
   const h = Math.max(20, Number(height) || 34);
@@ -124,9 +124,9 @@ export function renderMultiSeriesChart(
   const innerH = h - padTop - padBottom;
 
   const seriesMeta = [
-    { key: 'cpu', label: 'CPU', color: '#38bdf8' },
-    { key: 'mem', label: 'Memory', color: '#34d399' },
-    { key: 'gpu', label: 'GPU', color: '#f59e0b' },
+    { key: 'cpu', label: 'CPU', color: 'var(--accent)' },
+    { key: 'mem', label: 'Memory', color: 'var(--signal-green)' },
+    { key: 'gpu', label: 'GPU', color: 'var(--signal-amber)' },
   ].filter((s) => activeSeries === 'all' || s.key === activeSeries);
 
   const gridLevels = [0, 25, 50, 75, 100];
@@ -232,9 +232,9 @@ export function renderMemoryDonut(memory = {}, ollamaVramBytes = 0, { size = 152
   const usedPct = totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0;
 
   const segments = [
-    { key: 'active', label: 'Active App', bytes: normActive, color: '#38bdf8' },
-    { key: 'wired', label: 'Wired Kernel / GPU', bytes: wiredBytes, color: '#f59e0b' },
-    { key: 'compressed', label: 'Compressed', bytes: compressedBytes, color: '#fb7185' },
+    { key: 'active', label: 'Active App', bytes: normActive, color: 'var(--accent)' },
+    { key: 'wired', label: 'Wired Kernel / GPU', bytes: wiredBytes, color: 'var(--signal-amber)' },
+    { key: 'compressed', label: 'Compressed', bytes: compressedBytes, color: 'var(--signal-red)' },
   ];
 
   let offset = 0;
@@ -273,7 +273,7 @@ export function renderMemoryDonut(memory = {}, ollamaVramBytes = 0, { size = 152
 
   if (ollamaVramBytes > 0) {
     legendItems.push(`<div class="donut-legend-row donut-legend-highlight">
-      <span class="donut-swatch" style="background:#34d399"></span>
+      <span class="donut-swatch" style="background:var(--signal-green)"></span>
       <span class="donut-legend-label">Ollama Model GPU</span>
       <span class="donut-legend-val">${escapeHtml(formatGb(ollamaVramBytes))}</span>
     </div>`);
@@ -365,7 +365,7 @@ export function renderWeeklyScheduleChart(entries = [], todayDay = new Date().ge
       const x = cx - barW / 2;
       const y = padTop + barAreaH - barH;
       const isToday = item.day === todayDay;
-      const fill = item.minutes === 0 ? 'currentColor' : isToday ? '#38bdf8' : '#0ea5e9';
+      const fill = item.minutes === 0 ? 'currentColor' : isToday ? 'var(--accent)' : 'var(--tok-key)';
       const fillOpacity = item.minutes === 0 ? '0.12' : isToday ? '0.95' : '0.45';
       const hrsText = item.minutes > 0 ? `${item.hours}h` : '—';
       return `

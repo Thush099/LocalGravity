@@ -584,11 +584,11 @@ function renderDashboard() {
   );
 
   const cpuSpark = $('#dash-cpu-spark');
-  if (cpuSpark) cpuSpark.innerHTML = renderSparkline(cpuHist.length ? cpuHist : [metrics?.cpu?.percent], { color: '#38bdf8', label: 'cpu' });
+  if (cpuSpark) cpuSpark.innerHTML = renderSparkline(cpuHist.length ? cpuHist : [metrics?.cpu?.percent], { color: 'var(--accent)', label: 'cpu' });
   const memSpark = $('#dash-mem-spark');
-  if (memSpark) memSpark.innerHTML = renderSparkline(memHist.length ? memHist : [mem.usedPercent], { color: '#34d399', label: 'mem' });
+  if (memSpark) memSpark.innerHTML = renderSparkline(memHist.length ? memHist : [mem.usedPercent], { color: 'var(--signal-green)', label: 'mem' });
   const gpuSpark = $('#dash-gpu-spark');
-  if (gpuSpark) gpuSpark.innerHTML = renderSparkline(gpuHist.length ? gpuHist : [gpu?.utilizationPercent], { color: '#f59e0b', label: 'gpu' });
+  if (gpuSpark) gpuSpark.innerHTML = renderSparkline(gpuHist.length ? gpuHist : [gpu?.utilizationPercent], { color: 'var(--signal-amber)', label: 'gpu' });
   const diskSpark = $('#dash-disk-spark');
   if (diskSpark) {
     diskSpark.innerHTML = disk
@@ -736,9 +736,9 @@ function renderMonitor() {
           ? `<span class="telemetry-stat-pill"><span class="telemetry-dot" style="background:${color}"></span>${label}: —</span>`
           : `<span class="telemetry-stat-pill"><span class="telemetry-dot" style="background:${color}"></span><strong>${label}</strong> ${s.current}% · peak ${s.peak}% · avg ${s.avg}%</span>`;
       telStats.innerHTML = [
-        fmtMetric('CPU', '#38bdf8', chart.stats.cpu),
-        fmtMetric('Memory', '#34d399', chart.stats.mem),
-        fmtMetric('GPU', '#f59e0b', chart.stats.gpu),
+        fmtMetric('CPU', 'var(--accent)', chart.stats.cpu),
+        fmtMetric('Memory', 'var(--signal-green)', chart.stats.mem),
+        fmtMetric('GPU', 'var(--signal-amber)', chart.stats.gpu),
       ].join('');
     }
   }
