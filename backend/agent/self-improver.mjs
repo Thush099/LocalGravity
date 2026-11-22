@@ -101,6 +101,9 @@ export function normalizeToolCall(rawCall = {}) {
       aliasKey('glob', ['ext', 'extension', 'filter', 'file_pattern']);
       if (!rawArgs.root) rawArgs.root = '.';
       break;
+    case 'calculate':
+      aliasKey('expression', ['expr', 'equation', 'math', 'calc', 'code', 'operation', 'computation', 'formula', 'sum']);
+      break;
     case 'move_file':
       aliasKey('source', ['from', 'src', 'source_path', 'file', 'file_path', 'filepath', 'path', 'old_path', 'old_name']);
       aliasKey('destination', ['to', 'dest', 'destination_path', 'target', 'target_path', 'new_path', 'new_name', 'new_location']);

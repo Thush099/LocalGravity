@@ -565,6 +565,9 @@ test('normalizeToolCall maps sql, start, title, and folder aliases for the newer
   const lf = normalizeToolCall({ name: 'large_files', arguments: { folder: 'Downloads', count: 5 } });
   assert.equal(lf.arguments.folders, 'Downloads');
   assert.equal(lf.arguments.limit, 5);
+
+  const calc = normalizeToolCall({ name: 'calculate', arguments: { expr: '2 + 3 * 4', math: 'ignored' } });
+  assert.equal(calc.arguments.expression, '2 + 3 * 4');
 });
 
 test('failure hints steer shell-quoting problems to the file tools', () => {
