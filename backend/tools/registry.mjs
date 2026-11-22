@@ -106,15 +106,26 @@ export const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'move_file',
-      description: 'Move or rename a file or folder to a new path (no shell quoting needed).',
+      description: 'Move or rename files/folders to new paths. Pass source+destination for one move, or a moves array to move many files in one call (much faster for organizing). No shell quoting needed.',
       parameters: {
         type: 'object',
         properties: {
           source: { type: 'string' },
           destination: { type: 'string' },
           overwrite: { type: 'boolean' },
+          moves: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                source: { type: 'string' },
+                destination: { type: 'string' },
+                overwrite: { type: 'boolean' },
+              },
+            },
+            description: 'Batch of {source, destination} moves to apply in one call.',
+          },
         },
-        required: ['source', 'destination'],
       },
     },
   },
@@ -918,8 +929,12 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       }
       case 'move_file': {
         const result = await moveFileTool(args);
-        if (result.ok) {
-          await recordFileMove(paths, { from: result.from, to: result.to, createdDirs: result.createdDirs });
+        const movedList =
+          result.moved || (result.ok ? [{ from: result.from, to: result.to, createdDirs: result.createdDirs }] : []);
+        for (const m of movedList) {
+          await recordFileMove(paths, { from: m.from, to: m.to, createdDirs: m.createdDirs });
+        }
+        if (movedList.length > 0) {
           invalidateSkillsCache(paths.skillsDir);
           invalidateKnowledgeCache(paths.knowledgeDir);
         }

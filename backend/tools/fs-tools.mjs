@@ -131,7 +131,7 @@ async function collectMissingDirs(dir) {
   return missing;
 }
 
-export async function moveFileTool({ source, destination, overwrite = false }) {
+async function moveOneFile(source, destination, overwrite = false) {
   if (!source || !destination) {
     return { ok: false, output: 'move_file requires both "source" and "destination" paths.' };
   }
@@ -179,6 +179,38 @@ export async function moveFileTool({ source, destination, overwrite = false }) {
 
   const kind = srcStat.isDirectory() ? 'folder' : 'file';
   return { ok: true, output: `Moved ${kind} ${resolvedSource} -> ${resolvedDest}`, from: resolvedSource, to: resolvedDest, createdDirs };
+}
+
+function normalizeMoveItem(item = {}, fallbackOverwrite = false) {
+  return {
+    source: item.source ?? item.from ?? item.src ?? item.file ?? item.path,
+    destination: item.destination ?? item.to ?? item.dest ?? item.target,
+    overwrite: item.overwrite ?? fallbackOverwrite ?? false,
+  };
+}
+
+export async function moveFileTool({ source, destination, moves, overwrite = false }) {
+  const items =
+    Array.isArray(moves) && moves.length > 0
+      ? moves.map((m) => normalizeMoveItem(m, overwrite))
+      : [normalizeMoveItem({ source, destination, overwrite })];
+
+  const results = [];
+  for (const item of items) {
+    results.push(await moveOneFile(item.source, item.destination, item.overwrite));
+  }
+
+  // A single move keeps the exact shape existing callers depend on.
+  if (items.length === 1) return results[0];
+
+  const moved = results.filter((r) => r.ok).map((r) => ({ from: r.from, to: r.to, createdDirs: r.createdDirs }));
+  const failures = results.filter((r) => !r.ok).map((r) => r.output);
+  const output = [
+    `Moved ${moved.length} of ${items.length} items.`,
+    ...moved.map((m) => `  ${m.from} -> ${m.to}`),
+    ...(failures.length ? ['', 'Failed:', ...failures.map((f) => `  - ${f}`)] : []),
+  ].join('\n');
+  return { ok: moved.length > 0, output, moved, failures };
 }
 
 function tryWhitespaceNormalizedReplace(original, target, replacement) {

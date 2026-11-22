@@ -238,3 +238,52 @@ test('move_file relocates files and folders with spaces, creating destination fo
   );
   assert.equal(missing.ok, false);
 });
+
+test('move_file batch moves many files in one call and reports each result', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-batchmove-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+
+  const src = path.join(tmpRoot, 'src');
+  const dest = path.join(tmpRoot, 'dest');
+  await fs.mkdir(src);
+  await fs.mkdir(dest);
+  await fs.writeFile(path.join(src, 'a.txt'), 'a');
+  await fs.writeFile(path.join(src, 'b.txt'), 'b');
+
+  const r = await executeToolCall(
+    {
+      name: 'move_file',
+      args: {
+        moves: [
+          { source: path.join(src, 'a.txt'), destination: path.join(dest, 'a.txt') },
+          { source: path.join(src, 'b.txt'), destination: path.join(dest, 'b.txt') },
+          { source: path.join(src, 'missing.txt'), destination: path.join(dest, 'missing.txt') },
+        ],
+      },
+    },
+    ctx
+  );
+
+  assert.equal(r.ok, true);
+  assert.equal(r.moved.length, 2, 'two files moved');
+  assert.equal(r.failures.length, 1, 'one move failed (missing source)');
+  assert.match(r.output, /Moved 2 of 3/);
+  assert.equal(await fs.readFile(path.join(dest, 'a.txt'), 'utf8'), 'a');
+  assert.equal(await fs.readFile(path.join(dest, 'b.txt'), 'utf8'), 'b');
+});
+
+test('move_file single move keeps its from/to shape for callers', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-moveshape-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+
+  const src = path.join(tmpRoot, 'one.txt');
+  await fs.writeFile(src, 'x');
+  const r = await executeToolCall({ name: 'move_file', args: { source: src, destination: path.join(tmpRoot, 'two.txt') } }, ctx);
+  assert.equal(r.ok, true);
+  assert.ok(r.from && r.to, 'single move returns from/to');
+  assert.equal(r.moved, undefined, 'single move does not return a moved array');
+});
