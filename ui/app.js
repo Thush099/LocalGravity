@@ -1196,7 +1196,7 @@ async function openArtifactInCanvas({ code = '', lang = 'text', title = '' }) {
     const num = state.artifactsList.length + 1;
     entry = {
       id: `art-${Date.now()}-${num}`,
-      title: title || `${normLang === 'svg' ? 'Vector SVG' : normLang === 'html' || normLang === 'htm' ? 'HTML Widget' : `${normLang.toUpperCase()} Snippet`} #${num}`,
+      title: title || `${normLang === 'svg' ? 'Vector SVG' : normLang === 'html' || normLang === 'htm' ? 'HTML Widget' : `${normLang.charAt(0).toUpperCase() + normLang.slice(1)} Snippet`} #${num}`,
       lang: normLang,
       code: rawCode,
       isPreviewable,
