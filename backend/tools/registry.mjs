@@ -1052,7 +1052,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         };
       }
       case 'remove_schedule_item': {
-        const result = await deleteScheduleEntry(args.id, paths);
+        const result = await deleteScheduleEntry(args.id, paths, args.title);
         return result.ok
           ? { ok: true, output: `Removed schedule entry ${result.deleted}.` }
           : { ok: false, output: result.error };

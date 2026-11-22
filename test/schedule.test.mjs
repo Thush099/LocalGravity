@@ -23,13 +23,30 @@ test('normalizeScheduleEntry validates time, days, and duration', () => {
 
   assert.equal(normalizeScheduleEntry({ title: '', time: '09:30' }).ok, false);
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '25:00' }).ok, false);
-  assert.equal(normalizeScheduleEntry({ title: 'X', time: '9:30' }).ok, false);
+  // Time input is forgiving so the model's natural formats work: a single-digit
+  // hour, an AM/PM time, and an ISO datetime all normalize to HH:MM.
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '9:30' }).entry.time, '09:30');
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '9:30 PM' }).entry.time, '21:30');
+  assert.equal(normalizeScheduleEntry({ title: 'X', time: '2030-01-01T14:05:00' }).entry.time, '14:05');
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '09:30', days: [] }).ok, false);
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '09:30', days: [9] }).ok, false);
   assert.equal(normalizeScheduleEntry({ title: 'X', time: '09:30', durationMin: 1 }).ok, false);
 
   const dedupe = normalizeScheduleEntry({ title: 'X', time: '09:30', days: [5, 5, 1] });
   assert.deepEqual(dedupe.entry.days, [1, 5]);
+});
+
+test('deleteScheduleEntry removes by title when the id is unknown', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-sch-title-'));
+  const paths = getRuntimePaths(home);
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const created = await upsertScheduleEntry({ title: 'Yoga Flow', time: '7:00', days: [1] }, paths);
+  assert.equal(created.ok, true);
+  assert.equal(created.entry.time, '07:00', 'single-digit hour normalized');
+  const byTitle = await deleteScheduleEntry(undefined, paths, 'yoga flow');
+  assert.equal(byTitle.ok, true);
+  assert.equal(byTitle.deleted, created.entry.id);
+  assert.deepEqual(await loadSchedule(paths), []);
 });
 
 test('one-off entries carry a single date and skip weekday rules', () => {

@@ -306,7 +306,7 @@ export async function largestFilesReport(dirs, { limit = 15, maxEntries = 20000,
  */
 export async function largeFilesTool({ folders, limit } = {}) {
   const home = os.homedir();
-  const requested = (Array.isArray(folders) ? folders : []).filter((f) => typeof f === 'string' && f.trim());
+  const requested = [].concat(folders ?? []).filter((f) => typeof f === 'string' && f.trim());
   const resolveDir = (f) => (path.isAbsolute(f) ? f : path.join(home, f.replace(/^~\/?/, '')));
   const dirs = [];
   for (const f of requested) {

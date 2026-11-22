@@ -136,6 +136,23 @@ export function normalizeToolCall(rawCall = {}) {
       aliasKey('title', ['heading', 'label']);
       aliasKey('content', ['body', 'text', 'markdown']);
       break;
+    case 'sqlite_query':
+      aliasKey('query', ['sql', 'statement', 'stmt', 'select', 'command']);
+      aliasKey('db_path', ['db', 'database', 'database_path', 'dbPath', 'path']);
+      break;
+    case 'add_schedule_item':
+      aliasKey('time', ['start', 'start_time', 'startTime', 'begin', 'at', 'when']);
+      aliasKey('duration_min', ['duration', 'length', 'minutes', 'mins', 'durationMin', 'duration_minutes']);
+      aliasKey('title', ['name', 'event', 'summary']);
+      break;
+    case 'remove_schedule_item':
+      aliasKey('id', ['entry_id', 'entryId', 'item_id', 'schedule_id', 'event_id']);
+      aliasKey('title', ['name', 'entry', 'event']);
+      break;
+    case 'large_files':
+      aliasKey('folders', ['folder', 'dirs', 'directories', 'paths', 'dir']);
+      aliasKey('limit', ['count', 'top', 'n', 'max']);
+      break;
     default:
       break;
   }

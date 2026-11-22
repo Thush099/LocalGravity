@@ -7,6 +7,31 @@ const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Accept the time formats a model naturally produces and normalize to HH:MM.
+ * Handles H:MM, HH:MM, HH:MM:SS, an ISO datetime's time part, and AM/PM.
+ */
+function normalizeTime(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return null;
+  if (TIME_RE.test(s)) return s;
+  const iso = s.match(/T(\d{1,2}:\d{2})/);
+  if (iso) return normalizeTime(iso[1]);
+  const ampm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp])[Mm]?$/);
+  if (ampm) {
+    let h = Number(ampm[1]) % 12;
+    if (/[pP]/.test(ampm[3])) h += 12;
+    return `${String(h).padStart(2, '0')}:${ampm[2]}`;
+  }
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (m) {
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h <= 23 && min <= 59) return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
  * Validate and normalize a schedule entry from untrusted input.
  * Returns { ok, entry } or { ok: false, error }.
  */
@@ -15,8 +40,8 @@ export function normalizeScheduleEntry(raw, existing = null) {
   if (!title) return { ok: false, error: 'Entry needs a title.' };
   if (title.length > 120) return { ok: false, error: 'Title must be 120 characters or fewer.' };
 
-  const time = String(raw?.time ?? '').trim();
-  if (!TIME_RE.test(time)) return { ok: false, error: 'Time must be in HH:MM 24-hour format.' };
+  const time = normalizeTime(raw?.time);
+  if (!time) return { ok: false, error: 'Time must be a valid 24-hour time like 09:30.' };
 
   let days = raw?.days;
   let date = raw?.date;
@@ -136,12 +161,26 @@ export async function upsertScheduleEntry(raw, paths = getRuntimePaths()) {
   return { ok: true, entry: normalized.entry, entries: list };
 }
 
-export async function deleteScheduleEntry(id, paths = getRuntimePaths()) {
+export async function deleteScheduleEntry(id, paths = getRuntimePaths(), title = '') {
   const safeId = String(id ?? '').trim();
-  if (!SAFE_ID_RE.test(safeId)) return { ok: false, error: 'Invalid entry id.' };
+  const wantTitle = String(title ?? '').trim();
   const list = await loadSchedule(paths);
-  const filtered = list.filter((e) => e.id !== safeId);
-  if (filtered.length === list.length) return { ok: false, error: 'Entry not found.' };
-  await saveSchedule(filtered, paths);
-  return { ok: true, deleted: safeId, entries: filtered };
+
+  if (SAFE_ID_RE.test(safeId)) {
+    const filtered = list.filter((e) => e.id !== safeId);
+    if (filtered.length !== list.length) {
+      await saveSchedule(filtered, paths);
+      return { ok: true, deleted: safeId, entries: filtered };
+    }
+  } else if (!wantTitle) {
+    return { ok: false, error: 'Invalid entry id.' };
+  }
+
+  // Fall back to matching by title when the id is missing or stale.
+  const want = wantTitle.toLowerCase();
+  const hit = want && (list.find((e) => e.title.toLowerCase() === want) || list.find((e) => e.title.toLowerCase().includes(want)));
+  if (!hit) return { ok: false, error: 'Entry not found. Pass an entry id from list_schedule_items, or its exact title.' };
+  const remaining = list.filter((e) => e.id !== hit.id);
+  await saveSchedule(remaining, paths);
+  return { ok: true, deleted: hit.id, entries: remaining };
 }

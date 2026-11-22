@@ -551,6 +551,22 @@ test('normalizeToolCall maps move_file tool and argument aliases', () => {
   assert.equal(norm.arguments.destination, '/tmp/archive/My File.txt');
 });
 
+test('normalizeToolCall maps sql, start, title, and folder aliases for the newer tools', () => {
+  const sq = normalizeToolCall({ name: 'sqlite_query', arguments: { db_path: '/tmp/a.db', sql: 'SELECT 1' } });
+  assert.equal(sq.arguments.query, 'SELECT 1');
+
+  const sched = normalizeToolCall({ name: 'add_schedule_item', arguments: { title: 'X', start: '09:00', duration: 45 } });
+  assert.equal(sched.arguments.time, '09:00');
+  assert.equal(sched.arguments.duration_min, 45);
+
+  const rm = normalizeToolCall({ name: 'remove_schedule_item', arguments: { name: 'Standup' } });
+  assert.equal(rm.arguments.title, 'Standup');
+
+  const lf = normalizeToolCall({ name: 'large_files', arguments: { folder: 'Downloads', count: 5 } });
+  assert.equal(lf.arguments.folders, 'Downloads');
+  assert.equal(lf.arguments.limit, 5);
+});
+
 test('failure hints steer shell-quoting problems to the file tools', () => {
   // An unquoted path with spaces looks like "command not found: WhatsApp".
   const splitHint = diagnoseToolFailure({
