@@ -908,11 +908,11 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
   try {
     switch (name) {
       case 'list_dir':
-        return await listDir(args);
+        return await listDir(args, { cwd: context.cwd });
       case 'read_file':
-        return await readFileTool(args);
+        return await readFileTool(args, { cwd: context.cwd });
       case 'write_file': {
-        const result = await writeFileTool(args);
+        const result = await writeFileTool(args, { cwd: context.cwd });
         if (result.ok) {
           invalidateSkillsCache(paths.skillsDir);
           invalidateKnowledgeCache(paths.knowledgeDir);
@@ -920,7 +920,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return result;
       }
       case 'edit_file': {
-        const result = await editFileTool(args);
+        const result = await editFileTool(args, { cwd: context.cwd });
         if (result.ok) {
           invalidateSkillsCache(paths.skillsDir);
           invalidateKnowledgeCache(paths.knowledgeDir);
@@ -928,7 +928,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return result;
       }
       case 'move_file': {
-        const result = await moveFileTool(args);
+        const result = await moveFileTool(args, { cwd: context.cwd });
         const movedList =
           result.moved || (result.ok ? [{ from: result.from, to: result.to, createdDirs: result.createdDirs }] : []);
         for (const m of movedList) {
@@ -955,7 +955,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return { ok: true, output: lines.join('\n') };
       }
       case 'search_files':
-        return await searchFilesTool(args);
+        return await searchFilesTool(args, { cwd: context.cwd });
       case 'run_command': {
         const result = await runCommandTool({
           ...args,

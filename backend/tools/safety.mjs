@@ -256,11 +256,13 @@ export function classifyCommand(command, extraAllowedVerbs = []) {
   return { level: 'risky', reason: `Command "${verb}" may modify state or invoke external tools.` };
 }
 
-export function expandUserPath(targetPath) {
+export function expandUserPath(targetPath, baseCwd) {
   if (!targetPath || typeof targetPath !== 'string') return '';
   if (targetPath === '~') return os.homedir();
   if (targetPath.startsWith('~/')) return path.join(os.homedir(), targetPath.slice(2));
-  return path.resolve(targetPath);
+  // Relative paths resolve against the session's working directory (baseCwd), not the
+  // server's process.cwd(), so the model's "src/app.js" lands where the user is working.
+  return path.resolve(baseCwd || process.cwd(), targetPath);
 }
 
 /**

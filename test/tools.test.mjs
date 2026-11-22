@@ -287,3 +287,21 @@ test('move_file single move keeps its from/to shape for callers', async (t) => {
   assert.ok(r.from && r.to, 'single move returns from/to');
   assert.equal(r.moved, undefined, 'single move does not return a moved array');
 });
+
+test('filesystem tools resolve relative paths against the session cwd, not process.cwd()', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-cwdrel-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const ctx = { paths, cwd: tmpRoot };
+
+  const wr = await executeToolCall({ name: 'write_file', args: { path: 'relative.txt', content: 'here' } }, ctx);
+  assert.equal(wr.ok, true);
+  assert.equal(await fs.readFile(path.join(tmpRoot, 'relative.txt'), 'utf8'), 'here', 'relative write lands in the session cwd');
+
+  const rd = await executeToolCall({ name: 'read_file', args: { path: 'relative.txt' } }, ctx);
+  assert.equal(rd.ok, true, 'relative read resolves to the session cwd');
+
+  const mv = await executeToolCall({ name: 'move_file', args: { source: 'relative.txt', destination: 'moved.txt' } }, ctx);
+  assert.equal(mv.ok, true, 'relative move resolves to the session cwd');
+  assert.equal(await fs.readFile(path.join(tmpRoot, 'moved.txt'), 'utf8'), 'here');
+});

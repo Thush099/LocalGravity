@@ -34,8 +34,8 @@ export function buildCompactDiff(oldText, newText, filePath) {
   return lines.join('\n');
 }
 
-export async function listDir({ path: dirPath, recursive = false, max_entries = 120 }) {
-  const resolved = expandUserPath(dirPath || '.');
+export async function listDir({ path: dirPath, recursive = false, max_entries = 120 }, opts = {}) {
+  const resolved = expandUserPath(dirPath || '.', opts.cwd);
   const results = [];
   const MAX_DEPTH = 12;
 
@@ -72,8 +72,8 @@ export async function listDir({ path: dirPath, recursive = false, max_entries = 
   };
 }
 
-export async function readFileTool({ path: filePath, start_line = 1, end_line }) {
-  const resolved = expandUserPath(filePath);
+export async function readFileTool({ path: filePath, start_line = 1, end_line }, opts = {}) {
+  const resolved = expandUserPath(filePath, opts.cwd);
   const raw = await fs.readFile(resolved, 'utf8');
   const lines = raw.split(/\r?\n/);
   const start = Math.max(1, Number(start_line) || 1);
@@ -87,8 +87,8 @@ export async function readFileTool({ path: filePath, start_line = 1, end_line })
   };
 }
 
-export async function writeFileTool({ path: filePath, content, overwrite = true }) {
-  const resolved = expandUserPath(filePath);
+export async function writeFileTool({ path: filePath, content, overwrite = true }, opts = {}) {
+  const resolved = expandUserPath(filePath, opts.cwd);
   let oldContent = '';
   let existed = false;
   try {
@@ -131,12 +131,12 @@ async function collectMissingDirs(dir) {
   return missing;
 }
 
-async function moveOneFile(source, destination, overwrite = false) {
+async function moveOneFile(source, destination, overwrite = false, baseCwd) {
   if (!source || !destination) {
     return { ok: false, output: 'move_file requires both "source" and "destination" paths.' };
   }
-  const resolvedSource = expandUserPath(String(source));
-  const resolvedDest = expandUserPath(String(destination));
+  const resolvedSource = expandUserPath(String(source), baseCwd);
+  const resolvedDest = expandUserPath(String(destination), baseCwd);
   if (resolvedSource === resolvedDest) {
     return { ok: false, output: 'Source and destination are the same path.' };
   }
@@ -189,7 +189,7 @@ function normalizeMoveItem(item = {}, fallbackOverwrite = false) {
   };
 }
 
-export async function moveFileTool({ source, destination, moves, overwrite = false }) {
+export async function moveFileTool({ source, destination, moves, overwrite = false }, opts = {}) {
   const items =
     Array.isArray(moves) && moves.length > 0
       ? moves.map((m) => normalizeMoveItem(m, overwrite))
@@ -197,7 +197,7 @@ export async function moveFileTool({ source, destination, moves, overwrite = fal
 
   const results = [];
   for (const item of items) {
-    results.push(await moveOneFile(item.source, item.destination, item.overwrite));
+    results.push(await moveOneFile(item.source, item.destination, item.overwrite, opts.cwd));
   }
 
   // A single move keeps the exact shape existing callers depend on.
@@ -239,8 +239,8 @@ function tryWhitespaceNormalizedReplace(original, target, replacement) {
   return null;
 }
 
-export async function editFileTool({ path: filePath, target, replacement }) {
-  const resolved = expandUserPath(filePath);
+export async function editFileTool({ path: filePath, target, replacement }, opts = {}) {
+  const resolved = expandUserPath(filePath, opts.cwd);
   const original = await fs.readFile(resolved, 'utf8');
   const needle = String(target || '');
 
@@ -289,8 +289,8 @@ export async function editFileTool({ path: filePath, target, replacement }) {
   };
 }
 
-export async function searchFilesTool({ root, query, glob }) {
-  const resolvedRoot = expandUserPath(root || '.');
+export async function searchFilesTool({ root, query, glob }, opts = {}) {
+  const resolvedRoot = expandUserPath(root || '.', opts.cwd);
   const needle = String(query || '').toLowerCase();
   if (!needle) return { ok: false, output: 'Query cannot be empty.' };
 
