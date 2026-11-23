@@ -7,6 +7,7 @@ import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
   renderMultiSeriesChart,
+  renderSparkline,
   renderWeeklyScheduleChart,
 } from './lib/charts.js';
 import {
@@ -15,6 +16,7 @@ import {
   formatMinutesUntil,
   formatUptime,
   greetingFor,
+  isStorageLow,
   nextEntryFrom,
   usageTone,
 } from './lib/dashboard.js';
@@ -561,6 +563,58 @@ function setUsageBar(barId, valueId, percent, valueLabel) {
   if (label) label.innerHTML = valueWithUnit(valueLabel ?? (p === null ? '—' : `${Math.round(p)}%`));
 }
 
+// Render a real-time wave (area sparkline) for a stat tile from recent history,
+// replacing the static usage bar with a live trend.
+function setStatSpark(sparkId, valueId, percent, valueLabel, values = [], color = 'var(--accent)') {
+  const spark = $(sparkId);
+  const label = $(valueId);
+  const p = Number.isFinite(Number(percent)) ? Math.max(0, Math.min(100, Number(percent))) : null;
+  if (label) label.innerHTML = valueWithUnit(valueLabel ?? (p === null ? '—' : `${Math.round(p)}%`));
+  if (spark) {
+    const clean = (values || []).filter((v) => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number);
+    spark.innerHTML = renderSparkline(clean, { color, width: 220, height: 42, min: 0, max: 100, label: `${sparkId}-trend` });
+  }
+}
+
+// When storage runs low, surface a prominent, actionable recovery path that
+// launches the Clean-downloads capability instead of a bare warning.
+function renderStorageAlert(disk) {
+  const el = $('#dash-storage-alert');
+  if (!el) return;
+  if (!isStorageLow(disk)) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const freeBytes = disk?.availableBytes ?? 0;
+  const usedPercent = disk?.usedPercent ?? 0;
+  el.classList.remove('hidden');
+  el.innerHTML = `<span>Storage is low — ${escapeHtml(formatBytes(freeBytes))} free (${Math.round(usedPercent)}% used). Clearing downloads is the fastest way to reclaim space.</span>
+    <button type="button" class="primary-btn" data-clean-downloads="1">Clean downloads plan</button>`;
+}
+
+async function runCapability(promptText, autorun = true) {
+  if (!promptText) return;
+  if (autorun) {
+    await createNewTask();
+    await sendPrompt({ text: promptText, attachments: [] });
+    return;
+  }
+  await createNewTask();
+  const pi = $('#prompt-input');
+  if (pi) {
+    pi.value = promptText;
+    pi.style.height = 'auto';
+    pi.style.height = `${Math.min(pi.scrollHeight, 180)}px`;
+    pi.focus();
+  }
+}
+
+function getCleanDownloadsPrompt() {
+  const card = $$('.superpower-card').find((c) => /clean folder grouping/i.test(c.dataset.prompt || ''));
+  return card?.dataset.prompt || 'Inspect ~/Downloads and propose a clean folder grouping by file type and age (read-only audit first, do not move or delete anything without asking).';
+}
+
 function topDisk(metrics) {
   const disks = metrics?.disks || [];
   return disks.find((d) => d.mount === '/System/Volumes/Data') || disks.find((d) => d.mount === '/') || disks[0] || null;
@@ -600,20 +654,13 @@ function renderDashboard() {
   const mem = metrics?.memory || {};
   const gpu = metrics?.gpu;
   const disk = topDisk(metrics);
-  setUsageBar('#dash-cpu-bar', '#dash-cpu', metrics?.cpu?.percent);
-  setUsageBar(
-    '#dash-mem-bar',
-    '#dash-mem',
-    mem.usedPercent,
-    mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—'
-  );
-  setUsageBar('#dash-gpu-bar', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—');
-  setUsageBar(
-    '#dash-disk-bar',
-    '#dash-disk',
-    disk?.usedPercent,
-    disk ? `${formatBytes(disk.availableBytes)} free` : '—'
-  );
+  const hist = state.metricsHistory || [];
+  const series = (key) => hist.map((h) => h[key]);
+  setStatSpark('#dash-cpu-spark', '#dash-cpu', metrics?.cpu?.percent, null, series('cpu'));
+  setStatSpark('#dash-mem-spark', '#dash-mem', mem.usedPercent, mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—', series('mem'));
+  setStatSpark('#dash-gpu-spark', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—', series('gpu'));
+  setStatSpark('#dash-disk-spark', '#dash-disk', disk?.usedPercent, disk ? `${formatBytes(disk.availableBytes)} free` : '—', series('disk'));
+  renderStorageAlert(disk);
 
   const cpuSub = $('#dash-cpu-sub');
   if (cpuSub) {
@@ -876,6 +923,7 @@ async function refreshSystemMetrics() {
         cpu: state.metrics.cpu?.percent ?? null,
         mem: state.metrics.memory?.usedPercent ?? null,
         gpu: state.metrics.gpu?.utilizationPercent ?? null,
+        disk: state.metrics.disks?.[0]?.usedPercent ?? null,
       });
       if (state.metricsHistory.length > 60) state.metricsHistory.shift();
     }
@@ -3649,24 +3697,13 @@ function wireEvents() {
   $('#dash-unload-ram-btn')?.addEventListener('click', unloadOllamaMemory);
   $('#monitor-unload-btn')?.addEventListener('click', unloadOllamaMemory);
   $('#theme-toggle-btn')?.addEventListener('click', cycleTheme);
+  $('#dash-storage-alert')?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clean-downloads]')) runCapability(getCleanDownloadsPrompt(), true);
+  });
 
   $$('.superpower-card').forEach((card) => {
     card.addEventListener('click', async () => {
-      const promptText = card.dataset.prompt || '';
-      if (!promptText) return;
-      if (card.dataset.autorun === 'true') {
-        await createNewTask();
-        await sendPrompt({ text: promptText, attachments: [] });
-      } else {
-        await createNewTask();
-        const pi = $('#prompt-input');
-        if (pi) {
-          pi.value = promptText;
-          pi.style.height = 'auto';
-          pi.style.height = `${Math.min(pi.scrollHeight, 180)}px`;
-          pi.focus();
-        }
-      }
+      await runCapability(card.dataset.prompt || '', card.dataset.autorun === 'true');
     });
   });
 

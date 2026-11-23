@@ -8,6 +8,7 @@ import {
   formatUptime,
   nextEntryFrom,
   formatMinutesUntil,
+  isStorageLow,
 } from '../ui/lib/dashboard.js';
 
 test('formatClockTime renders zero-padded 24-hour time', () => {
@@ -71,4 +72,17 @@ test('formatMinutesUntil reads naturally', () => {
   assert.equal(formatMinutesUntil(5), 'in 5 min');
   assert.equal(formatMinutesUntil(60), 'in 1h');
   assert.equal(formatMinutesUntil(125), 'in 2h 5m');
+});
+
+test('isStorageLow fires on low free space or a near-full volume', () => {
+  const GB = 1024 ** 3;
+  // Low free space (the 22.6 GB-free case) → warn
+  assert.equal(isStorageLow({ availableBytes: 22.6 * GB, usedPercent: 75 }), true);
+  // Near-full volume → warn
+  assert.equal(isStorageLow({ availableBytes: 200 * GB, usedPercent: 92 }), true);
+  // Healthy → no warning
+  assert.equal(isStorageLow({ availableBytes: 400 * GB, usedPercent: 60 }), false);
+  // Missing disk → no warning
+  assert.equal(isStorageLow(null), false);
+  assert.equal(isStorageLow(undefined), false);
 });

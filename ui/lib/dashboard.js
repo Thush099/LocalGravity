@@ -36,6 +36,17 @@ export function usageTone(percent) {
   return 'ok';
 }
 
+/**
+ * Should the low-storage warning fire? A modest free-space floor OR a
+ * near-full volume both count as "low" — enough to prompt cleanup early.
+ */
+export function isStorageLow(disk = null, { minFreeBytes = 25 * 1024 ** 3, maxUsedPercent = 90 } = {}) {
+  if (!disk) return false;
+  const freeBytes = Number(disk.availableBytes ?? 0);
+  const usedPercent = Number(disk.usedPercent ?? 0);
+  return freeBytes < minFreeBytes || usedPercent >= maxUsedPercent;
+}
+
 export function formatUptime(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds) || 0));
   const days = Math.floor(s / 86400);

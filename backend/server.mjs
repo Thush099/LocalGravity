@@ -487,6 +487,7 @@ export function createAgentServer({
                   cpu: m.cpu?.percent ?? null,
                   mem: m.memory?.usedPercent ?? null,
                   gpu: m.gpu?.utilizationPercent ?? null,
+                  disk: m.disks?.[0]?.usedPercent ?? null,
                   swapPct: m.memory?.swap?.usedPercent ?? 0,
                 });
                 if (metricsHistory.length > 60) metricsHistory.shift();

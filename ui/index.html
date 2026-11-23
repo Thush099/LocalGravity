@@ -352,7 +352,7 @@
                 <span class="stat-label">CPU</span>
                 <span class="stat-value" id="dash-cpu">—</span>
               </div>
-              <div class="usage-bar"><span id="dash-cpu-bar"></span></div>
+              <div class="stat-spark" id="dash-cpu-spark"></div>
               <div class="stat-sub" id="dash-cpu-sub">Sampling…</div>
             </div>
             <div class="stat-tile">
@@ -360,7 +360,7 @@
                 <span class="stat-label">Memory</span>
                 <span class="stat-value" id="dash-mem">—</span>
               </div>
-              <div class="usage-bar"><span id="dash-mem-bar"></span></div>
+              <div class="stat-spark" id="dash-mem-spark"></div>
               <div class="stat-sub" id="dash-mem-sub">Unified RAM</div>
             </div>
             <div class="stat-tile">
@@ -368,7 +368,7 @@
                 <span class="stat-label">GPU</span>
                 <span class="stat-value" id="dash-gpu">—</span>
               </div>
-              <div class="usage-bar"><span id="dash-gpu-bar"></span></div>
+              <div class="stat-spark" id="dash-gpu-spark"></div>
               <div class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</div>
             </div>
             <div class="stat-tile">
@@ -376,10 +376,12 @@
                 <span class="stat-label">Storage</span>
                 <span class="stat-value" id="dash-disk">—</span>
               </div>
-              <div class="usage-bar"><span id="dash-disk-bar"></span></div>
+              <div class="stat-spark" id="dash-disk-spark"></div>
               <div class="stat-sub" id="dash-disk-sub">SSD Free</div>
             </div>
           </div>
+
+          <div id="dash-storage-alert" class="dash-storage-alert hidden" role="status"></div>
 
           <form id="dash-quick-ask-form" class="dash-quick-ask">
             <svg class="dash-ask-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -468,7 +470,7 @@
             </div>
           </div>
 
-          <div class="dash-columns">
+          <div class="dash-grid">
             <div class="dash-card">
               <div class="dash-card-head">
                 <h3>Today's agenda</h3>
@@ -495,20 +497,21 @@
                 </label>
                 <button class="primary-btn" type="submit">Set reminder</button>
               </form>
-              <div class="dash-card-head dash-card-head-spaced"><h3>Mac snapshot</h3></div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-head"><h3>Mac snapshot</h3></div>
               <div id="dash-snapshot" class="dash-snapshot">Loading…</div>
             </div>
-          </div>
-
-          <div class="dash-card dash-runtime-card">
-            <div class="dash-card-head">
-              <div>
-                <h3>Local AI runtime &amp; memory</h3>
-                <div id="dash-runtime-summary" class="status-sub">Checking Ollama and memory state…</div>
-              </div>
-              <div class="toolbar-actions">
-                <button id="dash-unload-ram-btn" class="secondary-btn hidden" type="button">Unload model (Free RAM)</button>
-                <button id="dash-open-settings" class="secondary-btn" type="button">Models &amp; Settings</button>
+            <div class="dash-card dash-runtime-card">
+              <div class="dash-card-head">
+                <div>
+                  <h3>Local AI runtime &amp; memory</h3>
+                  <div id="dash-runtime-summary" class="status-sub">Checking Ollama and memory state…</div>
+                </div>
+                <div class="toolbar-actions">
+                  <button id="dash-unload-ram-btn" class="secondary-btn hidden" type="button">Unload model (Free RAM)</button>
+                  <button id="dash-open-settings" class="secondary-btn" type="button">Models &amp; Settings</button>
+                </div>
               </div>
             </div>
           </div>
