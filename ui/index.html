@@ -399,7 +399,7 @@
           <div class="dash-card dash-superpowers">
             <div class="dash-card-head">
               <div>
-                <h3>One-Click Capabilities</h3>
+                <h3>One-click capabilities</h3>
                 <span class="status-sub">Launch common tasks immediately or prefill a workflow into the Agent workspace.</span>
               </div>
               <button id="dash-explore-tools-btn" class="secondary-btn" type="button">All task ideas</button>
@@ -412,7 +412,7 @@
                 data-prompt="Run system_stats (with top processes) and check swap pressure, GPU RAM, and disk usage. Give me 3 concrete ways to speed up this Mac right now."
               >
                 <span class="superpower-tag">Diagnostics</span>
-                <strong>Mac Health Audit</strong>
+                <strong>Mac health audit</strong>
                 <span>CPU, swap, GPU RAM &amp; top hogs</span>
               </button>
               <button
@@ -422,7 +422,7 @@
                 data-prompt="Check list_schedule_items (today_only: true) and system_stats, then give me a crisp morning briefing for the rest of today."
               >
                 <span class="superpower-tag">Daily</span>
-                <strong>Morning Briefing</strong>
+                <strong>Morning briefing</strong>
                 <span>Agenda timeline + battery &amp; load</span>
               </button>
               <button
@@ -432,7 +432,7 @@
                 data-prompt="Inspect ~/Downloads and propose a clean folder grouping by file type and age (read-only audit first, do not move or delete anything without asking)."
               >
                 <span class="superpower-tag">Files</span>
-                <strong>Clean Downloads Plan</strong>
+                <strong>Clean downloads plan</strong>
                 <span>Read-only clutter audit by size</span>
               </button>
               <button
@@ -442,7 +442,7 @@
                 data-prompt="Take a screenshot of my screen right now using take_screenshot and explain what you see, or highlight anything useful."
               >
                 <span class="superpower-tag">Vision</span>
-                <strong>Inspect My Screen</strong>
+                <strong>Inspect my screen</strong>
                 <span>Capture display &amp; analyze visuals</span>
               </button>
               <button
@@ -452,7 +452,7 @@
                 data-prompt="Read my macOS clipboard using paste_from_clipboard, improve the writing so it sounds clear, direct, and human, and copy the improved text back with copy_to_clipboard."
               >
                 <span class="superpower-tag">Writing</span>
-                <strong>Polish Clipboard</strong>
+                <strong>Polish clipboard</strong>
                 <span>Rewrite &amp; humanize copied text</span>
               </button>
               <button
@@ -462,7 +462,7 @@
                 data-prompt="Use search_web to research the following topic and summarize the key points with clickable links: "
               >
                 <span class="superpower-tag">Web Search</span>
-                <strong>Web Research Brief</strong>
+                <strong>Web research brief</strong>
                 <span>Live DuckDuckGo search + cited notes</span>
               </button>
             </div>
@@ -503,7 +503,7 @@
           <div class="dash-card dash-runtime-card">
             <div class="dash-card-head">
               <div>
-                <h3>Local AI Runtime &amp; Memory</h3>
+                <h3>Local AI runtime &amp; memory</h3>
                 <div id="dash-runtime-summary" class="status-sub">Checking Ollama and memory state…</div>
               </div>
               <div class="toolbar-actions">
@@ -531,16 +531,16 @@
           <div id="monitor-updated" class="status-sub monitor-updated" aria-live="polite">Not sampled yet.</div>
           <div id="monitor-memory-alert" class="monitor-alert hidden" role="status"></div>
           <div id="monitor-stats" class="stat-grid">
-            <div class="stat-tile"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">GPU</span><span class="stat-value" id="mon-gpu">—</span><div class="usage-bar"><span id="mon-gpu-bar"></span></div></div>
-            <div class="stat-tile"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
+            <div class="stat-tile"><div class="stat-top"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span></div><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
+            <div class="stat-tile"><div class="stat-top"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span></div><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
+            <div class="stat-tile"><div class="stat-top"><span class="stat-label">GPU</span><span class="stat-value" id="mon-gpu">—</span></div><div class="usage-bar"><span id="mon-gpu-bar"></span></div></div>
+            <div class="stat-tile"><div class="stat-top"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span></div><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
           </div>
 
           <div class="dash-card monitor-telemetry-card">
             <div class="dash-card-head">
               <div>
-                <h3>Live Performance Telemetry</h3>
+                <h3>Live performance telemetry</h3>
                 <div id="monitor-telemetry-stats" class="telemetry-stats-strip">Sampling history…</div>
               </div>
               <div class="segmented-tabs segmented-tabs-sm" role="group" aria-label="Filter chart series">
@@ -555,13 +555,13 @@
 
           <div class="monitor-grid">
             <div class="dash-card">
-              <div class="dash-card-head"><h3>Unified Memory Composition</h3></div>
+              <div class="dash-card-head"><h3>Unified memory composition</h3></div>
               <div id="monitor-memory-donut" class="donut-layout">
                 <span class="status-sub">Waiting for memory sample…</span>
               </div>
             </div>
             <div class="dash-card">
-              <div class="dash-card-head"><h3>System &amp; Power Details</h3></div>
+              <div class="dash-card-head"><h3>System &amp; power details</h3></div>
               <dl id="monitor-details" class="monitor-details"></dl>
             </div>
           </div>
@@ -643,7 +643,7 @@
               <div class="dash-card schedule-chart-card">
                 <div class="dash-card-head">
                   <div>
-                    <h3>Weekly Focus Allocation</h3>
+                    <h3>Weekly focus allocation</h3>
                     <div id="schedule-chart-kpis" class="telemetry-stats-strip">Calculating weekly hours…</div>
                   </div>
                 </div>

@@ -699,14 +699,14 @@ function renderMonitor() {
     '#mon-mem-bar',
     '#mon-mem',
     mem.usedPercent,
-    mem.totalBytes ? `${formatBytes(mem.usedBytes || 0)} / ${formatBytes(mem.totalBytes)}` : '—'
+    mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—'
   );
   setUsageBar('#mon-gpu-bar', '#mon-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—');
   setUsageBar(
     '#mon-disk-bar',
     '#mon-disk',
     disk?.usedPercent,
-    disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
+    disk ? `${formatBytes(disk.availableBytes)} free` : '—'
   );
 
   const runningModels = state.health?.ollama?.runningModels || [];
