@@ -5,7 +5,8 @@
 
 export function formatClockTime(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  // Hours and minutes only — a ticking second hand is visual noise on a dashboard.
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function formatClockDate(date = new Date(), locale = undefined) {

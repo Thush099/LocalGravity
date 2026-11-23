@@ -2876,7 +2876,7 @@ button, input, textarea, select {
 /* ---- Dashboard ---- */
 .dash-header {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
   padding: 2px 0 20px;
@@ -2884,40 +2884,36 @@ button, input, textarea, select {
 }
 
 .dash-greeting-block {
-  text-align: right;
-}
-
-.dash-clock-block {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.dash-clock {
-  font-family: var(--font-mono);
-  font-size: 44px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-}
-
-.dash-date {
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.dash-greeting-block {
-  margin-left: auto;
-  padding-left: 16px;
-  max-width: 52%;
   min-width: 0;
 }
 
 .dash-greeting-block h2 {
-  margin: 0 0 4px;
-  font-size: 22px;
-  font-weight: 650;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 660;
+  letter-spacing: -0.022em;
+}
+
+.dash-when {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.dash-when-sep {
+  opacity: 0.4;
+  margin: 0 7px;
+}
+
+.dash-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-summary {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
 }
 
 .stat-grid {
@@ -2931,39 +2927,18 @@ button, input, textarea, select {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
-  padding: 14px 16px 15px;
+  padding: 15px 16px 16px;
   box-shadow: var(--card-sheen);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 11px;
 }
 
-.stat-tile-head {
+.stat-top {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  min-height: 30px;
-}
-
-.spark-slot {
-  width: 112px;
-  height: 30px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.stat-pct-pill {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
 }
 
 .sparkline-svg {
@@ -2974,25 +2949,32 @@ button, input, textarea, select {
 
 .stat-label {
   color: var(--text-secondary);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 12.5px;
+  font-weight: 560;
 }
 
 .stat-sub {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .stat-value {
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 640;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.stat-value .unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
 }
 
 .usage-bar {
@@ -3534,10 +3516,6 @@ button, input, textarea, select {
   .superpowers-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .dash-clock {
-    font-size: 36px;
-  }
 }
 
 @media (max-width: 600px) {
@@ -3634,10 +3612,6 @@ button, input, textarea, select {
     flex-direction: column;
     gap: 8px;
     padding: 12px 14px;
-  }
-
-  .dash-clock {
-    font-size: clamp(28px, 9vw, 36px);
   }
 
   .dash-greeting-block {

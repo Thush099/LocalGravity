@@ -7,7 +7,6 @@ import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
   renderMultiSeriesChart,
-  renderSparkline,
   renderWeeklyScheduleChart,
 } from './lib/charts.js';
 import {
@@ -543,6 +542,14 @@ function tickClock() {
   $('#dash-greeting').textContent = greetingFor(now);
 }
 
+// Split "44%" / "11.8 GB" into a big number plus a small unit; leave compound
+// values like "11.8 GB / 16 GB" untouched so they stay readable at a glance.
+function valueWithUnit(text) {
+  const s = String(text);
+  const m = /^([\d.,]+)\s*([%A-Za-z]+(?:\s+[A-Za-z]+)?)$/.exec(s.trim());
+  return m ? `${escapeHtml(m[1])}<span class="unit">${escapeHtml(m[2])}</span>` : escapeHtml(s);
+}
+
 function setUsageBar(barId, valueId, percent, valueLabel) {
   const bar = $(barId);
   const label = $(valueId);
@@ -551,7 +558,7 @@ function setUsageBar(barId, valueId, percent, valueLabel) {
     bar.style.width = p === null ? '0%' : `${p}%`;
     bar.dataset.tone = p === null ? 'ok' : usageTone(p);
   }
-  if (label) label.textContent = valueLabel ?? (p === null ? '—' : `${Math.round(p)}%`);
+  if (label) label.innerHTML = valueWithUnit(valueLabel ?? (p === null ? '—' : `${Math.round(p)}%`));
 }
 
 function topDisk(metrics) {
@@ -564,38 +571,20 @@ function renderDashboard() {
   const mem = metrics?.memory || {};
   const gpu = metrics?.gpu;
   const disk = topDisk(metrics);
-  const hist = state.metricsHistory || [];
-  const cpuHist = hist.map((h) => h.cpu).filter((v) => v != null);
-  const memHist = hist.map((h) => h.mem).filter((v) => v != null);
-  const gpuHist = hist.map((h) => h.gpu).filter((v) => v != null);
-
   setUsageBar('#dash-cpu-bar', '#dash-cpu', metrics?.cpu?.percent);
   setUsageBar(
     '#dash-mem-bar',
     '#dash-mem',
     mem.usedPercent,
-    mem.totalBytes ? `${formatBytes(mem.usedBytes || 0)} / ${formatBytes(mem.totalBytes)}` : '—'
+    mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—'
   );
   setUsageBar('#dash-gpu-bar', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—');
   setUsageBar(
     '#dash-disk-bar',
     '#dash-disk',
     disk?.usedPercent,
-    disk ? `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}` : '—'
+    disk ? `${formatBytes(disk.availableBytes)} free` : '—'
   );
-
-  const cpuSpark = $('#dash-cpu-spark');
-  if (cpuSpark) cpuSpark.innerHTML = renderSparkline(cpuHist.length ? cpuHist : [metrics?.cpu?.percent], { color: 'var(--accent)', label: 'cpu' });
-  const memSpark = $('#dash-mem-spark');
-  if (memSpark) memSpark.innerHTML = renderSparkline(memHist.length ? memHist : [mem.usedPercent], { color: 'var(--signal-green)', label: 'mem' });
-  const gpuSpark = $('#dash-gpu-spark');
-  if (gpuSpark) gpuSpark.innerHTML = renderSparkline(gpuHist.length ? gpuHist : [gpu?.utilizationPercent], { color: 'var(--signal-amber)', label: 'gpu' });
-  const diskSpark = $('#dash-disk-spark');
-  if (diskSpark) {
-    diskSpark.innerHTML = disk
-      ? `<span class="stat-pct-pill">${Math.round(disk.usedPercent)}% full</span>`
-      : '';
-  }
 
   const cpuSub = $('#dash-cpu-sub');
   if (cpuSub) {
@@ -605,12 +594,9 @@ function renderDashboard() {
   }
   const memSub = $('#dash-mem-sub');
   if (memSub) {
-    memSub.textContent =
-      mem.swap?.usedBytes > 0
-        ? `Swap ${formatBytes(mem.swap.usedBytes)} / ${formatBytes(mem.swap.totalBytes)}`
-        : mem.wiredBytes != null
-          ? `Wired ${formatBytes(mem.wiredBytes)} · Zero swap`
-          : 'Unified RAM';
+    const ofTotal = mem.totalBytes ? `of ${formatBytes(mem.totalBytes)}` : 'Unified RAM';
+    const swapPart = mem.swap?.usedBytes > 0 ? ` · Swap ${formatBytes(mem.swap.usedBytes)}` : '';
+    memSub.textContent = `${ofTotal}${swapPart}`;
   }
   const gpuSub = $('#dash-gpu-sub');
   if (gpuSub) {
@@ -618,7 +604,7 @@ function renderDashboard() {
   }
   const diskSub = $('#dash-disk-sub');
   if (diskSub) {
-    diskSub.textContent = disk ? `${formatBytes(disk.availableBytes)} free on volume` : 'SSD capacity';
+    diskSub.textContent = disk ? `${formatBytes(disk.usedBytes)} of ${formatBytes(disk.totalBytes)} used` : 'SSD capacity';
   }
 
   const now = new Date();
@@ -4469,7 +4455,7 @@ async function init() {
   renderInstantActions();
   wireEvents();
   tickClock();
-  setInterval(tickClock, 1000);
+  setInterval(tickClock, 30000);
   await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);
   syncSessionToolbar();
   renderMessages(true);

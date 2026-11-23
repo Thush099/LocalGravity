@@ -11,8 +11,9 @@ import {
 } from '../ui/lib/dashboard.js';
 
 test('formatClockTime renders zero-padded 24-hour time', () => {
-  assert.equal(formatClockTime(new Date(2024, 0, 1, 9, 5, 3)), '09:05:03');
-  assert.equal(formatClockTime(new Date(2024, 0, 1, 23, 59, 59)), '23:59:59');
+  // Hours and minutes only; the dashboard clock drops the ticking seconds.
+  assert.equal(formatClockTime(new Date(2024, 0, 1, 9, 5, 3)), '09:05');
+  assert.equal(formatClockTime(new Date(2024, 0, 1, 23, 59, 59)), '23:59');
 });
 
 test('formatClockDate names the weekday and month', () => {

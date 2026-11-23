@@ -335,58 +335,49 @@
         <!-- VIEW: DASHBOARD -->
         <section id="view-dashboard" class="view active">
           <header class="dash-header">
-            <div class="dash-clock-block">
-              <div id="dash-clock" class="dash-clock" aria-label="Current time">--:--:--</div>
-              <div id="dash-date" class="dash-date"></div>
-            </div>
             <div class="dash-greeting-block">
-              <div class="dash-greeting-top">
-                <h2 id="dash-greeting">Welcome back</h2>
-                <button id="dash-mode-pill" class="dash-mode-pill" type="button" title="Open Models &amp; Settings">
-                  <span class="status-dot online"></span>
-                  <span id="dash-mode-text">Local AI</span>
-                </button>
-              </div>
-              <p id="dash-summary" class="view-sub">Loading your day…</p>
+              <h2 id="dash-greeting">Welcome back</h2>
+              <p class="dash-when"><span id="dash-date"></span><span class="dash-when-sep">·</span><span id="dash-clock" class="dash-clock" aria-label="Current time">--:--</span></p>
+              <p id="dash-summary" class="dash-summary">Loading your day…</p>
             </div>
+            <button id="dash-mode-pill" class="dash-mode-pill" type="button" title="Open Models &amp; Settings">
+              <span class="status-dot online"></span>
+              <span id="dash-mode-text">Local AI</span>
+            </button>
           </header>
 
           <div id="dash-stats" class="stat-grid" aria-live="polite">
             <div class="stat-tile">
-              <div class="stat-tile-head">
+              <div class="stat-top">
                 <span class="stat-label">CPU</span>
-                <div class="spark-slot" id="dash-cpu-spark"></div>
+                <span class="stat-value" id="dash-cpu">—</span>
               </div>
-              <span class="stat-value" id="dash-cpu">—</span>
-              <span class="stat-sub" id="dash-cpu-sub">Sampling…</span>
               <div class="usage-bar"><span id="dash-cpu-bar"></span></div>
+              <div class="stat-sub" id="dash-cpu-sub">Sampling…</div>
             </div>
             <div class="stat-tile">
-              <div class="stat-tile-head">
+              <div class="stat-top">
                 <span class="stat-label">Memory</span>
-                <div class="spark-slot" id="dash-mem-spark"></div>
+                <span class="stat-value" id="dash-mem">—</span>
               </div>
-              <span class="stat-value" id="dash-mem">—</span>
-              <span class="stat-sub" id="dash-mem-sub">Unified RAM</span>
               <div class="usage-bar"><span id="dash-mem-bar"></span></div>
+              <div class="stat-sub" id="dash-mem-sub">Unified RAM</div>
             </div>
             <div class="stat-tile">
-              <div class="stat-tile-head">
+              <div class="stat-top">
                 <span class="stat-label">GPU</span>
-                <div class="spark-slot" id="dash-gpu-spark"></div>
+                <span class="stat-value" id="dash-gpu">—</span>
               </div>
-              <span class="stat-value" id="dash-gpu">—</span>
-              <span class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</span>
               <div class="usage-bar"><span id="dash-gpu-bar"></span></div>
+              <div class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</div>
             </div>
             <div class="stat-tile">
-              <div class="stat-tile-head">
+              <div class="stat-top">
                 <span class="stat-label">Storage</span>
-                <div class="spark-slot" id="dash-disk-spark"></div>
+                <span class="stat-value" id="dash-disk">—</span>
               </div>
-              <span class="stat-value" id="dash-disk">—</span>
-              <span class="stat-sub" id="dash-disk-sub">SSD Free</span>
               <div class="usage-bar"><span id="dash-disk-bar"></span></div>
+              <div class="stat-sub" id="dash-disk-sub">SSD Free</div>
             </div>
           </div>
 
