@@ -318,3 +318,47 @@ test('sqlite_query resolves a relative db_path against the session cwd', async (
   assert.equal(r.ok, true);
   await fs.access(path.join(tmpRoot, 'rel.db'), fs.constants.F_OK);
 });
+
+test('edit_file requires a unique target and replaces all only with replace_all', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-edit-uniq-'));
+  const file = path.join(dir, 'a.txt');
+  const ctx = { cwd: dir, paths: getRuntimePaths(dir) };
+
+  // An ambiguous target is refused and the file is left untouched (no silent over-edit).
+  await fs.writeFile(file, 'line one\nline two\nline one\n');
+  const ambiguous = await executeToolCall(
+    { name: 'edit_file', args: { path: file, target: 'line one', replacement: 'LINE' } },
+    ctx
+  );
+  assert.equal(ambiguous.ok, false);
+  assert.match(ambiguous.output, /appears 2 times/);
+  assert.equal(await fs.readFile(file, 'utf8'), 'line one\nline two\nline one\n');
+
+  // Explicit replace_all (boolean) replaces every occurrence.
+  const all = await executeToolCall(
+    { name: 'edit_file', args: { path: file, target: 'line one', replacement: 'LINE', replace_all: true } },
+    ctx
+  );
+  assert.equal(all.ok, true);
+  assert.equal(await fs.readFile(file, 'utf8'), 'LINE\nline two\nLINE\n');
+
+  // A unique target edits in place, and a string "false" must NOT act as replace-all.
+  await fs.writeFile(file, 'alpha\nbeta\ngamma\nbeta2\n');
+  const unique = await executeToolCall(
+    { name: 'edit_file', args: { path: file, target: 'beta\ngamma', replacement: 'B\nG', replace_all: 'false' } },
+    ctx
+  );
+  assert.equal(unique.ok, true);
+  assert.equal(await fs.readFile(file, 'utf8'), 'alpha\nB\nG\nbeta2\n');
+
+  // A string "false" must not enable replace-all on an ambiguous target either.
+  await fs.writeFile(file, 'x\ny\nx\n');
+  const strFalse = await executeToolCall(
+    { name: 'edit_file', args: { path: file, target: 'x', replacement: 'X', replace_all: 'false' } },
+    ctx
+  );
+  assert.equal(strFalse.ok, false, 'string "false" must not enable replace-all');
+  assert.equal(await fs.readFile(file, 'utf8'), 'x\ny\nx\n');
+
+  await fs.rm(dir, { recursive: true, force: true });
+});

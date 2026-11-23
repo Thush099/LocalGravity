@@ -239,7 +239,9 @@ function tryWhitespaceNormalizedReplace(original, target, replacement) {
   return null;
 }
 
-export async function editFileTool({ path: filePath, target, replacement }, opts = {}) {
+export async function editFileTool({ path: filePath, target, replacement, replace_all }, opts = {}) {
+  // Coerce explicitly: a model may send "false" as a string, which is truthy in JS.
+  const replaceAll = replace_all === true || replace_all === 'true' || replace_all === 1 || replace_all === '1';
   const resolved = expandUserPath(filePath, opts.cwd);
   const original = await fs.readFile(resolved, 'utf8');
   const needle = String(target || '');
@@ -249,8 +251,20 @@ export async function editFileTool({ path: filePath, target, replacement }, opts
   }
 
   let updated = null;
-  if (original.includes(needle)) {
-    updated = original.replaceAll(needle, () => String(replacement ?? ''));
+  const occurrences = original.split(needle).length - 1;
+  if (occurrences === 1) {
+    updated = original.replace(needle, () => String(replacement ?? ''));
+  } else if (occurrences > 1) {
+    // Never silently edit several places at once: the model meant one edit, so ask for
+    // more context (or an explicit replace_all) instead of over-writing the file.
+    if (replaceAll) {
+      updated = original.replaceAll(needle, () => String(replacement ?? ''));
+    } else {
+      return {
+        ok: false,
+        output: `Target snippet appears ${occurrences} times in ${resolved}. Add more surrounding context to make it unique, or pass replace_all: true to replace all ${occurrences}.`,
+      };
+    }
   } else {
     updated = tryWhitespaceNormalizedReplace(original, needle, replacement);
   }

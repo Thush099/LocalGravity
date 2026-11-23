@@ -90,13 +90,14 @@ export const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: 'Replace an exact text snippet inside an existing file.',
+      description: 'Replace an exact text snippet inside an existing file. By default the target must appear exactly once — include more surrounding context to make it unique. Pass replace_all: true to intentionally replace every occurrence (e.g. a rename).',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string' },
           target: { type: 'string' },
           replacement: { type: 'string' },
+          replace_all: { type: 'boolean', description: 'Replace every occurrence of the target. Default false, which requires a unique match.' },
         },
         required: ['path', 'target', 'replacement'],
       },

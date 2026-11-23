@@ -232,6 +232,7 @@ export function normalizeToolCall(rawCall = {}) {
       aliasKey('path', ['file_path', 'filepath', 'file', 'filename', 'target_file']);
       aliasKey('target', ['old_text', 'old_str', 'old_string', 'search', 'find', 'original', 'before']);
       aliasKey('replacement', ['new_text', 'new_str', 'new_string', 'replace', 'with', 'after', 'content']);
+      aliasKey('replace_all', ['replaceAll', 'all', 'replace_all_occurrences', 'global']);
       break;
     case 'search_files':
       aliasKey('root', ['path', 'dir', 'directory', 'folder', 'search_dir', 'search_path']);
