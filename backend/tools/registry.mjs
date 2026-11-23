@@ -900,6 +900,24 @@ export async function generateToolPreview({ name: rawName, args: rawArgs = {} })
   return JSON.stringify(args, null, 2);
 }
 
+const FS_ERROR_PHRASES = {
+  ENOENT: 'File or folder not found',
+  EISDIR: 'That path is a folder, not a file',
+  ENOTDIR: 'That path is not a folder',
+  EACCES: 'Permission denied',
+  EPERM: 'Permission denied',
+  ENOSPC: 'Disk is full',
+  EEXIST: 'Already exists',
+  ELOOP: 'Too many symbolic links',
+  EMFILE: 'Too many open files',
+};
+
+function friendlyToolError(err) {
+  const phrase = err?.code ? FS_ERROR_PHRASES[err.code] : null;
+  const detail = err?.message || String(err);
+  return phrase ? `${phrase} \u2014 ${detail}` : detail;
+}
+
 export async function executeToolCall({ name: rawName, args: rawArgs = {} }, context = {}) {
   const normalized = normalizeToolCall({ name: rawName, arguments: rawArgs });
   const name = normalized.name;
@@ -1188,6 +1206,6 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return { ok: false, output: `Unknown tool: ${name}` };
     }
   } catch (err) {
-    return { ok: false, output: `Tool "${name}" failed: ${err.message}` };
+    return { ok: false, output: `Tool "${name}" failed: ${friendlyToolError(err)}` };
   }
 }
