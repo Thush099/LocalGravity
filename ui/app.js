@@ -2160,6 +2160,46 @@ function renderQueuedBar() {
   $('#queued-text').textContent = `${prefix}: ${next.text || '(attached files)'}`;
 }
 
+/**
+ * Map a raw model/stream error to a short, actionable message so a failure tells the
+ * user what to do next instead of dumping a socket error. The technical detail is kept
+ * for debugging but shown last.
+ */
+const ERROR_HINTS = [
+  [/ECONNREFUSED|connection refused|fetch failed|ENOTFOUND|EAI_AGAIN|network|ollama/i, {
+    title: "The local model isn't responding.",
+    hint: 'Make sure Ollama is running — use "Start / Check Ollama" in Models & Settings.',
+  }],
+  [/401|unauthorized|forbidden|invalid (api )?key|api key|authentication/i, {
+    title: 'The provider rejected the request.',
+    hint: 'Check the API key for this provider in Models & Settings.',
+  }],
+  [/429|rate.?limit|too many requests|quota/i, {
+    title: 'The provider is rate-limiting right now.',
+    hint: 'Wait a few seconds and send it again.',
+  }],
+  [/model_not_found|no such model|model .*not (found|available)|pull .*model/i, {
+    title: 'That model is not available.',
+    hint: 'Pick an installed model in Models & Settings (or pull it there).',
+  }],
+  [/timed? ?out|timeout|ETIMEDOUT|deadline/i, {
+    title: 'The request timed out.',
+    hint: 'Try again — or split the task into smaller steps.',
+  }],
+  [/maximum context|context length|too long|exceeds? .*tokens|prompt is too long/i, {
+    title: 'The conversation is too long for the model\u2019s context.',
+    hint: 'It compacts automatically \u2014 send the message again.',
+  }],
+];
+
+function friendlyError(message) {
+  const detail = String(message || 'Model error');
+  for (const [re, info] of ERROR_HINTS) {
+    if (re.test(detail)) return { ...info, detail };
+  }
+  return { title: 'Something went wrong.', hint: 'Try again, or check Models & Settings.', detail };
+}
+
 async function sendPrompt(overridePayload = null) {
   const input = $('#prompt-input');
   const text = overridePayload ? overridePayload.text : input.value.trim();
@@ -2336,8 +2376,10 @@ async function sendPrompt(overridePayload = null) {
           }
           showToast('Context compacted automatically');
         } else if (evt.type === 'error') {
-          showToast(evt.message || 'Model error');
-          state.liveAssistantMsg.content += `\n\n> Error: ${evt.message}`;
+          const friendly = friendlyError(evt.message);
+          showToast(friendly.title);
+          state.liveAssistantMsg.isError = true;
+          state.liveAssistantMsg.content += `\n\n**${friendly.title}** ${friendly.hint}\n\nTechnical detail: ${friendly.detail}`;
         }
         scheduleLiveUpdate();
       },

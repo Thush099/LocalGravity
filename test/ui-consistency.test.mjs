@@ -37,3 +37,24 @@ test('every registry tool has a human-readable UI label', async () => {
   const missing = TOOL_DEFINITIONS.map((t) => t.function.name).filter((name) => !labeled.has(name));
   assert.deepEqual(missing, [], `tools missing HUMAN_TOOL_META labels: ${missing.join(', ')}`);
 });
+
+test('friendlyError turns raw model failures into actionable messages', async () => {
+  const app = await readAppSource();
+  const block = extractBlock(app, 'const ERROR_HINTS = [', 'async function sendPrompt');
+  const friendlyError = new Function(`${block}\nreturn friendlyError;`)();
+  const cases = [
+    ['connect ECONNREFUSED 127.0.0.1:11434', /Ollama|responding/i],
+    ['401 Unauthorized: invalid api key', /API key|rejected/i],
+    ['429 Too Many Requests', /rate-limiting/i],
+    ['model_not_found: qwen99', /not available|model/i],
+    ['Request timed out after 120s', /timed out/i],
+    ['maximum context length exceeded', /too long|compacts/i],
+    ['something odd happened', /Something went wrong/i],
+  ];
+  for (const [msg, hint] of cases) {
+    const r = friendlyError(msg);
+    assert.match(`${r.title} ${r.hint}`, hint, `friendlyError(${JSON.stringify(msg)}) should be actionable`);
+    assert.equal(r.detail, msg, 'keeps the raw detail for debugging');
+  }
+  assert.equal(friendlyError(undefined).detail, 'Model error');
+});
