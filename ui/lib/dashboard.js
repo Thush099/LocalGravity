@@ -47,6 +47,16 @@ export function isStorageLow(disk = null, { minFreeBytes = 25 * 1024 ** 3, maxUs
   return freeBytes < minFreeBytes || usedPercent >= maxUsedPercent;
 }
 
+/**
+ * How often to refresh live metrics. Live and responsive when the window is
+ * focused and visible; ease off when it is backgrounded or hidden so the app is
+ * a good citizen without letting the numbers go stale.
+ */
+export function metricsPollDelay({ focused = true, visible = true } = {}) {
+  if (!visible) return 30000; // hidden: stay fresh but very slow
+  return focused ? 4000 : 12000; // focused: live; background: ease off
+}
+
 export function formatUptime(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds) || 0));
   const days = Math.floor(s / 86400);

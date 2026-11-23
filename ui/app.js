@@ -17,6 +17,7 @@ import {
   formatUptime,
   greetingFor,
   isStorageLow,
+  metricsPollDelay,
   nextEntryFrom,
   usageTone,
 } from './lib/dashboard.js';
@@ -938,14 +939,22 @@ function updateMonitorAutoRefresh() {
   const shouldRun =
     (state.view === 'dashboard' || state.view === 'monitor') &&
     (state.view !== 'monitor' || $('#monitor-autorefresh')?.checked !== false);
-  if (shouldRun && !state.monitorTimer) {
-    state.monitorTimer = setInterval(() => {
-      if (document.visibilityState === 'visible') refreshSystemMetrics();
-    }, 4000);
-  } else if (!shouldRun && state.monitorTimer) {
-    clearInterval(state.monitorTimer);
+  if (state.monitorTimer) {
+    clearTimeout(state.monitorTimer);
     state.monitorTimer = null;
   }
+  if (shouldRun) scheduleMetricsPoll();
+}
+
+// Self-scheduling so focus/visibility changes adjust the cadence each tick.
+function scheduleMetricsPoll() {
+  const visible = document.visibilityState === 'visible';
+  const focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+  state.monitorTimer = setTimeout(async () => {
+    state.monitorTimer = null;
+    if (document.visibilityState === 'visible') await refreshSystemMetrics();
+    updateMonitorAutoRefresh();
+  }, metricsPollDelay({ focused, visible }));
 }
 
 function renderScheduleWeek() {

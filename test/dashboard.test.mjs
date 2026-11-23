@@ -9,6 +9,7 @@ import {
   nextEntryFrom,
   formatMinutesUntil,
   isStorageLow,
+  metricsPollDelay,
 } from '../ui/lib/dashboard.js';
 
 test('formatClockTime renders zero-padded 24-hour time', () => {
@@ -85,4 +86,16 @@ test('isStorageLow fires on low free space or a near-full volume', () => {
   // Missing disk → no warning
   assert.equal(isStorageLow(null), false);
   assert.equal(isStorageLow(undefined), false);
+});
+
+test('metricsPollDelay eases off when backgrounded or hidden', () => {
+  // Focused + visible → live
+  assert.equal(metricsPollDelay({ focused: true, visible: true }), 4000);
+  // Backgrounded but visible → ease off
+  assert.equal(metricsPollDelay({ focused: false, visible: true }), 12000);
+  // Hidden → stay fresh but very slow
+  assert.equal(metricsPollDelay({ focused: true, visible: false }), 30000);
+  assert.equal(metricsPollDelay({ focused: false, visible: false }), 30000);
+  // Default is the live case
+  assert.equal(metricsPollDelay(), 4000);
 });
