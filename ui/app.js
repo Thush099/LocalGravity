@@ -2,7 +2,7 @@ import { apiRequest, hasSwiftBridge, postSwiftAction, setAuthToken, streamSse } 
 import { escapeHtml, highlightCode, renderMarkdown } from './lib/markdown.js';
 import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
-import { getLivePhase } from './lib/live-status.js';
+import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
@@ -588,6 +588,13 @@ function wireStatTiles() {
   grid.addEventListener('keydown', go);
 }
 
+// One source of truth for where the active model runs and the health of that
+// runtime, so the top-right mode pill and the sidebar chip can never disagree.
+// The derivation lives in ui/lib/live-status.js (pure + unit-tested).
+function describeModelRuntime() {
+  return describeRuntimeState(state.config || {}, state.presets || {}, state.health || {});
+}
+
 function renderDashboard() {
   const metrics = state.metrics;
   const mem = metrics?.memory || {};
@@ -662,24 +669,24 @@ function renderDashboard() {
   const runtimeEl = $('#dash-runtime-summary');
   const unloadBtn = $('#dash-unload-ram-btn');
   const modePill = $('#dash-mode-text');
-  const prov = state.config?.provider || 'ollama';
-  const activeModel = state.config?.model || 'qwen3.5:4b';
-  const thinkLabel = state.config?.thinking ? 'Deep Think' : 'Fast Mode';
+  const rt = describeModelRuntime();
   if (modePill) {
-    modePill.textContent = prov === 'ollama' ? `On-Device · ${activeModel} · ${thinkLabel}` : `Cloud · ${activeModel}`;
+    modePill.textContent = rt.isLocal
+      ? `Local · ${rt.model} · ${rt.mode}`
+      : `Cloud · ${rt.provLabel} · ${rt.model}`;
   }
   if (runtimeEl) {
-    const running = state.health?.ollama?.runningModels || [];
-    const activeLabel = `${activeModel} (${prov === 'ollama' ? 'Local' : prov})`;
+    const activeLabel = `${rt.model} (${rt.isLocal ? 'Local' : rt.provLabel})`;
+    const running = rt.runningModels;
     if (running.length > 0) {
       const totalVram = running.reduce((acc, m) => acc + (m.sizeVram || m.size || 0), 0);
-      runtimeEl.textContent = `Active: ${activeLabel} · ${thinkLabel} · Loaded in GPU: ${running.map((m) => m.name).join(', ')} (${formatBytes(totalVram)})`;
+      runtimeEl.textContent = `Active: ${activeLabel} · ${rt.mode} · Loaded in GPU: ${running.map((m) => m.name).join(', ')} (${formatBytes(totalVram)})`;
       unloadBtn?.classList.remove('hidden');
-    } else if (state.health?.ollama?.running) {
-      runtimeEl.textContent = `Active: ${activeLabel} · ${thinkLabel} · Ollama idle (0 B GPU RAM used)`;
+    } else if (rt.daemon === 'idle') {
+      runtimeEl.textContent = `Active: ${activeLabel} · ${rt.mode} · Ollama idle (0 B GPU RAM used)`;
       unloadBtn?.classList.add('hidden');
     } else {
-      runtimeEl.textContent = `Active: ${activeLabel} · Ollama stopped (auto-starts on your first local task)`;
+      runtimeEl.textContent = `Active: ${activeLabel} · ${rt.mode} · Ollama stopped (auto-starts on your first local task)`;
       unloadBtn?.classList.add('hidden');
     }
   }
@@ -1017,13 +1024,23 @@ function renderSidebarStatus() {
 
   const dot = $('#ollama-dot');
   const txt = $('#ollama-status-text');
-  if (ollama?.running) {
+  const rt = describeModelRuntime();
+  if (!rt.isLocal) {
     dot.className = 'status-dot online';
-    const count = ollama.models.length;
+    txt.textContent = `Cloud · ${rt.provLabel} · ${rt.model}`;
+  } else if (rt.daemon === 'not-installed') {
+    dot.className = 'status-dot offline';
+    txt.textContent = 'Ollama not installed';
+  } else if (rt.runningModels.length > 0) {
+    dot.className = 'status-dot online';
+    txt.textContent = `Ollama ready · ${rt.runningModels.map((m) => m.name).join(', ')} loaded`;
+  } else if (ollama?.running) {
+    dot.className = 'status-dot online';
+    const count = (ollama.models || []).length;
     txt.textContent = `Ollama ready (${count} ${count === 1 ? 'model' : 'models'})`;
   } else {
     dot.className = 'status-dot offline';
-    txt.textContent = system.tools?.ollama ? 'Ollama stopped' : 'Ollama not installed';
+    txt.textContent = 'Ollama stopped';
   }
   $('#disk-status-text').textContent =
     system.freeDiskGb !== null ? `SSD: ${system.freeDiskGb} GB free` : 'Disk info unavailable';
