@@ -2977,6 +2977,20 @@ button, input, textarea, select {
   margin-left: 2px;
 }
 
+/* Dashboard metric tiles are shortcuts into the System Monitor. */
+.stat-tile[role="button"] {
+  cursor: pointer;
+}
+
+.stat-tile[role="button"]:hover {
+  border-color: var(--border-strong);
+}
+
+.stat-tile[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .usage-bar {
   height: 6px;
   border-radius: 999px;

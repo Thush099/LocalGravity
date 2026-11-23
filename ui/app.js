@@ -566,6 +566,28 @@ function topDisk(metrics) {
   return disks.find((d) => d.mount === '/System/Volumes/Data') || disks.find((d) => d.mount === '/') || disks[0] || null;
 }
 
+// The dashboard metric tiles are shortcuts into the System Monitor for detail.
+function wireStatTiles() {
+  const grid = $('#dash-stats');
+  if (!grid) return;
+  grid.querySelectorAll('.stat-tile').forEach((tile) => {
+    const label = tile.querySelector('.stat-label')?.textContent?.trim() || 'Metric';
+    tile.setAttribute('role', 'button');
+    tile.setAttribute('tabindex', '0');
+    tile.setAttribute('aria-label', `${label} — open in System Monitor`);
+  });
+  const go = (e) => {
+    if (!e.target.closest('.stat-tile')) return;
+    if (e.type === 'keydown') {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+    }
+    switchView('monitor');
+  };
+  grid.addEventListener('click', go);
+  grid.addEventListener('keydown', go);
+}
+
 function renderDashboard() {
   const metrics = state.metrics;
   const mem = metrics?.memory || {};
@@ -4454,6 +4476,7 @@ async function init() {
   renderWelcomeTaskGrid();
   renderInstantActions();
   wireEvents();
+  wireStatTiles();
   tickClock();
   setInterval(tickClock, 30000);
   await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);
