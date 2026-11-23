@@ -34,6 +34,7 @@ import {
   unloadOllamaModels,
   warmOllamaModel,
 } from './providers/ollama.mjs';
+import { createDaemonSupervisor, shouldReclaimModelMemory } from './daemon-supervisor.mjs';
 import { CLOUD_PRESETS } from './providers/openai-compat.mjs';
 import { importSkillsFromSource, listSkillSources } from './skill-sources.mjs';
 import {
@@ -345,6 +346,7 @@ export function createAgentServer({
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
   const metricsHistory = [];
+  let lastMemoryReclaimAt = 0;
   const previewArtifacts = new Map();
   let activeSpeakProc = null;
   const stopSpeaking = () => {
@@ -495,6 +497,21 @@ export function createAgentServer({
               });
           }
           await inFlightMetrics;
+        }
+        // Conservative idle memory-reclaim (rate-limited): under real pressure,
+        // unload models that are only sitting in RAM so the system stops swapping.
+        // They reload lazily on the next local task; never fires mid-run.
+        if (
+          cachedMetrics &&
+          shouldReclaimModelMemory({
+            hasActiveRun: activeRuns.size > 0,
+            swapUsedBytes: cachedMetrics.memory?.swap?.usedBytes ?? 0,
+            ramUsedPercent: cachedMetrics.memory?.usedPercent ?? 0,
+          }) &&
+          Date.now() - lastMemoryReclaimAt > 120000
+        ) {
+          lastMemoryReclaimAt = Date.now();
+          unloadModelsFn().catch(() => {});
         }
         sendJson(res, 200, { ok: true, metrics: cachedMetrics, history: metricsHistory });
         return;
@@ -1357,16 +1374,33 @@ export function createAgentServer({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const instance = createAgentServer({ agendaNotifications: true });
+
+  // Keep the local model daemon warm-but-lean in the background: it auto-starts
+  // Ollama (and restarts it after a crash) when a local model is active and
+  // memory allows, without ever blocking a request or the UI thread.
+  const runtimePaths = getRuntimePaths();
+  const daemonSupervisor = createDaemonSupervisor({
+    getProvider: async () => (await loadConfig(runtimePaths)).provider,
+    checkHealth: async () => ({
+      installed: Boolean(cachedToolStatus?.ollama ?? true),
+      running: (await checkOllamaHealth()).running,
+    }),
+    ensureRunning: () => ensureOllamaRunning(),
+    getFreeMemBytes: () => os.freemem(),
+  });
+
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    daemonSupervisor.stop();
     await instance.stop().catch(() => {});
     process.exit(0);
   };
 
   instance.start(Number(process.env.PORT) || 0).then(({ port }) => {
     process.stdout.write(`READY:${port}\n`);
+    daemonSupervisor.start();
   });
 
   // Self-terminate cleanly if the parent macOS host crashes or exits unexpectedly
