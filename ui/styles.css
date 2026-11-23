@@ -1629,8 +1629,8 @@ button, input, textarea, select {
   background: var(--btn-accent-bg);
   color: #ffffff;
   border: none;
-  border-radius: 8px;
-  padding: 7px 14px;
+  border-radius: 10px;
+  padding: 8px 15px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -1642,8 +1642,8 @@ button, input, textarea, select {
 .secondary-btn {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 7px 12px;
+  border-radius: 10px;
+  padding: 8px 13px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -1652,8 +1652,8 @@ button, input, textarea, select {
   background: color-mix(in srgb, var(--signal-red) 14%, transparent);
   color: var(--signal-red);
   border: 1px solid color-mix(in srgb, var(--signal-red) 35%, transparent);
-  border-radius: 8px;
-  padding: 6px 12px;
+  border-radius: 10px;
+  padding: 8px 13px;
   cursor: pointer;
 }
 
@@ -1738,13 +1738,16 @@ button, input, textarea, select {
 .text-input, .select-input {
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 7px 11px;
+  border-radius: 10px;
+  padding: 9px 12px;
+  min-height: 38px;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .text-input:focus, .select-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .card-grid {
@@ -1810,16 +1813,47 @@ button, input, textarea, select {
 .settings-section {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 15px;
+  padding: 22px 24px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
 }
 
 .settings-section h3 {
   margin: 0;
   font-size: 15px;
+}
+
+/* Section header: accent eyebrow, tight title, muted hint. */
+.sec-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sec-eyebrow {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+
+.sec-title {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.sec-title code, .sec-hint code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-elevated);
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: var(--text-primary);
 }
 
 .section-hint {
@@ -1837,8 +1871,8 @@ button, input, textarea, select {
 .stat-box {
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: 9px;
-  padding: 10px 12px;
+  border-radius: 11px;
+  padding: 12px 14px;
 }
 
 .stat-box span {
@@ -1905,11 +1939,50 @@ button, input, textarea, select {
 .model-row, .provider-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: 9px;
-  padding: 11px;
+  border-radius: 12px;
+  padding: 13px 15px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Status pill (Active / Warm / Removed). */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 550;
+  padding: 3px 9px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill-green {
+  background: color-mix(in srgb, var(--signal-green) 15%, transparent);
+  color: var(--signal-green);
+}
+
+.pill-amber {
+  background: color-mix(in srgb, var(--signal-amber) 15%, transparent);
+  color: var(--signal-amber);
+}
+
+.pill-red {
+  background: color-mix(in srgb, var(--signal-red) 15%, transparent);
+  color: var(--signal-red);
+}
+
+.pill-muted {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-secondary);
 }
 
 .model-row {

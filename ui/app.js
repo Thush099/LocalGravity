@@ -2714,21 +2714,27 @@ function renderSettingsView() {
     <div class="stat-box"><span>Ollama</span><strong>${ollama.running ? 'Running' : 'Stopped'}</strong></div>
   `;
 
+  const activeOllamaModel = state.config?.model || '';
   $('#ollama-models-list').innerHTML =
     (ollama.models || [])
-      .map(
-        (m) => `
+      .map((m) => {
+        const pill =
+          m.name === activeOllamaModel
+            ? '<span class="pill pill-green"><span class="pill-dot"></span>Active</span>'
+            : '<span class="pill pill-muted"><span class="pill-dot"></span>Ready</span>';
+        return `
       <div class="model-row">
         <div>
           <strong>${escapeHtml(m.name)}</strong>
           <div class="status-sub">${formatBytes(m.size)}</div>
         </div>
-        <div style="display:flex;gap:6px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${pill}
           <button type="button" class="secondary-btn use-ollama-btn" data-model="${escapeHtml(m.name)}">Use</button>
           <button type="button" class="danger-btn del-ollama-btn" data-model="${escapeHtml(m.name)}">Remove</button>
         </div>
-      </div>`
-      )
+      </div>`;
+      })
       .join('') || '<div class="status-sub">No local Ollama models detected yet.</div>';
 
   $('#ollama-models-list').querySelectorAll('.use-ollama-btn').forEach((b) => {
@@ -2758,7 +2764,13 @@ function renderSettingsView() {
       <div class="provider-card" data-prov="${escapeHtml(p.id)}">
         <div class="card-top">
           <strong>${escapeHtml(p.label)}</strong>
-          <span class="card-tag">${hasKey ? 'Key saved' : p.id === 'custom' ? 'Local/Custom' : 'Not set'}</span>
+          ${
+            hasKey
+              ? '<span class="pill pill-green"><span class="pill-dot"></span>Key saved</span>'
+              : p.id === 'custom'
+                ? '<span class="pill pill-muted"><span class="pill-dot"></span>Local / Custom</span>'
+                : '<span class="pill pill-muted"><span class="pill-dot"></span>Not set</span>'
+          }
         </div>
         ${
           p.id === 'custom'

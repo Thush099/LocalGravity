@@ -749,7 +749,10 @@
 
           <div class="settings-scroll">
             <div class="settings-section">
-              <h3>Mac Resources &amp; Runtime</h3>
+              <div class="sec-head">
+                <div class="sec-eyebrow">Performance</div>
+                <h2 class="sec-title">Mac resources &amp; runtime</h2>
+              </div>
               <div id="system-stats-grid" class="stats-grid"></div>
               <div class="runtime-controls">
                 <label class="field-inline">
@@ -766,7 +769,10 @@
             </div>
 
             <div class="settings-section">
-              <h3>Agenda Nudges</h3>
+              <div class="sec-head">
+                <div class="sec-eyebrow">Notifications</div>
+                <h2 class="sec-title">Agenda nudges</h2>
+              </div>
               <p class="view-sub">macOS notifications before timetable blocks start.</p>
               <div class="runtime-controls">
                 <label class="field-inline">
@@ -782,7 +788,10 @@
             </div>
 
             <div class="settings-section">
-              <h3>Local Ollama Models</h3>
+              <div class="sec-head">
+                <div class="sec-eyebrow">Local models</div>
+                <h2 class="sec-title">Ollama on this Mac</h2>
+              </div>
               <div class="pull-row">
                 <input id="pull-model-input" class="text-input" type="text" placeholder="Model tag (e.g. qwen3.5:4b, qwen3.5:9b, gemma4:12b)" />
                 <button id="pull-model-btn" class="primary-btn" type="button">Pull model</button>
@@ -797,7 +806,10 @@
             </div>
 
             <div class="settings-section">
-              <h3>Cloud &amp; Frontier Providers (Optional)</h3>
+              <div class="sec-head">
+                <div class="sec-eyebrow">Optional</div>
+                <h2 class="sec-title">Cloud &amp; frontier providers</h2>
+              </div>
               <p class="section-hint">
                 API keys are stored locally in <code>~/.localgravity/config.json</code> (mode <code>0600</code>). Leave blank to keep LocalGravity 100% local.
               </p>
@@ -805,7 +817,10 @@
             </div>
 
             <div class="settings-section danger-zone">
-              <h3>Clean Uninstall</h3>
+              <div class="sec-head">
+                <div class="sec-eyebrow">Maintenance</div>
+                <h2 class="sec-title">Clean uninstall</h2>
+              </div>
               <p class="section-hint">
                 Everything lives inside <code>/Applications/LocalGravity.app</code>, <code>~/.localgravity/</code>, and the repository folder. To remove everything cleanly:
               </p>
