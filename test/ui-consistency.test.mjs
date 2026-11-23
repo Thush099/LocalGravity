@@ -58,3 +58,34 @@ test('friendlyError turns raw model failures into actionable messages', async ()
   }
   assert.equal(friendlyError(undefined).detail, 'Model error');
 });
+
+async function readIndexSource() {
+  return fs.readFile(new URL('../ui/index.html', import.meta.url), 'utf8');
+}
+
+async function readCssSource() {
+  return fs.readFile(new URL('../ui/styles.css', import.meta.url), 'utf8');
+}
+
+test('dashboard bottom half uses the responsive card grid', async () => {
+  const index = await readIndexSource();
+  const css = await readCssSource();
+  assert.ok(index.includes('class="dash-grid"'), 'dashboard should use the .dash-grid responsive grid');
+  assert.ok(!index.includes('dash-columns'), 'the legacy .dash-columns split should be gone');
+  assert.ok(css.includes('.dash-grid'), '.dash-grid must be styled');
+  assert.ok(css.includes('repeat(auto-fit'), 'the grid must reflow responsively across monitors');
+  assert.ok(css.includes('.dash-runtime-card'), 'the runtime summary bar keeps its full-width treatment');
+});
+
+test('dashboard resource tiles render live waves and an actionable storage alert', async () => {
+  const index = await readIndexSource();
+  const app = await readAppSource();
+  for (const id of ['dash-cpu-spark', 'dash-mem-spark', 'dash-gpu-spark', 'dash-disk-spark']) {
+    assert.ok(index.includes(`id="${id}"`), `missing live-wave container ${id}`);
+  }
+  assert.ok(!index.includes('dash-cpu-bar'), 'static usage bars should be replaced by live waves');
+  assert.ok(index.includes('id="dash-storage-alert"'), 'the low-storage alert container must exist');
+  assert.ok(app.includes('data-clean-downloads'), 'the storage alert must link to the Clean downloads capability');
+  assert.ok(app.includes('getCleanDownloadsPrompt'), 'the Clean downloads capability must launch from the alert');
+  assert.ok(app.includes('renderSparkline'), 'the tiles draw real-time waves from renderSparkline');
+});
