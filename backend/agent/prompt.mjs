@@ -91,6 +91,7 @@ export function buildSystemPrompt({
     return [
       `You are LocalGravity, a fast autonomous macOS agent (${os.arch()}, home=${os.homedir()}, cwd=${cwd || os.homedir()}). ${modeLine}`,
       ...(modeDirective ? [modeDirective] : []),
+      `Use relative paths in \`${cwd || os.homedir()}\`, not the LocalGravity repo.`,
       '',
       '## Rules',
       '1. Act directly with tools—do not call `list_skills`/`list_knowledge` unless you modified them. Read a skill (`read_skill(name)`) only when it clearly matches.',
@@ -120,6 +121,7 @@ export function buildSystemPrompt({
     '',
     modeLine,
     ...(modeDirective ? ['', modeDirective] : []),
+    `**Paths:** the user's files live in your working directory \`${cwd || os.homedir()}\`; use relative paths (e.g. \`greet.js\`) that resolve there. The LocalGravity source repo (rule 3) is ONLY for editing LocalGravity itself, never the user's files.`,
     '',
     '## Core Operating Rules',
     '1. **Act decisively without wasted steps:** All installed skills and knowledge docs are ALREADY listed below. Do NOT call `list_skills` or `list_knowledge` unless you just created/modified one. Read ONLY the specific matching skill (`read_skill(name)`) or doc (`read_knowledge(name)`) you need, then act immediately.',
