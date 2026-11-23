@@ -293,11 +293,13 @@ button, input, textarea, select {
   background: transparent;
   text-align: left;
   padding: 7px 10px;
-  border-radius: 8px;
-  color: var(--text-secondary);
+  border-radius: 9px;
+  color: var(--text-primary);
   cursor: pointer;
-  font-weight: 500;
-  transition: background 110ms ease, color 110ms ease;
+  font-size: 13.5px;
+  font-weight: 540;
+  letter-spacing: -0.008em;
+  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
 }
 
 .nav-icon {
@@ -350,6 +352,7 @@ button, input, textarea, select {
 .nav-btn.active {
   background: var(--accent-soft);
   color: var(--accent);
+  font-weight: 580;
 }
 
 .nav-btn.active::before {
