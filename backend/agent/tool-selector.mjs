@@ -122,6 +122,11 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:spotlight|mdfind|find my|locate|where is my|pdf|keynote|pages|numbers|invoice|resume|receipt|downloads)\b/i,
   },
   {
+    tools: ['read_document', 'read_file'],
+    pattern:
+      /\b(?:summarize|read|open|extract|parse|review|digest)\b.{0,60}\b(?:document|docx?|pdf|rtf|odt|word\s*doc|report|essay|paper|article|webarchive|manual)\b|\b(?:docx?|pdf|rtf|odt|webarchive)\b|\b(?:word\s*document|read\s+the\s+doc)\b/i,
+  },
+  {
     tools: ['list_schedule_items', 'add_schedule_item', 'remove_schedule_item'],
     pattern: /\b(?:schedule|timetable|agenda|calendar|meeting|class|workout|block|routine|daily|weekly|tomorrow|today|what'?s next|plan my day|timeblock)\b/i,
   },

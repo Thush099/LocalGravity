@@ -362,3 +362,37 @@ test('edit_file requires a unique target and replaces all only with replace_all'
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('read_document extracts plain text and documents and fails cleanly on missing or folder paths', async () => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-doc-'));
+  const ctx = { cwd: tmpRoot, paths: getRuntimePaths(tmpRoot) };
+  try {
+    await fs.writeFile(path.join(tmpRoot, 'note.md'), 'Line one\nLine two\n' + 'x'.repeat(3000));
+
+    // Plain-text extraction with truncation.
+    const plain = await executeToolCall({ name: 'read_document', args: { path: 'note.md', max_chars: 100 } }, ctx);
+    assert.equal(plain.ok, true);
+    assert.match(plain.output, /Line one/);
+    assert.match(plain.output, /truncated/);
+
+    // Missing file.
+    const missing = await executeToolCall({ name: 'read_document', args: { path: 'ghost.docx' } }, ctx);
+    assert.equal(missing.ok, false);
+    assert.match(missing.output, /File not found/);
+
+    // A folder is not a document.
+    const dir = await executeToolCall({ name: 'read_document', args: { path: '.' } }, ctx);
+    assert.equal(dir.ok, false);
+    assert.match(dir.output, /folder, not a document/);
+
+    // Round-trip a real RTF through macOS textutil when available.
+    if (process.platform === 'darwin') {
+      await execFileAsync('textutil', ['-convert', 'rtf', '-output', path.join(tmpRoot, 'doc.rtf'), path.join(tmpRoot, 'note.md')]);
+      const rtf = await executeToolCall({ name: 'read_document', args: { path: 'doc.rtf' } }, ctx);
+      assert.equal(rtf.ok, true);
+      assert.match(rtf.output, /Line one/);
+    }
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});

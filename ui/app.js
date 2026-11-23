@@ -151,6 +151,7 @@ const SLASH_COMMANDS = [
 const HUMAN_TOOL_META = {
   list_dir: { label: 'List Folder', summarize: (a) => a.path || '.' },
   read_file: { label: 'Read File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  read_document: { label: 'Read Document', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
   write_file: { label: 'Write File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
   edit_file: { label: 'Edit File', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
   move_file: { label: 'Move File', summarize: (a) => `${String(a.source || '').split('/').pop()} → ${String(a.destination || '').split('/').pop()}` },

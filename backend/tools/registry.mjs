@@ -10,6 +10,7 @@ import { calculateTool } from './calc-tool.mjs';
 import { runCommandTool } from './exec-tool.mjs';
 import { buildCompactDiff, editFileTool, listDir, moveFileTool, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
 import { inspectMediaTool } from './media-tool.mjs';
+import { readDocumentTool } from './doc-tool.mjs';
 import {
   copyToClipboardTool,
   manageNotesTool,
@@ -65,6 +66,21 @@ export const TOOL_DEFINITIONS = [
           path: { type: 'string' },
           start_line: { type: 'number' },
           end_line: { type: 'number' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_document',
+      description: 'Extract text from a document that read_file cannot parse: Word (.docx/.doc), RTF, ODT, HTML, webarchive, or plain text. PDFs work if poppler is installed. Use to read or summarize documents.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          max_chars: { type: 'number' },
         },
         required: ['path'],
       },
@@ -930,6 +946,8 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await listDir(args, { cwd: context.cwd });
       case 'read_file':
         return await readFileTool(args, { cwd: context.cwd });
+      case 'read_document':
+        return await readDocumentTool(args, { cwd: context.cwd });
       case 'write_file': {
         const result = await writeFileTool(args, { cwd: context.cwd });
         if (result.ok) {
