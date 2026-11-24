@@ -3058,6 +3058,66 @@ button, input, textarea, select {
   grid-column: 1 / -1;
 }
 
+/* The daily briefing is the morning overview — full width, three quiet columns. */
+.dash-grid > .dash-briefing-card {
+  grid-column: 1 / -1;
+}
+
+.dash-briefing {
+  margin-top: 4px;
+}
+
+.brief-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.brief-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.brief-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brief-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brief-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.brief-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.brief-body {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.brief-body.quiet {
+  color: var(--text-muted);
+}
+
 .dash-card {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
