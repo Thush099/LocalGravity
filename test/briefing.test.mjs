@@ -4,6 +4,8 @@ import {
   deriveAttention,
   summarizeBriefing,
   briefingTool,
+  suggestFor,
+  SUGGESTED_ACTIONS,
   CPU_HIGH_PERCENT,
   BATTERY_LOW_PERCENT,
 } from '../backend/tools/briefing-tool.mjs';
@@ -65,6 +67,32 @@ test('deriveAttention flags only observed thresholds, quoting the value', () => 
   assert.ok(byArea.storage, 'flags tight storage');
   // Every flag is grounded: it cites a numeric observed value.
   for (const f of flags) assert.match(f.detail, /\d+%/);
+});
+
+test('every flag carries one grounded follow-up suggestion', () => {
+  const flags = deriveAttention(hotMetrics(), NOW);
+  for (const f of flags) {
+    assert.ok(f.suggest, `${f.area} flag offers a follow-up`);
+    assert.ok(f.suggest.action.length > 0);
+    if (f.suggest.tool !== null) {
+      // Suggested tools are real registered tool names.
+      assert.ok(TOOL_DEFINITIONS.some((t) => t.function.name === f.suggest.tool), `${f.suggest.tool} is a real tool`);
+    }
+  }
+  // The live-demo case: a full disk suggests large_files as the concrete next step.
+  const storage = flags.find((f) => f.area === 'storage');
+  assert.deepEqual(storage.suggest, { tool: 'large_files', action: 'find large files to free up space' });
+});
+
+test('suggestions never exist without a flag (grounding rule)', () => {
+  const healthy = deriveAttention(healthyMetrics(), NOW);
+  assert.deepEqual(healthy, [], 'healthy metrics produce no flags, hence no suggestions');
+  assert.equal(suggestFor('made-up-area'), null);
+  // A suggestion without a flag would be invented work; the briefing only emits
+  // suggestions inside flags, so an empty flag list implies zero suggestions.
+  const b = summarizeBriefing({ metrics: healthyMetrics(), scheduleEntries: [], now: NOW });
+  assert.deepEqual(b.attention, []);
+  assert.deepEqual(SUGGESTED_ACTIONS.storage.tool, 'large_files');
 });
 
 test('summarizeBriefing composes system summary and today\'s schedule', () => {
