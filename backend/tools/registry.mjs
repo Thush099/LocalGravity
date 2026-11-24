@@ -483,6 +483,35 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'network_usage',
+      description:
+        'Report network and data usage: per-app byte counts (top talkers), total internet bytes this month and today, and per-interface kernel counters. Read-only; use when the user asks about data usage, bandwidth, which app is using the network, or monthly consumption.',
+      parameters: {
+        type: 'object',
+        properties: {
+          include_apps: { type: 'boolean', description: 'Include per-app top talkers (default true).' },
+          limit: { type: 'number', description: 'How many apps to list (default 8).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'speed_test',
+      description:
+        'Measure live internet download speed in megabits per second via a short timed throughput test. Read-only; use when the user asks about internet, connection, or download speed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          seconds: { type: 'number', description: 'Test window in seconds (default 4, max 10).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'large_files',
       description:
         'Find the largest files in folders to free up disk space. Read-only; reports sizes and ages, never deletes. Defaults to Downloads, Desktop, and Documents.',
@@ -712,6 +741,8 @@ const ALWAYS_READONLY_TOOLS = new Set([
   'search_knowledge',
   'read_knowledge',
   'system_stats',
+  'network_usage',
+  'speed_test',
   'list_schedule_items',
 ]);
 
@@ -1056,6 +1087,14 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         // static import would close a cycle. Deferring keeps the module graph acyclic.
         const { largeFilesTool } = await import('../actions.mjs');
         return await largeFilesTool(args);
+      }
+      case 'network_usage': {
+        const { networkUsageReport } = await import('../network-monitor.mjs');
+        return { ok: true, output: await networkUsageReport({ include_apps: args.include_apps, limit: args.limit }) };
+      }
+      case 'speed_test': {
+        const { speedTestReport } = await import('../network-monitor.mjs');
+        return { ok: true, output: await speedTestReport({ seconds: args.seconds }) };
       }
       case 'add_schedule_item': {
         const result = await upsertScheduleEntry(

@@ -109,6 +109,11 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b|\b(?:battery|power|charge|charging|uptime|storage|free\s+(?:space|memory|ram)|slow|sluggish|overheat\w*|fans?|temperature)\b|\b(?:how(?:'s| is)\s+(?:my|the)|my|the|this)\s+(?:mac|computer|machine|laptop|system|pc)\b/i,
   },
   {
+    tools: ['network_usage', 'speed_test'],
+    pattern:
+      /\b(?:data\s+usage|network\s+usage|internet\s+(?:speed|usage)|speed\s*test|bandwidth|how\s+much\s+data|data\s+consumption|monthly\s+(?:data|usage|bandwidth)|upload\s+(?:speed|usage|rate)|download\s+(?:speed|usage|rate)|which\s+app\w*.{0,24}(?:data|network|bandwidth)|\d+\s*mbps|megabits?|connection\s+speed|(?:wifi|wi-?fi)\s+(?:speed|data|usage)|top\s+talkers?)\b/i,
+  },
+  {
     tools: ['large_files'],
     pattern:
       /\b(?:large|big|biggest|largest|huge|massive)\s+(?:files?|items?|documents?|videos?|photos?)\b|\b(?:what'?s|what is)\s+(?:taking|eating|using|hogging|filling)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space|drive)\b|\b(?:disk|storage|drive)\s+(?:cleanup|clean\s?up|usage|full|clutter)\b|\bfree\s*up\s+(?:disk|space|storage)\b/i,
