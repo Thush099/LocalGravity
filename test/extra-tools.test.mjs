@@ -99,7 +99,7 @@ test('spotlightSearchTool validates empty query and executes safely via registry
 });
 
 test('new domain tools route cleanly via tool-selector without inflating baseline coding prompts', () => {
-  assert.equal(TOOL_DEFINITIONS.length, 43);
+  assert.equal(TOOL_DEFINITIONS.length, 45);
 
   const webTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',
