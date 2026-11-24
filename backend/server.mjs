@@ -67,6 +67,7 @@ import {
   takeScreenshotTool,
 } from './tools/macos-tool.mjs';
 import { startAgendaNotifier } from './agenda-notifier.mjs';
+import { startAmbientAlerter } from './ambient-alerts.mjs';
 import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
@@ -359,6 +360,7 @@ export function createAgentServer({
     activeSpeakProc = null;
   };
   let agendaStop = null;
+  let ambientStop = null;
   const resolveRunApprovals = (runState, reason) => {
     if (!runState?.approvals) return;
     for (const resolver of runState.approvals.values()) {
@@ -1356,12 +1358,17 @@ export function createAgentServer({
       if (agendaNotifications && process.env.LOCALGRAVITY_DISABLE_AGENDA_NOTIFIER !== '1') {
         agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
       }
+      if (process.env.LOCALGRAVITY_DISABLE_AMBIENT_ALERTS !== '1') {
+        ambientStop = startAmbientAlerter({ paths, notify: showNotificationTool });
+      }
       return { port: addr.port, authToken: token };
     },
     async stop() {
       stopSpeaking();
       agendaStop?.();
       agendaStop = null;
+      ambientStop?.();
+      ambientStop = null;
       for (const runState of activeRuns.values()) {
         runState.abortController.abort();
         resolveRunApprovals(runState, 'Server shutting down.');
