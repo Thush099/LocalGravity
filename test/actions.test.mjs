@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { runInstantAction, getInstantAction, INSTANT_ACTION_IDS, storageAudit, organizePreview, largestFiles } from '../backend/actions.mjs';
+import { runInstantAction, getInstantAction, INSTANT_ACTION_IDS, storageAudit, organizePreview, largestFiles, categorizeFile } from '../backend/actions.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
 import { evaluateToolSafety, executeToolCall, TOOL_DEFINITIONS } from '../backend/tools/registry.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
@@ -103,6 +103,44 @@ test('organizePreview groups loose files by type and never moves anything', asyn
   const after = await fs.readdir(dir);
   assert.equal(after.length, 8);
   assert.ok(after.includes('a.jpg') && after.includes('existing-folder'));
+});
+
+test('categorizeFile routes by filename and content signals', (t) => {
+  // Filename/extension signals for real-world clutter.
+  assert.equal(categorizeFile('Screenshot 2024-01-15.png'), 'Screenshots');
+  assert.equal(categorizeFile('CleanShot-2024.png'), 'Screenshots');
+  assert.equal(categorizeFile('setup.dmg'), 'Installers');
+  assert.equal(categorizeFile('app-installer.pkg'), 'Installers');
+  assert.equal(categorizeFile('archive-backup.zip'), 'Backups');
+  assert.equal(categorizeFile('old-data.bak'), 'Backups');
+  assert.equal(categorizeFile('Roboto.ttf'), 'Fonts');
+  assert.equal(categorizeFile('system.log'), 'Logs');
+  // Content cues for extensionless/unknown files.
+  assert.equal(categorizeFile('mystery', 'function foo() { return 1; }'), 'Code');
+  assert.equal(categorizeFile('mystery', 'def foo(x):\n    return x + 1'), 'Code');
+  assert.equal(categorizeFile('mystery', '2024-01-15 10:00:00 ERROR something broke'), 'Logs');
+  assert.equal(categorizeFile('mystery', 'ERROR: disk full'), 'Logs');
+  assert.equal(categorizeFile('mystery', 'a,b,c\n1,2,3\n4,5,6'), 'Documents');
+  const prose = 'This is a plain prose note written in complete sentences. It explains a topic in flowing paragraphs, with normal punctuation and lowercase words followed by capitals, so it reads like ordinary writing rather than code.';
+  assert.equal(categorizeFile('mystery', prose), 'Documents');
+  // Genuinely ambiguous stays put; prose is never mistaken for code.
+  assert.equal(categorizeFile('stray.unknown', 'x'), 'Other');
+  assert.equal(categorizeFile('mystery', 'Please return the book to the library shelf.'), 'Other');
+});
+
+test('organizePreview uses content signals to sort extensionless files', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-org-smart-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(dir, 'Screenshot 2024.png'), 'x');
+  await fs.writeFile(path.join(dir, 'setup.dmg'), 'x');
+  await fs.writeFile(path.join(dir, 'script'), 'function main() {\n  return 0;\n}\n');
+  await fs.writeFile(path.join(dir, 'journal'), '2024-01-15 10:00:00 INFO started\n');
+  const preview = await organizePreview(dir);
+  assert.match(preview, /4 loose files/);
+  assert.match(preview, /1 → Screenshots\//);
+  assert.match(preview, /1 → Installers\//);
+  assert.match(preview, /1 → Code\//);
+  assert.match(preview, /1 → Logs\//);
 });
 
 test('largestFiles ranks by size, skips hidden files, and never mutates', async (t) => {

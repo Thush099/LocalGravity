@@ -182,25 +182,116 @@ export async function storageAudit({ maxEntries = MAX_SCANNED_ENTRIES } = {}) {
   return bounded(lines.join('\n'));
 }
 
-// Deterministic file-extension → target-folder map for the read-only organize preview.
-const ORGANIZE_CATEGORIES = [
-  { folder: 'Images', exts: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp', '.svg', '.raw', '.dng'] },
-  { folder: 'Documents', exts: ['.pdf', '.doc', '.docx', '.pages', '.txt', '.md', '.rtf', '.xls', '.xlsx', '.numbers', '.csv', '.ppt', '.pptx', '.key', '.epub'] },
-  { folder: 'Audio', exts: ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.aiff', '.ogg'] },
-  { folder: 'Video', exts: ['.mp4', '.mov', '.m4v', '.avi', '.mkv', '.webm', '.wmv', '.flv'] },
-  { folder: 'Archives', exts: ['.zip', '.dmg', '.pkg', '.tar', '.gz', '.tgz', '.bz2', '.7z', '.rar', '.iso', '.xip'] },
-  { folder: 'Code', exts: ['.js', '.mjs', '.ts', '.tsx', '.jsx', '.py', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.swift', '.sh', '.html', '.css', '.json', '.yaml', '.yml', '.toml', '.sql', '.ipynb'] },
-];
-const ORGANIZE_CATEGORY_BY_EXT = new Map();
-for (const cat of ORGANIZE_CATEGORIES) {
-  for (const ext of cat.exts) ORGANIZE_CATEGORY_BY_EXT.set(ext, cat.folder);
+// --- Smarter, content-aware file categorization -----------------------------
+// Clear-cut types route by extension alone (no I/O). Ambiguous files -- no known
+// extension -- get a bounded content peek so raw notes, source, and logs land in
+// real folders instead of a junk-drawer "Other". Signals are checked strongest
+// first so a screenshot named "...invoice..." still counts as a screenshot.
+
+const CATEGORY_BY_EXT = new Map([
+  ['.jpg', 'Images'], ['.jpeg', 'Images'], ['.png', 'Images'], ['.gif', 'Images'],
+  ['.webp', 'Images'], ['.heic', 'Images'], ['.heif', 'Images'], ['.tif', 'Images'],
+  ['.tiff', 'Images'], ['.bmp', 'Images'], ['.svg', 'Images'], ['.raw', 'Images'], ['.dng', 'Images'],
+  ['.pdf', 'Documents'], ['.doc', 'Documents'], ['.docx', 'Documents'], ['.pages', 'Documents'],
+  ['.txt', 'Documents'], ['.md', 'Documents'], ['.rtf', 'Documents'], ['.xls', 'Documents'],
+  ['.xlsx', 'Documents'], ['.numbers', 'Documents'], ['.csv', 'Documents'], ['.ppt', 'Documents'],
+  ['.pptx', 'Documents'], ['.key', 'Documents'], ['.epub', 'Documents'],
+  ['.mp3', 'Audio'], ['.m4a', 'Audio'], ['.wav', 'Audio'], ['.flac', 'Audio'],
+  ['.aac', 'Audio'], ['.aiff', 'Audio'], ['.ogg', 'Audio'],
+  ['.mp4', 'Video'], ['.mov', 'Video'], ['.m4v', 'Video'], ['.avi', 'Video'], ['.mkv', 'Video'],
+  ['.webm', 'Video'], ['.wmv', 'Video'], ['.flv', 'Video'],
+  ['.zip', 'Archives'], ['.tar', 'Archives'], ['.gz', 'Archives'], ['.tgz', 'Archives'],
+  ['.bz2', 'Archives'], ['.7z', 'Archives'], ['.rar', 'Archives'], ['.iso', 'Archives'], ['.xip', 'Archives'],
+  ['.js', 'Code'], ['.mjs', 'Code'], ['.ts', 'Code'], ['.tsx', 'Code'], ['.jsx', 'Code'],
+  ['.py', 'Code'], ['.rb', 'Code'], ['.go', 'Code'], ['.rs', 'Code'], ['.java', 'Code'],
+  ['.c', 'Code'], ['.cpp', 'Code'], ['.h', 'Code'], ['.swift', 'Code'], ['.sh', 'Code'],
+  ['.html', 'Code'], ['.css', 'Code'], ['.json', 'Code'], ['.yaml', 'Code'], ['.yml', 'Code'],
+  ['.toml', 'Code'], ['.sql', 'Code'], ['.ipynb', 'Code'],
+]);
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp', '.svg', '.raw', '.dng']);
+const ARCHIVE_EXTS = new Set(['.zip', '.tar', '.gz', '.tgz', '.bz2', '.7z', '.rar', '.iso', '.xip']);
+const INSTALLER_EXTS = new Set(['.dmg', '.pkg', '.mpkg', '.msi', '.exe', '.appimage']);
+const FONT_EXTS = new Set(['.ttf', '.otf', '.woff', '.woff2', '.eot']);
+const BACKUP_EXTS = new Set(['.bak', '.backup', '.old', '.swp']);
+const SCREENSHOT_RE = /screen[\s._-]?(shot|capture)|cleanshot|screenshot/i;
+const INSTALLER_RE = /\b(setup|install(er)?)\b/i;
+const BACKUP_RE = /\bback[\s._-]?ups?\b/i;
+
+// Content cues for files whose extension tells us nothing useful. Each is strict
+// enough that ordinary prose ("please return the book") is never mistaken for code.
+const CODE_CUE = /\bfunction\s+\w+|\bdef\s+\w+\s*\(|#include\b|^#!|\bimport\s+\w+|\b(const|let|var)\s+[\w$]+\s*=|=>|[{}]\s*$/m;
+const LOG_CUE = /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\b\d{2}:\d{2}:\d{2}\b|\b(ERROR|WARNING|WARN|INFO|DEBUG|TRACE|FATAL|CRITICAL)\s*:|syslog/i;
+
+function looksTabular(sample) {
+  const lines = sample.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 6);
+  if (lines.length < 2) return false;
+  const delim = lines[0].includes('\t') ? '\t' : lines[0].includes(',') ? ',' : null;
+  if (!delim) return false;
+  const cols = lines[0].split(delim).length;
+  return cols >= 2 && lines.every((l) => Math.abs(l.split(delim).length - cols) <= 1);
 }
 
 /**
- * Read-only preview of how a folder's loose top-level files would sort into type folders.
- * Categorizes by extension only (no per-file stat), so it stays fast on cluttered folders.
+ * Classify an extensionless/unknown file from a bounded content sample. Returns a
+ * folder name, or null when the content gives no confident signal so the caller
+ * keeps the current "Other" behavior for genuinely ambiguous files.
  */
-export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 3 } = {}) {
+export function categorizeByContent(sample = '') {
+  const s = String(sample).trim();
+  if (s.length < 8) return null;
+  if (CODE_CUE.test(s)) return 'Code';
+  if (LOG_CUE.test(s)) return 'Logs';
+  if (looksTabular(s)) return 'Documents';
+  const textual = (s.match(/[A-Za-z .,;:'"()\-]/g) || []).length;
+  if (s.length >= 120 && textual / s.length > 0.75 && /[a-z][.!?]\s+[A-Z]/.test(s)) return 'Documents';
+  return null;
+}
+
+/**
+ * Name/extension-only classification: fast, no I/O. Returns null when a content peek
+ * could improve the guess (i.e. the extension is unknown or absent entirely).
+ */
+export function categorizeByName(name) {
+  const base = path.basename(String(name)).toLowerCase();
+  const ext = path.extname(base);
+  if (INSTALLER_EXTS.has(ext)) return 'Installers';
+  if (IMAGE_EXTS.has(ext) && SCREENSHOT_RE.test(base)) return 'Screenshots';
+  if (ARCHIVE_EXTS.has(ext) && INSTALLER_RE.test(base)) return 'Installers';
+  if (BACKUP_EXTS.has(ext) || BACKUP_RE.test(base)) return 'Backups';
+  if (FONT_EXTS.has(ext)) return 'Fonts';
+  if (ext === '.log') return 'Logs';
+  return CATEGORY_BY_EXT.get(ext) || null;
+}
+
+/** Full classification: name first, then a bounded content peek for unknown files. */
+export function categorizeFile(name, sample = '') {
+  return categorizeByName(name) ?? categorizeByContent(sample) ?? 'Other';
+}
+
+/**
+ * Read at most maxBytes from the head of a file -- never the whole thing -- so a
+ * multi-gigabyte extensionless file costs the same 512-byte read as a small note.
+ */
+async function readSample(filePath, maxBytes = 512) {
+  let fh;
+  try {
+    fh = await fs.open(filePath, 'r');
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    return buf.slice(0, bytesRead).toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fh) await fh.close().catch(() => {});
+  }
+}
+
+/**
+ * Read-only preview of how a folder's loose top-level files would sort into type
+ * folders. Extensionless files get a bounded content peek so raw notes, code, and
+ * logs land in meaningful folders; hidden files (macOS metadata) are ignored.
+ */
+export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 3, maxContentPeeks = 2000 } = {}) {
   const dirName = path.basename(baseDir);
   let entries = [];
   try {
@@ -209,11 +300,16 @@ export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 
     return `${dirName}: not readable.`;
   }
   const byFolder = new Map();
+  const push = (folder, name) => {
+    if (!byFolder.has(folder)) byFolder.set(folder, []);
+    byFolder.get(folder).push(name);
+  };
+  const needsPeek = [];
   let files = 0;
   let truncated = false;
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    // Skip hidden files (.DS_Store, .localized, .Rhistory, …) — macOS metadata, not
+    // Skip hidden files (.DS_Store, .localized, .Rhistory, ...) -- macOS metadata, not
     // clutter to sort into folders.
     if (entry.name.startsWith('.')) continue;
     if (files >= maxEntries) {
@@ -221,10 +317,21 @@ export async function organizePreview(baseDir, { maxEntries = 20000, maxNames = 
       break;
     }
     files += 1;
-    const target = ORGANIZE_CATEGORY_BY_EXT.get(path.extname(entry.name).toLowerCase()) || 'Other';
-    if (!byFolder.has(target)) byFolder.set(target, []);
-    byFolder.get(target).push(entry.name);
+    const byName = categorizeByName(entry.name);
+    if (byName) push(byName, entry.name);
+    else needsPeek.push(entry.name);
   }
+  // Bounded content peek for the extensionless/unknown stragglers. Past the budget we
+  // keep the fast behavior (dump into "Other") so a huge folder never stalls the preview.
+  const peekNow = needsPeek.slice(0, maxContentPeeks);
+  const sampled = await mapWithConcurrency(peekNow, STAT_CONCURRENCY, async (name) => ({
+    name,
+    sample: await readSample(path.join(baseDir, name)),
+  }));
+  for (const { name, sample } of sampled) {
+    push(categorizeByContent(sample) || 'Other', name);
+  }
+  for (const name of needsPeek.slice(maxContentPeeks)) push('Other', name);
   if (files === 0) return `${dirName}: no loose files to sort.`;
   const parts = [...byFolder.entries()]
     .sort((a, b) => b[1].length - a[1].length)
