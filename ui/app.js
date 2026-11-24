@@ -704,7 +704,7 @@ function renderBriefing() {
     .slice(0, 3)
     .map((a) => `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.total || 0))})`)
     .join(', ');
-  const netHtml = `<div class="brief-body">Since restart: <strong>${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</strong>${topApps ? ` · Top: ${topApps}` : ''}</div>`;
+  const netHtml = `<div class="brief-body">This month: <strong>${escapeHtml(formatBytes(net.monthBytes || 0))}</strong> · Today: ${escapeHtml(formatBytes(net.todayBytes || 0))} · Since restart: ${escapeHtml(formatBytes(net.sinceBootBytes || 0))}${topApps ? `<br/>Top apps: ${topApps}` : ''}</div>`;
 
   el.innerHTML = `
     <div class="brief-cols">
