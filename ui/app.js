@@ -184,6 +184,9 @@ const HUMAN_TOOL_META = {
   briefing: { label: 'Situational Briefing', summarize: (a) => a.focus || 'System & schedule' },
   network_usage: { label: 'Network Usage', summarize: () => 'Data used per app & this month' },
   speed_test: { label: 'Speed Test', summarize: () => 'Live internet speed' },
+  world_news: { label: 'World News', summarize: () => 'Top global headlines' },
+  read_email: { label: 'Email', summarize: () => "Today's messages" },
+  daily_briefing: { label: 'Daily Briefing', summarize: () => 'News, email & day summary' },
   large_files: { label: 'Largest Files', summarize: (a) => (Array.isArray(a.folders) && a.folders.length ? a.folders.join(', ') : 'Downloads, Desktop, Documents') },
   add_schedule_item: { label: 'Add Timetable Block', summarize: (a) => `${a.time || ''} ${a.title || ''}`.trim() },
   list_schedule_items: { label: 'Read Timetable', summarize: (a) => (a.today_only ? 'Today' : 'Full week') },
@@ -653,6 +656,65 @@ function describeModelRuntime() {
   return describeRuntimeState(state.config || {}, state.presets || {}, state.health || {});
 }
 
+async function refreshBriefing() {
+  try {
+    const data = await apiRequest('/api/briefing');
+    state.briefing = data.briefing || null;
+    state.briefingAt = Date.now();
+    renderBriefing();
+  } catch {
+    // Keep the last briefing; the next refresh retries.
+  }
+}
+
+function renderBriefing() {
+  const el = $('#dash-briefing');
+  const sub = $('#dash-briefing-sub');
+  const b = state.briefing;
+  if (!el) return;
+  if (!b) {
+    el.textContent = 'Loading today’s briefing…';
+    return;
+  }
+  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · news, email, WhatsApp & network`;
+
+  const newsItems = (b.news || []).slice(0, 3);
+  const newsHtml = newsItems.length
+    ? `<ol class="brief-list">${newsItems
+        .map((n) => `<li><span class="brief-title">${escapeHtml(n.title)}</span><span class="brief-meta">${escapeHtml(n.source)}</span></li>`)
+        .join('')}</ol>`
+    : '<div class="brief-body quiet">News unavailable right now.</div>';
+
+  let emailHtml;
+  if (b.email?.ok && b.email.count) {
+    const shown = (b.email.messages || [])
+      .slice(0, 4)
+      .map((m) => `<li><span class="brief-title">${escapeHtml(m.subject)}</span><span class="brief-meta">${escapeHtml(m.sender)}</span></li>`)
+      .join('');
+    emailHtml = `<div class="brief-body"><strong>${b.email.count}</strong> new today</div><ol class="brief-list">${shown}</ol>`;
+  } else if (b.email?.ok) {
+    emailHtml = '<div class="brief-body quiet">No new messages today.</div>';
+  } else {
+    emailHtml = `<div class="brief-body quiet">${escapeHtml(b.email?.error || 'Email unavailable.')}</div>`;
+  }
+
+  const waHtml = `<div class="brief-body quiet">${escapeHtml(b.whatsapp?.note || 'WhatsApp cannot be read on macOS.')}</div>`;
+
+  const net = b.network || {};
+  const topApps = (net.topApps || [])
+    .slice(0, 3)
+    .map((a) => `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.total || 0))})`)
+    .join(', ');
+  const netHtml = `<div class="brief-body">Since restart: <strong>${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</strong>${topApps ? ` · Top: ${topApps}` : ''}</div>`;
+
+  el.innerHTML = `
+    <div class="brief-cols">
+      <div class="brief-col"><div class="brief-label">World news</div>${newsHtml}</div>
+      <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">WhatsApp</div>${waHtml}</div>
+      <div class="brief-col"><div class="brief-label">Network</div>${netHtml}</div>
+    </div>`;
+}
+
 function renderDashboard() {
   const metrics = state.metrics;
   const mem = metrics?.memory || {};
@@ -697,6 +759,8 @@ function renderDashboard() {
       : `${remaining} item${remaining === 1 ? '' : 's'} left today · nothing else scheduled`;
   }
   renderSidebarBadges();
+  renderBriefing();
+  if (!state.briefing || Date.now() - (state.briefingAt || 0) > 300000) refreshBriefing();
 
   const snapshot = $('#dash-snapshot');
   if (snapshot) {
@@ -3703,6 +3767,10 @@ function wireEvents() {
     }
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
+  $('#dash-briefing-refresh')?.addEventListener('click', () => refreshBriefing());
+  $('#dash-briefing-ask')?.addEventListener('click', () =>
+    runCapability("Give me my daily briefing: summarize today's top world news, my email, and anything I should know.", true)
+  );
   $('#dash-open-settings')?.addEventListener('click', () => switchView('settings'));
   $('#dash-mode-pill')?.addEventListener('click', () => switchView('settings'));
   $('#dash-explore-tools-btn')?.addEventListener('click', () => createNewTask());

@@ -345,6 +345,8 @@ export function createAgentServer({
   let cachedMetrics = null;
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
+  let cachedBriefing = null;
+  let cachedBriefingAt = 0;
   const metricsHistory = [];
   let lastMemoryReclaimAt = 0;
   const previewArtifacts = new Map();
@@ -515,6 +517,41 @@ export function createAgentServer({
           unloadModelsFn().catch(() => {});
         }
         sendJson(res, 200, { ok: true, metrics: cachedMetrics, history: metricsHistory });
+        return;
+      }
+
+      // Jarvis-style daily briefing: top world news, today's email, WhatsApp status, and a
+      // light network snapshot. Cached for a few minutes — news and Mail don't change
+      // every second, and both are too slow to gather on every dashboard poll.
+      if (req.method === 'GET' && pathname === '/api/briefing') {
+        const now = Date.now();
+        if (!cachedBriefing || now - cachedBriefingAt > 300000) {
+          const { fetchWorldNews, emailSummary, whatsappSummary } = await import('./daily-briefing.mjs');
+          const { perAppUsage, totalInterfaceBytes } = await import('./network-monitor.mjs');
+          const [news, email, appsResult, sinceBoot] = await Promise.all([
+            fetchWorldNews({ count: 5 }),
+            emailSummary({ limit: 15 }),
+            perAppUsage({ limit: 4 }),
+            totalInterfaceBytes().catch(() => 0),
+          ]);
+          cachedBriefing = {
+            news: (news.items || []).map((i) => ({ title: i.title, source: i.source, link: i.link })),
+            email: {
+              ok: email.ok,
+              count: email.count,
+              messages: (email.messages || []).slice(0, 8),
+              error: email.error || null,
+            },
+            whatsapp: whatsappSummary(),
+            network: {
+              topApps: (appsResult.apps || []).map((a) => ({ name: a.name, total: a.total })),
+              sinceBootBytes: sinceBoot,
+            },
+            updatedAt: new Date().toISOString(),
+          };
+          cachedBriefingAt = now;
+        }
+        sendJson(res, 200, { ok: true, briefing: cachedBriefing });
         return;
       }
 

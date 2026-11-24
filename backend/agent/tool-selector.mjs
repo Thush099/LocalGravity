@@ -114,6 +114,11 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:data\s+usage|network\s+usage|internet\s+(?:speed|usage)|speed\s*test|bandwidth|how\s+much\s+data|data\s+consumption|monthly\s+(?:data|usage|bandwidth)|upload\s+(?:speed|usage|rate)|download\s+(?:speed|usage|rate)|which\s+app\w*.{0,24}(?:data|network|bandwidth)|\d+\s*mbps|megabits?|connection\s+speed|(?:wifi|wi-?fi)\s+(?:speed|data|usage)|top\s+talkers?)\b/i,
   },
   {
+    tools: ['daily_briefing', 'world_news', 'read_email'],
+    pattern:
+      /\b(?:daily\s+briefing|briefing|morning\s+(?:brief|summary|update)|summarize\s+my\s+(?:day|email|inbox|mail|messages)|world\s+news|(?:top|latest|today\w{0,6})\s+(?:\d+\s+)?(?:world\s+)?news|news\s+(?:today|summary|headlines|roundup|update)|what\w{0,10}\s+(?:is\s+)?happening\s+in\s+the\s+world|read\s+my\s+(?:email|inbox|mail|messages)|(?:my|new|today\w{0,6})\s+(?:email|inbox|mail|messages)|emails?\s+(?:today|this\s+morning|unread))\b/i,
+  },
+  {
     tools: ['large_files'],
     pattern:
       /\b(?:large|big|biggest|largest|huge|massive)\s+(?:files?|items?|documents?|videos?|photos?)\b|\b(?:what'?s|what is)\s+(?:taking|eating|using|hogging|filling)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space|drive)\b|\b(?:disk|storage|drive)\s+(?:cleanup|clean\s?up|usage|full|clutter)\b|\bfree\s*up\s+(?:disk|space|storage)\b/i,

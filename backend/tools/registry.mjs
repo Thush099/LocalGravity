@@ -513,6 +513,48 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'world_news',
+      description:
+        'Gather the top world-news headlines from the BBC and NYT world feeds, clustering related stories so a major global event surfaces once. Read-only; use when the user asks what is happening in the world, top news, or a news summary.',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'How many top stories to return (default 3).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_email',
+      description:
+        "Read today's email messages (senders and subjects) from Apple Mail on this Mac. Permission-gated by macOS Automation; read-only. Use when the user asks about their email or inbox today.",
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: 'Maximum messages to return (default 25).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'daily_briefing',
+      description:
+        "Gather the material for a morning briefing: top world news, today's email, and WhatsApp status. Read-only. Use when the user asks for a daily briefing, a morning summary, or 'summarize my day'. The model turns the gathered material into a friendly summary.",
+      parameters: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'How many top news stories to include (default 3).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'briefing',
       description:
         'A grounded situational briefing: system health, today\'s schedule, and any observed items worth flagging (high CPU, low battery, tight storage, imminent events). Use proactively on a greeting, "what\'s up", "how\'s my day", or when the user wants a quick orientation. Reports only observed state — never invents tasks.',
@@ -769,6 +811,9 @@ const ALWAYS_READONLY_TOOLS = new Set([
   'system_stats',
   'network_usage',
   'speed_test',
+  'world_news',
+  'read_email',
+  'daily_briefing',
   'list_schedule_items',
 ]);
 
@@ -1131,6 +1176,25 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'speed_test': {
         const { speedTestReport } = await import('../network-monitor.mjs');
         return { ok: true, output: await speedTestReport({ seconds: args.seconds }) };
+      }
+      case 'world_news': {
+        const { worldNewsReport } = await import('../daily-briefing.mjs');
+        return { ok: true, output: await worldNewsReport({ count: args.count }) };
+      }
+      case 'read_email': {
+        const { emailSummary } = await import('../daily-briefing.mjs');
+        const email = await emailSummary({ limit: args.limit });
+        if (!email.ok) return { ok: false, output: email.error };
+        return {
+          ok: true,
+          output: email.count
+            ? email.messages.map((m) => `${m.sender} — ${m.subject}`).join('\n')
+            : 'No new messages today.',
+        };
+      }
+      case 'daily_briefing': {
+        const { dailyBriefingReport } = await import('../daily-briefing.mjs');
+        return { ok: true, output: await dailyBriefingReport({ count: args.count }) };
       }
       case 'add_schedule_item': {
         const result = await upsertScheduleEntry(
