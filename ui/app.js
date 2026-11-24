@@ -181,6 +181,7 @@ const HUMAN_TOOL_META = {
   manage_notes: { label: 'Apple Notes', summarize: (a) => `${a.action || 'list'}${a.title ? ` · ${a.title}` : ''}` },
   set_reminder: { label: 'Set Reminder', summarize: (a) => `${a.seconds || 0}s` },
   system_stats: { label: 'System Stats', summarize: () => 'CPU, RAM, GPU & Swap' },
+  briefing: { label: 'Situational Briefing', summarize: (a) => a.focus || 'System & schedule' },
   large_files: { label: 'Largest Files', summarize: (a) => (Array.isArray(a.folders) && a.folders.length ? a.folders.join(', ') : 'Downloads, Desktop, Documents') },
   add_schedule_item: { label: 'Add Timetable Block', summarize: (a) => `${a.time || ''} ${a.title || ''}`.trim() },
   list_schedule_items: { label: 'Read Timetable', summarize: (a) => (a.today_only ? 'Today' : 'Full week') },

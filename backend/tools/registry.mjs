@@ -37,6 +37,7 @@ import { sqliteTool } from './sqlite-tool.mjs';
 import { dockerTool } from './docker-tool.mjs';
 import { delegateTaskTool } from './agent-tool.mjs';
 import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
+import { briefingTool } from './briefing-tool.mjs';
 
 export const TOOL_DEFINITIONS = [
   {
@@ -475,6 +476,31 @@ export const TOOL_DEFINITIONS = [
           include_processes: {
             type: 'boolean',
             description: 'Include the top processes list (default true).',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'briefing',
+      description:
+        'A grounded situational briefing: system health, today\'s schedule, and any observed items worth flagging (high CPU, low battery, tight storage, imminent events). Use proactively on a greeting, "what\'s up", "how\'s my day", or when the user wants a quick orientation. Reports only observed state — never invents tasks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          focus: {
+            type: 'string',
+            description: 'Optional focus to frame the briefing around (e.g. "deep work", "travel").',
+          },
+          include_system: {
+            type: 'boolean',
+            description: 'Include live system metrics (default true).',
+          },
+          include_schedule: {
+            type: 'boolean',
+            description: 'Include today\'s schedule (default true).',
           },
         },
       },
@@ -1050,6 +1076,16 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         const metrics = await collectSystemMetrics();
         if (args.include_processes === false) metrics.processes = [];
         return { ok: true, output: summarizeSystemMetrics(metrics) };
+      }
+      case 'briefing': {
+        return {
+          ok: true,
+          output: await briefingTool({
+            focus: args.focus,
+            include_system: args.include_system,
+            include_schedule: args.include_schedule,
+          }),
+        };
       }
       case 'large_files': {
         // Lazy-loaded: actions.mjs imports executeToolCall from this module, so a

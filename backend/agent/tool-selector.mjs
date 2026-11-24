@@ -154,6 +154,10 @@ const DOMAIN_TOOL_GROUPS = [
     tools: ['search_web', 'fetch_url', 'open_url'],
     pattern: /https?:\/\/|\b(?:search\s+the\s+web|web\s+search|google|internet|online|latest|news|look\s+up|lookup|fetch|url|website|webpage|web page|docs|github|article|link|scrape)\b/i,
   },
+  {
+    tools: ['briefing'],
+    pattern: /\b(?:briefing|what'?s up|how'?s my day|how'?s my (?:mac|computer|system)|daily (?:brief|summary)|what'?s (?:new|happening|today)|status report|how are (?:things|we))\b/i,
+  },
 ];
 
 /**
