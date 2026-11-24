@@ -10,6 +10,7 @@ import { getRepoPath, getRuntimePaths } from '../state/paths.mjs';
 import { saveConfig, saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
 import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from './compactor.mjs';
+import { captureExplicitMemory } from './memory-capture.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
@@ -204,6 +205,11 @@ export async function runAgentTurn({
     attached.notes.length > 0
       ? `${String(userMessage || '').trim()}\n\n[Attached files]\n${attached.notes.join('\n')}`
       : String(userMessage || '').trim();
+
+  // Deterministic memory capture: an explicit "remember that …" is persisted
+  // even if the model never calls the knowledge tool itself. Matches the raw
+  // user message so attached-file notes can never mask the request.
+  await captureExplicitMemory(userMessage, paths);
 
   if (!Array.isArray(session.messages)) session.messages = [];
   if (fullUserText || attached.images.length > 0) {
