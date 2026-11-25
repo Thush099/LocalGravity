@@ -3996,14 +3996,7 @@ function wireEvents() {
       const id = dismissBtn.dataset.dismissSug;
       state.suggestions = (state.suggestions || []).filter((s) => s.id !== id);
       renderSmartAssist();
-      apiRequest('/api/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ id }) })
-        .then((res) => {
-          if (Array.isArray(res.suggestions)) {
-            state.suggestions = res.suggestions;
-            renderSmartAssist();
-          }
-        })
-        .catch(() => {});
+      apiRequest('/api/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ id }) }).catch(() => {});
       return;
     }
     const runBtn = e.target.closest('[data-run-sug]');
