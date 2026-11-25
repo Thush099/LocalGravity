@@ -14,7 +14,7 @@ import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
 import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
 import { networkUsageSummary, perAppUsage, recordNetworkSample, totalInterfaceBytes } from './network-monitor.mjs';
-import { buildSuggestions, dismissSuggestion, loadDismissed } from './smart-assist.mjs';
+import { buildSuggestions, dismissSuggestion, loadDismissed, storageFreePercentFromMetrics } from './smart-assist.mjs';
 import {
   deleteKnowledge,
   ensureKnowledgeSeeded,
@@ -484,24 +484,22 @@ export function createAgentServer({
     // Do not read ~/Downloads just to count files for a suggestion: on macOS that
     // raises the folder-permission dialog at launch, before the user asked for
     // anything. The agent reads the folder only when a turn actually needs it.
+    const storageFreePercent = storageFreePercentFromMetrics(cachedMetrics);
     const [diskStat, scheduleEntries, dismissed] = await Promise.all([
-      cachedMetrics?.disks?.[0]
+      storageFreePercent !== null
         ? Promise.resolve(null)
         : fs.statfs(os.homedir()).catch(() => null),
       loadSchedule(paths).catch(() => []),
       loadDismissed(paths).catch(() => ({})),
     ]);
 
-    let storageFreePercent = null;
-    if (cachedMetrics?.disks?.[0]?.usedPercent !== undefined) {
-      storageFreePercent = Math.max(0, 100 - Number(cachedMetrics.disks[0].usedPercent));
-    } else if (diskStat && diskStat.blocks > 0) {
-      storageFreePercent = (diskStat.bavail / diskStat.blocks) * 100;
-    }
+    const resolvedStorageFreePercent =
+      storageFreePercent ??
+      (diskStat && diskStat.blocks > 0 ? (diskStat.bavail / diskStat.blocks) * 100 : null);
 
     const snap = {
       hourOfDay: new Date().getHours(),
-      storageFreePercent,
+      storageFreePercent: resolvedStorageFreePercent,
       // Left null on purpose: see the note above the statfs call.
       downloadsCount: null,
       emailCount: cachedBriefing?.email?.ok ? Number(cachedBriefing.email.count ?? 0) : null,

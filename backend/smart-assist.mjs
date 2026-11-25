@@ -23,6 +23,14 @@ function suggestion(entry) {
   };
 }
 
+/** Use the same preferred volume as the dashboard's storage tile. */
+export function storageFreePercentFromMetrics(metrics) {
+  const disks = metrics?.disks || [];
+  const disk = disks.find((d) => d.mount === '/System/Volumes/Data') || disks.find((d) => d.mount === '/') || disks[0];
+  const usedPercent = Number(disk?.usedPercent);
+  return Number.isFinite(usedPercent) ? Math.max(0, 100 - usedPercent) : null;
+}
+
 /**
  * Derive prioritised suggestions from a system-state snapshot. Every field is
  * optional; a rule only fires when its inputs are present, so callers can pass

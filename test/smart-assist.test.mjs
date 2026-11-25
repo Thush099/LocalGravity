@@ -5,7 +5,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   suggestActions, buildSuggestions, filterDismissed, dismissSuggestion, loadDismissed,
+  storageFreePercentFromMetrics,
 } from '../backend/smart-assist.mjs';
+
+test('storage signal uses the dashboard data volume and ignores non-finite percentages', () => {
+  const metrics = {
+    disks: [
+      { mount: '/', usedPercent: 92 },
+      { mount: '/System/Volumes/Data', usedPercent: 70 },
+    ],
+  };
+  assert.equal(storageFreePercentFromMetrics(metrics), 30);
+  assert.equal(storageFreePercentFromMetrics({ disks: [{ mount: '/', usedPercent: Number.NaN }] }), null);
+  assert.equal(storageFreePercentFromMetrics({ disks: [] }), null);
+});
 
 test('storage pressure drives urgency', () => {
   const urgent = suggestActions({ storageFreePercent: 6 });
