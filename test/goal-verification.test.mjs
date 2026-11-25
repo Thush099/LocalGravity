@@ -181,6 +181,26 @@ test('a fully-done but unverified plan keeps its record until the claims are bac
   assert.equal(after.find((g) => g.sessionId === 'verify-all-done'), undefined);
 });
 
+test('stale goal records from abandoned sessions are pruned, fresh ones survive', async () => {
+  const paths = getRuntimePaths();
+  const now = new Date().toISOString();
+  const stale = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+  // Seed one abandoned long-ago goal and one recent one via a write.
+  await persistGoalState([{ text: 'Ancient abandoned task', status: 'pending' }], {
+    paths,
+    sessionId: 'stale-1',
+    now: stale,
+  });
+  await persistGoalState([{ text: 'Recent task', status: 'pending' }], {
+    paths,
+    sessionId: 'fresh-1',
+    now,
+  });
+  const goals = await loadOpenGoals(paths);
+  assert.equal(goals.find((g) => g.sessionId === 'stale-1'), undefined, '45-day-old record is gone');
+  assert.ok(goals.find((g) => g.sessionId === 'fresh-1'), 'recent record survives');
+});
+
 test('goalContinuityNote surfaces unverified-only goals for continuation questions', async () => {
   const paths = getRuntimePaths();
   await persistGoalState([{ text: 'Enable full-disk backups', status: 'done' }], {

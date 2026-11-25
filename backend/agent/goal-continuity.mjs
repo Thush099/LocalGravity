@@ -131,12 +131,22 @@ export async function persistGoalState(
   return goals;
 }
 
+const GOAL_RETENTION_DAYS = 30;
+
 export async function loadOpenGoals(paths = getRuntimePaths()) {
   try {
     const raw = JSON.parse(await fs.readFile(paths.goalsFile, 'utf8'));
     const goals = Array.isArray(raw?.goals) ? raw.goals : [];
+    // Retention: a record from an abandoned session would otherwise live
+    // forever (clearing only happens when its own session finishes the plan),
+    // and a month-old plan surfacing in a prompt is an ambush, not help.
+    const cutoff = Date.now() - GOAL_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     return goals.filter(
-      (goal) => goal && typeof goal.sessionId === 'string' && Array.isArray(goal.steps),
+      (goal) =>
+        goal &&
+        typeof goal.sessionId === 'string' &&
+        Array.isArray(goal.steps) &&
+        Date.parse(goal.updatedAt || '') > cutoff,
     );
   } catch {
     return [];
