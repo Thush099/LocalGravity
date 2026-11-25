@@ -30,8 +30,8 @@ function hasMagick() {
 
 const outIcns = process.argv[2] || path.resolve('build/AppIcon.icns');
 if (!hasMagick()) {
-  console.error('ImageMagick (magick) is required to regenerate the icon: brew install imagemagick');
-  console.error('The committed build/AppIcon.icns is used as-is when present.');
+  console.error('ImageMagick (magick) is required to generate the icon: brew install imagemagick');
+  console.error('build/ is not tracked in git, so fresh checkouts must generate build/AppIcon.icns (or place a prebuilt one there).');
   process.exit(1);
 }
 
