@@ -13,6 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
+import { goalContinuityNote, loadOpenGoals, persistGoalState } from './goal-continuity.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import {
   loadLearnedFixesExcerpt,
@@ -303,11 +304,13 @@ export async function runAgentTurn({
   });
   const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
 
+  const goalContext = goalContinuityNote(await loadOpenGoals(paths).catch(() => []), fullUserText);
   const systemPrompt = buildSystemPrompt({
     skills,
     suggestedSkills,
     knowledgeDocs,
     memoryContent: memoryDoc?.content || '',
+    goalContext,
     learnedFixesContent: learnedFixesExcerpt,
     repoPath: getRepoPath(),
     safetyMode,
@@ -515,6 +518,7 @@ export async function runAgentTurn({
       const recordCompletedToolCall = (tc, effectiveArgs, result) => {
         if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
           latestPlan = result.plan;
+          persistGoalState(result.plan, { paths, sessionId: session?.id }).catch(() => {});
         }
         const outcome = tracker.recordToolOutcome({
           name: tc.name,
