@@ -65,6 +65,17 @@ test('unverifiedCompletions ignores steps already done before this update', () =
   assert.deepEqual(unverifiedCompletions(previous, next, tools), []);
 });
 
+test('unverifiedCompletions accepts e-drop inflections as evidence', () => {
+  const previous = [{ text: 'Update the changelog', status: 'active' }];
+  const next = [{ text: 'Update the changelog', status: 'done' }];
+  // 'updated'/'updating' are 'update' with the silent e dropped; no other
+  // step word ('changelog') appears, so only e-drop can satisfy this.
+  const tools = [
+    { name: 'write_file', args: { path: 'notes.md' }, ok: true, output: 'updated it and updating it again' },
+  ];
+  assert.deepEqual(unverifiedCompletions(previous, next, tools), []);
+});
+
 test('unverifiedCompletions on a first plan flags done steps with no tool backing', () => {
   const next = [
     { text: 'Deploy the staging box', status: 'done' },

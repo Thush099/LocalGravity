@@ -34,8 +34,10 @@ const GOAL_STOPWORDS = new Set([
 function wordMatchesText(word, text) {
   const w = String(word || '').toLowerCase();
   if (!w) return false;
+  const stems = w.endsWith('e') ? [w, w.slice(0, -1)] : [w];
+  const variants = new Set(stems.flatMap((s) => [s, `${s}s`, `${s}es`, `${s}ing`, `${s}ed`, `${s}d`]));
   const tokens = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
-  return tokens.some((t) => t === w || t === `${w}s` || t === `${w}es` || t === `${w}ing` || t === `${w}ed`);
+  return tokens.some((t) => variants.has(t));
 }
 
 /** Pure: does this message plausibly concern these plan steps? */
