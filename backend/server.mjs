@@ -532,7 +532,7 @@ export function createAgentServer({
           const [news, email, appsResult, sinceBoot, usage] = await Promise.all([
             fetchWorldNews({ count: 5 }),
             emailSummary({ limit: 15 }),
-            perAppUsage({ limit: 4 }),
+            perAppUsage({ limit: 12 }),
             totalInterfaceBytes().catch(() => 0),
             networkUsageSummary().catch(() => ({})),
           ]);
@@ -556,6 +556,19 @@ export function createAgentServer({
           cachedBriefingAt = now;
         }
         sendJson(res, 200, { ok: true, briefing: cachedBriefing });
+        return;
+      }
+
+      // Live internet speed on demand — a short timed throughput test. POST because it
+      // triggers real work (a few seconds of downloads), not a cached read.
+      if (req.method === 'POST' && pathname === '/api/network/speed') {
+        const { speedTest } = await import('./network-monitor.mjs');
+        const result = await speedTest({ seconds: 4 });
+        sendJson(
+          res,
+          result.ok ? 200 : 502,
+          result.ok ? { ok: true, mbps: result.mbps } : { ok: false, error: result.error || 'Speed test failed' }
+        );
         return;
       }
 
