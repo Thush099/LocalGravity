@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { readResponseLines } from '../backend/providers/tool-parser.mjs';
+
+const execFile = promisify(execFileCb);
 
 /**
  * A local model runner can stop sending bytes without closing the socket. Local streams are
@@ -124,4 +129,26 @@ test('a stalled local Ollama stream rejects through the real provider instead of
     for (const s of sockets) s.destroy();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('readResponseLines stall watchdog fires even when nothing else holds the event loop', async () => {
+  // Regression: the watchdog timer was unref'd, so in any process where the stalled
+  // read was the only pending work (one-shot CLI runs, node --test child runners on
+  // Node 22), the event loop drained before the timer could fire and the read hung
+  // forever ("unsettled top-level await", exit 13). The watchdog must hold the loop
+  // itself until it fires; it is cleared as soon as the read settles either way.
+  const toolParserPath = fileURLToPath(new URL('../backend/providers/tool-parser.mjs', import.meta.url));
+  const script = `
+    import { readResponseLines } from ${JSON.stringify(toolParserPath)};
+    const enc = new TextEncoder();
+    const response = new Response(new ReadableStream({ start(c) { c.enqueue(enc.encode('{"ok":1}\\n')); } }));
+    try {
+      await readResponseLines(response, () => {}, { idleTimeoutMs: 250 });
+      console.log('NO-ERROR');
+    } catch (e) {
+      console.log('ERR', e.code);
+    }
+  `;
+  const child = await execFile(process.execPath, ['--input-type=module', '-e', script], { timeout: 8000 });
+  assert.match(child.stdout, /ERR STREAM_STALLED/);
 });
