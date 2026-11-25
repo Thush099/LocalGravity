@@ -7,10 +7,24 @@ import {
   runShortcutTool,
   setReminderTool,
   showNotificationTool,
+  setAppForeground,
+  isAppForeground,
   buildReminderInvocation,
   appendBoundedOutput,
+  reminderShouldSchedule,
 } from '../backend/tools/macos-tool.mjs';
 import { evaluateToolSafety } from '../backend/tools/registry.mjs';
+
+test('show_notification is suppressed while the app is in the foreground', async () => {
+  setAppForeground(true);
+  assert.equal(isAppForeground(), true);
+  const suppressed = await showNotificationTool({ message: 'in-app banner would be redundant' });
+  assert.equal(suppressed.ok, true);
+  assert.match(suppressed.output, /suppressed/i);
+  // Reset so later tests that exercise real notification behaviour aren't affected.
+  setAppForeground(false);
+  assert.equal(isAppForeground(), false);
+});
 
 test('clipboard tools round-trip text through pbcopy/pbpaste', async () => {
   const marker = `localgravity-clip-${Date.now()}-${Math.random()}`;
@@ -80,4 +94,25 @@ test('run_shortcut is gated as a mutating action', () => {
 
   const headlessAudit = { safetyMode: 'ask', isHeadless: true, allowAutoRun: false };
   assert.equal(evaluateToolSafety({ name: 'run_shortcut', args: { name: 'Do Thing' } }, headlessAudit).decision, 'block');
+});
+test('the same reminder is not scheduled twice, and pending ones are capped', () => {
+  const registry = new Map();
+  const now = Date.now();
+  assert.equal(reminderShouldSchedule('300|stretch', now, registry), true);
+  registry.set('300|stretch', now);
+  assert.equal(reminderShouldSchedule('300|stretch', now + 60_000, registry), false);
+  assert.equal(reminderShouldSchedule('300|stretch', now + 11 * 60_000, registry), true);
+  for (let i = 0; i < 5; i += 1) registry.set(`${i}|x`, now);
+  assert.equal(reminderShouldSchedule('new|x', now, registry), false);
+});
+
+test('the notification kill switch prevents real reminders and alerts', async () => {
+  process.env.LOCALGRAVITY_DISABLE_NOTIFICATIONS = '1';
+  const reminder = await setReminderTool({ seconds: 60, message: 'should not fire' });
+  assert.equal(reminder.ok, true);
+  assert.match(reminder.output, /disabled/);
+  const alert = await showNotificationTool({ message: 'should not fire' });
+  delete process.env.LOCALGRAVITY_DISABLE_NOTIFICATIONS;
+  assert.equal(alert.ok, true);
+  assert.match(alert.output, /disabled/);
 });
