@@ -8,8 +8,10 @@ import {
   rememberFact,
   captureExplicitMemory,
   boundedMemoryContent,
+  memoryKeywords,
   MEMORY_TRIMMED_NOTICE,
 } from '../backend/agent/memory-capture.mjs';
+import { buildSystemPrompt } from '../backend/agent/prompt.mjs';
 import { readKnowledge } from '../backend/knowledge-engine.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
 
@@ -111,4 +113,60 @@ test('boundedMemoryContent falls back to a hard cut when no line fits', () => {
   const bounded = boundedMemoryContent(oneLine, { maxChars: 50 });
   assert.ok(bounded.length <= 50, `expected <= 50 chars, got ${bounded.length}`);
   assert.ok(bounded.startsWith('x'.repeat(40)), 'hard-cut fallback should keep the head of the line');
+});
+
+test('memoryKeywords keeps domain words and drops filler', () => {
+  assert.deepEqual(memoryKeywords('What is the staging box IP?').sort(), ['box', 'ip', 'staging']);
+  assert.deepEqual(memoryKeywords('   '), []);
+});
+
+test('boundedMemoryContent surfaces query-relevant facts from an oversized memory', () => {
+  const lines = ['# Memory', '## Preferences'];
+  for (let i = 0; i < 30; i += 1) lines.push(`- standing preference number ${i}`);
+  lines.push('## Gennext');
+  lines.push('- **Staging box**: 10.0.0.5 runs the staging deploy');
+  for (let i = 0; i < 8; i += 1) lines.push(`- recent note ${i}`);
+  const content = lines.join('\n');
+  const bounded = boundedMemoryContent(content, { maxChars: 500, query: 'what is the staging box IP?' });
+  assert.ok(bounded.length <= 500, `expected <= 500 chars, got ${bounded.length}`);
+  assert.ok(
+    bounded.includes('10.0.0.5'),
+    'a fact matching the question must be recalled even when it sits outside the head/tail window',
+  );
+});
+
+test('boundedMemoryContent falls back to the standing head for queries with no memory hit', () => {
+  const lines = ['# Memory', '## Preferences'];
+  for (let i = 0; i < 30; i += 1) lines.push(`- standing preference number ${i}`);
+  lines.push('## Gennext');
+  lines.push('- **Staging box**: 10.0.0.5 runs the staging deploy');
+  for (let i = 0; i < 8; i += 1) lines.push(`- recent note ${i}`);
+  const bounded = boundedMemoryContent(lines.join('\n'), {
+    maxChars: 400,
+    query: 'what is the weather like today?',
+  });
+  assert.ok(bounded.startsWith('# Memory'), 'unrelated questions keep the curated head');
+  assert.ok(!bounded.includes('10.0.0.5'), 'irrelevant mid-doc facts stay out of the fallback');
+});
+
+test('boundedMemoryContent never duplicates a relevant line that already sits in the tail', () => {
+  const lines = ['# Memory'];
+  for (let i = 0; i < 20; i += 1) lines.push(`- standing preference number ${i}`);
+  lines.push('- **VPN**: use the split tunnel for staging traffic');
+  const target = '- **VPN**: use the split tunnel for staging traffic';
+  const bounded = boundedMemoryContent(lines.join('\n'), { maxChars: 300, query: 'staging vpn setup?' });
+  assert.equal(bounded.split('\n').filter((line) => line === target).length, 1);
+});
+
+test('buildSystemPrompt surfaces query-relevant memory in the system prompt', () => {
+  const lines = ['# Memory', '## Preferences'];
+  for (let i = 0; i < 60; i += 1) lines.push(`- standing preference number ${i}`);
+  lines.push('- **Staging box**: 10.0.0.5 runs the staging deploy');
+  for (let i = 0; i < 30; i += 1) lines.push(`- recent note ${i}`);
+  const prompt = buildSystemPrompt({
+    memoryContent: lines.join('\n'),
+    memoryQuery: 'where does the staging deploy run?',
+    hasTools: false,
+  });
+  assert.ok(prompt.includes('10.0.0.5'), 'the wiring must pass the question through to memory recall');
 });

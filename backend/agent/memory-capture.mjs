@@ -40,9 +40,54 @@ export const MEMORY_TRIMMED_NOTICE =
  * facts \u2014 they append at the tail and silently drop out of every prompt \u2014 and
  * cuts bullets mid-line. Keep the curated head and the most recent entries,
  * mark the gap explicitly so the model knows to use read_knowledge, and never
- * exceed `maxChars`.
+ * exceed `maxChars`. When `query` is provided and matches any line, the head
+ * block becomes the most relevant lines instead of the curated prefix, so a
+ * buried fact still reaches the model at the moment it is being asked about.
  */
-export function boundedMemoryContent(content, { maxChars = 1200, tailChars } = {}) {
+const MEMORY_STOPWORDS = new Set([
+  'of', 'to', 'in', 'is', 'it', 'on', 'at', 'be', 'do', 'we', 'my', 'me', 'us', 'so', 'no',
+  'if', 'or', 'an', 'as', 'by', 'up', 'he', 'she', 'am', 'pm', 'now', 'new',
+  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'was', 'one', 'our', 'out',
+  'has', 'have', 'had', 'what', 'when', 'where', 'which', 'who', 'why', 'how', 'did', 'does',
+  'tell', 'about', 'that', 'this', 'with', 'from', 'your', 'please', 'could', 'would',
+  'should', 'remember', 'recall', 'know', 'like', 'just', 'any', 'some', 'there', 'here',
+  'then', 'than', 'them', 'they', 'their', 'been', 'will', 'want', 'need', 'get', 'give',
+  'into', 'over', 'also', 'very', 'more', 'most', 'much', 'make', 'made', 'take', 'taken',
+]);
+
+/** Keywords driving query-aware recall: domain words (ip, ci, staging) stay, filler goes. */
+export function memoryKeywords(query) {
+  const words = String(query || '').toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g) || [];
+  return [...new Set(words.filter((word) => word.length >= 2 && !MEMORY_STOPWORDS.has(word)))];
+}
+
+function scoreMemoryLine(line, keywords) {
+  const haystack = line.toLowerCase();
+  let score = 0;
+  for (const keyword of keywords) if (haystack.includes(keyword)) score += 1;
+  return score;
+}
+
+/** Ascending line indices of the highest-scoring lines that fit `budget`, excluding the tail region. */
+function pickRelevantIndices(lines, keywords, budget, limitIndex) {
+  const scored = [];
+  for (let index = 0; index < limitIndex; index += 1) {
+    const score = scoreMemoryLine(lines[index], keywords);
+    if (score > 0) scored.push({ index, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  const picked = [];
+  let used = 0;
+  for (const { index } of scored) {
+    const cost = lines[index].length + 1;
+    if (used + cost > budget) continue;
+    used += cost;
+    picked.push(index);
+  }
+  return picked.sort((a, b) => a - b);
+}
+
+export function boundedMemoryContent(content, { maxChars = 1200, tailChars, query = '' } = {}) {
   const text = String(content || '').trim();
   if (!text || !(maxChars > 0) || text.length <= maxChars) return text;
   const lines = text.split('\n');
@@ -51,23 +96,32 @@ export function boundedMemoryContent(content, { maxChars = 1200, tailChars } = {
     Math.min(tailChars ?? Math.floor(maxChars * 0.25), maxChars - MEMORY_TRIMMED_NOTICE.length),
   );
   const headBudget = Math.max(0, maxChars - MEMORY_TRIMMED_NOTICE.length - tailBudget);
-  let headEnd = 0;
-  let used = 0;
-  while (headEnd < lines.length && used + lines[headEnd].length + 1 <= headBudget) {
-    used += lines[headEnd].length + 1;
-    headEnd += 1;
-  }
+  // The most recent entries always keep their place at the tail.
   let tailStart = lines.length;
-  used = 0;
-  while (tailStart > headEnd && used + lines[tailStart - 1].length + 1 <= tailBudget) {
+  let used = 0;
+  while (tailStart > 0 && used + lines[tailStart - 1].length + 1 <= tailBudget) {
     tailStart -= 1;
     used += lines[tailStart].length + 1;
   }
-  if (headEnd === 0 && tailStart === lines.length) {
+  // The head block is the query-relevant facts when the question hits anything,
+  // otherwise the curated standing head. The tail region is excluded from both.
+  let headIndices = pickRelevantIndices(lines, memoryKeywords(query), headBudget, tailStart);
+  if (headIndices.length === 0) {
+    used = 0;
+    for (let index = 0; index < tailStart && used + lines[index].length + 1 <= headBudget; index += 1) {
+      used += lines[index].length + 1;
+      headIndices.push(index);
+    }
+  }
+  if (headIndices.length === 0 && tailStart === lines.length) {
     // Not even one line fits the budget: fall back to a plain hard cut.
     return text.slice(0, maxChars);
   }
-  return [...lines.slice(0, headEnd), MEMORY_TRIMMED_NOTICE, ...lines.slice(tailStart)]
+  return [
+    ...headIndices.map((index) => lines[index]),
+    MEMORY_TRIMMED_NOTICE,
+    ...lines.slice(tailStart),
+  ]
     .join('\n')
     .slice(0, maxChars);
 }
