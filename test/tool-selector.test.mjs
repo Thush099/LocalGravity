@@ -261,3 +261,39 @@ test('file-organization requests receive plan and move tools instead of shell-on
   assert.ok(rename.has('move_file'));
   assert.ok(rename.has('update_plan'));
 });
+
+test('inbox requests reach the mail tool however the qualifiers are ordered', () => {
+  const inbox = [
+    'Summarize my unread emails and flag anything urgent.',
+    'check my inbox',
+    'anything urgent in my mail?',
+    'read my new email',
+  ];
+  for (const message of inbox) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map(
+      (t) => t.function.name
+    );
+    assert.ok(names.includes('read_email'), `${message} -> ${names.join(',') || '(none)'}`);
+  }
+  // A pasted email to rewrite is still a text transform, not an inbox read.
+  assert.deepEqual(
+    selectToolsForTurn(TOOL_DEFINITIONS, {
+      provider: 'ollama',
+      userMessage: 'Rewrite this email: hi team, attached is the report for your review.',
+    }),
+    []
+  );
+});
+
+test('a bare mention of today does not drag the timetable into unrelated turns', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'what did I work on today?',
+  }).map((t) => t.function.name);
+  assert.ok(!names.includes('add_schedule_item'), names.join(',') || '(none)');
+  const scheduled = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'what is on my schedule today?',
+  }).map((t) => t.function.name);
+  assert.ok(scheduled.includes('list_schedule_items'), scheduled.join(',') || '(none)');
+});

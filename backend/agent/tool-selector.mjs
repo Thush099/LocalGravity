@@ -55,6 +55,7 @@ const DISCOVERY_TOOLS = new Set([
   'search_web',
   'fetch_url',
   'open_url',
+  'read_email',
   'list_schedule_items',
   'git_op',
   'sqlite_query',
@@ -114,9 +115,19 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:data\s+usage|network\s+usage|internet\s+(?:speed|usage)|speed\s*test|bandwidth|how\s+much\s+data|data\s+consumption|monthly\s+(?:data|usage|bandwidth)|upload\s+(?:speed|usage|rate)|download\s+(?:speed|usage|rate)|which\s+app\w*.{0,24}(?:data|network|bandwidth)|\d+\s*mbps|megabits?|connection\s+speed|(?:wifi|wi-?fi)\s+(?:speed|data|usage)|top\s+talkers?)\b/i,
   },
   {
+    // Inbox questions come in every shape: "my unread emails", "summarize the
+    // inbox", "anything urgent in my mail today". A qualifier between the
+    // possessive and the noun used to defeat the briefing pattern entirely, so
+    // the model was handed file tools and correctly answered that it could not
+    // read mail. Match the mail nouns directly instead.
+    tools: ['read_email'],
+    pattern:
+      /\b(?:unread|new|recent|latest|today'?s?|flagged|important|urgent)\s+(?:e-?mails?|inbox|mail)\b|\b(?:my|the)\s+(?:e-?mails?|inbox|mail)\b|\b(?:e-?mails?|inbox)\b.{0,40}\b(?:unread|urgent|important|summar\w*|digest|triage|flag\w*)\b|\b(?:check|read|open|summarize|triage)\s+(?:my\s+|the\s+)?(?:e-?mails?|inbox|mail)\b/i,
+  },
+  {
     tools: ['daily_briefing', 'world_news', 'read_email'],
     pattern:
-      /\b(?:daily\s+briefing|briefing|morning\s+(?:brief|summary|update)|summarize\s+my\s+(?:day|email|inbox|mail|messages)|world\s+news|(?:top|latest|today\w{0,6})\s+(?:\d+\s+)?(?:world\s+)?news|news\s+(?:today|summary|headlines|roundup|update)|what\w{0,10}\s+(?:is\s+)?happening\s+in\s+the\s+world|read\s+my\s+(?:email|inbox|mail|messages)|(?:my|new|today\w{0,6})\s+(?:email|inbox|mail|messages)|emails?\s+(?:today|this\s+morning|unread))\b/i,
+      /\b(?:daily\s+briefing|briefing|morning\s+(?:brief|summary|update)|summarize\s+my\s+(?:day|email|inbox|mail|messages)|world\s+news|(?:top|latest|today\w{0,6})\s+(?:\d+\s+)?(?:world\s+)?news|news\s+(?:today|summary|headlines|roundup|update)|what\w{0,10}\s+(?:is\s+)?happening\s+in\s+the\s+world|read\s+my\s+(?:email|inbox|mail|messages)|emails?\s+(?:today|this\s+morning|unread))\b/i,
   },
   {
     tools: ['large_files'],
@@ -138,7 +149,11 @@ const DOMAIN_TOOL_GROUPS = [
   },
   {
     tools: ['list_schedule_items', 'add_schedule_item', 'remove_schedule_item'],
-    pattern: /\b(?:schedule|timetable|agenda|calendar|meeting|class|workout|block|routine|daily|weekly|tomorrow|today|what'?s next|plan my day|timeblock)\b/i,
+    // "today" and "daily" on their own are far too common to imply a timetable
+    // question; a bare mention used to drag three schedule schemas into every
+    // turn that said "today", slowing local prefill for no reason.
+    pattern:
+      /\b(?:schedule|timetable|agenda|calendar|meeting|class|workout|routine|timeblock|what'?s next|plan my day)\b|\b(?:daily|weekly)\s+(?:plan|schedule|routine|agenda|review|standup)\b|\b(?:add|remove|delete|move|cancel|reschedule)\b.{0,40}\b(?:block|session)\b|\b(?:today|tomorrow)\b.{0,30}\b(?:schedule|plan|agenda|blocks?|timetable)\b|\b(?:schedule|plan|agenda|blocks?|timetable)\b.{0,30}\b(?:today|tomorrow)\b/i,
   },
   {
     tools: ['copy_to_clipboard', 'paste_from_clipboard'],
@@ -150,7 +165,10 @@ const DOMAIN_TOOL_GROUPS = [
   },
   {
     tools: ['open_app', 'run_shortcut', 'run_applescript', 'manage_notes'],
-    pattern: /\b(?:open\s+[a-z]|launch\s+[a-z]|shortcut|shortcuts|applescript|osascript|finder|safari|notes|apple notes|my notes|note titled|save.*note|create.*note|mail|music|calendar|system events|automate)\b/i,
+    // Bare "mail", "music" or "calendar" made every inbox question load app
+    // automation tools; the explicit open/launch verb covers those requests.
+    pattern:
+      /\b(?:open|launch)\s+[a-z]|\b(?:shortcut|shortcuts|applescript|osascript|finder|safari|apple notes|my notes|note titled|system events|automate)\b|\b(?:save|create)\b.{0,20}\bnote\b/i,
   },
   {
     tools: ['search_knowledge', 'read_knowledge', 'save_knowledge', 'read_skill', 'save_skill', 'self_improve'],
