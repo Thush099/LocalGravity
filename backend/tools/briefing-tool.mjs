@@ -12,6 +12,7 @@
 
 import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
 import { entriesForDate, loadSchedule } from '../schedule.mjs';
+import { readActions } from '../agent/action-log.mjs';
 
 export const CPU_HIGH_PERCENT = 80;
 export const MEMORY_HIGH_PERCENT = 85;
@@ -73,7 +74,13 @@ function hhmm(date) {
  * deterministic and testable; the async tool wrapper fills these from the live
  * system. Returns a grounded, JSON-serializable report.
  */
-export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = new Date(), focus = '' } = {}) {
+export function summarizeBriefing({
+  metrics = null,
+  scheduleEntries = [],
+  now = new Date(),
+  focus = '',
+  recentActions = [],
+} = {}) {
   const attention = deriveAttention(metrics, now);
 
   const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now)
@@ -107,6 +114,16 @@ export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = 
       next,
     },
     attention,
+    // What the agent itself changed (or was stopped from changing), newest first.
+    // Echoed straight from the durable trail — nothing inferred or summarized.
+    recent_actions: (Array.isArray(recentActions) ? recentActions : [])
+      .slice(0, 5)
+      .map((action) => ({
+        at: String(action?.at ?? ''),
+        tool: String(action?.tool ?? ''),
+        kind: String(action?.kind ?? ''),
+        detail: String(action?.detail ?? ''),
+      })),
     focus: focus ? String(focus) : null,
   };
 }
@@ -116,14 +133,16 @@ export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = 
  * Collection failures degrade to a neutral report rather than throwing.
  */
 export async function briefingTool({ focus = '', include_system = true, include_schedule = true } = {}) {
-  const [metrics, scheduleEntries] = await Promise.all([
+  const [metrics, scheduleEntries, recentActions] = await Promise.all([
     include_system ? collectSystemMetrics().catch(() => null) : null,
     include_schedule ? loadSchedule().catch(() => []) : [],
+    readActions(undefined, { limit: 5 }).catch(() => []),
   ]);
   return summarizeBriefing({
     metrics,
     scheduleEntries: Array.isArray(scheduleEntries) ? scheduleEntries : [],
     now: new Date(),
     focus: typeof focus === 'string' ? focus : '',
+    recentActions,
   });
 }

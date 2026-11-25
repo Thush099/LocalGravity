@@ -15,6 +15,7 @@ import { captureStandingPreference } from './standing-preferences.mjs';
 import { memoryCaptureNotices } from './memory-notices.mjs';
 import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
 import { captureForget, forgetNotices } from './memory-forget.mjs';
+import { appendAction, isTrailTool } from './action-log.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
@@ -604,6 +605,16 @@ export async function runAgentTurn({
       };
 
       const recordCompletedToolCall = async (tc, effectiveArgs, result) => {
+        // Durable trail: what actually changed on this machine, kept across
+        // sessions so "did that land?" has an answer later.
+        if (isTrailTool(tc.name)) {
+          await appendAction(paths, {
+            sessionId: session?.id,
+            tool: tc.name,
+            kind: result?.ok ? 'ok' : 'failed',
+            detail: result?.output,
+          });
+        }
         if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
           // Cross-turn completion verification: a step newly marked done must
           // have an observable action behind it this turn, or it stays flagged
@@ -805,6 +816,7 @@ export async function runAgentTurn({
         if (gate.decision === 'block') {
           const blockedMsg = `Blocked by safety policy: ${gate.reason}`;
           recordActionFailure(failedActions, { name: tc.name, reason: blockedMsg, kind: 'blocked' });
+          await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'blocked', detail: blockedMsg });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
           continue;
@@ -828,6 +840,7 @@ export async function runAgentTurn({
           if (!decision?.approved) {
             const deniedMsg = `User denied ${tc.name}: ${decision?.reason || 'Cancelled by user.'}`;
             recordActionFailure(failedActions, { name: tc.name, reason: deniedMsg, kind: 'blocked' });
+            await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'denied', detail: deniedMsg });
             session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: deniedMsg });
             onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: deniedMsg });
             continue;
