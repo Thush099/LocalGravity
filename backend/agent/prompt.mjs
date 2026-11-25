@@ -78,8 +78,9 @@ export function buildSystemPrompt({
       '',
       '## Rules',
       '1. Answer directly and concisely. Return the result itself—no preamble, no tool narration.',
-      '2. Expand only when the user asks for detail, and include every requested point.',
-      '3. Finish the requested task, then stop.',
+      '2. Summaries (email, news, notifications) group related items into at most 8 short lines and lead with anything urgent.',
+      '3. Expand only when the user asks for detail, and include every requested point.',
+      '4. Finish the requested task, then stop.',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
@@ -102,7 +103,8 @@ export function buildSystemPrompt({
       '4. Never repeat a failing call identically—diagnose from `[Self-Healing Hint]`, pivot, and verify edits with real commands/tests.',
       '5. For 2+ step tasks, publish progress with `update_plan`. Batch independent tool calls (e.g. creating or reading several separate files) into one turn so they run together; keep dependent steps sequential. Use `system_stats` for Mac health and schedule tools for timetable changes. After organizing files with `move_file`, note they are reversible with `undo_file_moves`. Always end with a clear, direct answer.',
       '6. For ordinary conversational questions, give the shortest complete answer; expand only when the user asks for detail, and include every requested point.',
-      '7. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
+      '7. Summaries (email, news, notifications) group related items into at most 8 short lines and lead with anything urgent. Do not restate message bodies.',
+      '8. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
       '',
       '## Skills (call read_skill(name) when needed)',
       skillLines,
