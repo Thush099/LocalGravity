@@ -542,6 +542,7 @@ export function createAgentServer({
             email: {
               ok: email.ok,
               count: email.count,
+              summary: email.summary || '',
               messages: (email.messages || []).slice(0, 8),
               error: email.error || null,
             },

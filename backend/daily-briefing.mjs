@@ -183,6 +183,72 @@ const MAIL_TODAY_SCRIPT = `tell application "Mail"
 end tell`;
 
 /** Read today's emails from Apple Mail. Permission-gated; degrades to a clear message. */
+// Deterministic inbox digest: group real conversations by sender and summarise bulk
+// mail into counts, so the briefing reads as a summary instead of a message list.
+const MEETING_RE = /\b(meeting|invite|invitation|calendar|zoom|teams|standup|1:1|sync|appointment|interview|reminder|rsvp|schedule|agenda)\b/i;
+const NEWSLETTER_RE = /\b(newsletter|digest|weekly|monthly|roundup|unsubscribe|promo|offer|sale|edition)\b/i;
+const NOTICE_RE = /\b(no-?reply|do-?not-?reply|alert|notification|notify|automated|daemon|monitor|security|postmaster|noreply|build|github)\b/i;
+
+function senderName(raw) {
+  const s = String(raw || '').trim();
+  const angle = s.match(/^(.*?)\s*<[^>]*>$/);
+  const name = (angle ? angle[1] : s).replace(/^["']|["']$/g, '').trim();
+  return name || s.split('@')[0] || 'Unknown';
+}
+
+function threadTopic(subjects) {
+  const list = (subjects || []).map((s) => String(s).replace(/^(re|fwd?):\s*/i, '').trim()).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0].slice(0, 42);
+  const stop = new Set(['the','a','an','of','for','to','and','or','in','on','at','is','your','you','our','update','updates','v2','final','new','today','please','thanks','thank','request','question','draft','copy','file','files','report','reports','meeting','agenda','call','re','fw','fwd','review']);
+  const sets = list.map((s) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !stop.has(w))));
+  const shared = [...sets[0]].filter((w) => sets.every((set) => set.has(w)));
+  return (shared.slice(0, 4).join(' ') || list[0].slice(0, 42)).trim();
+}
+
+export function summarizeEmailDigest(messages = []) {
+  const list = (messages || []).filter((m) => m && (m.sender || m.subject));
+  const total = list.length;
+  if (!total) return { ok: true, total: 0, summary: 'No new emails.', threads: [] };
+
+  const bySender = new Map();
+  let meeting = 0;
+  let newsletter = 0;
+  let notice = 0;
+  for (const m of list) {
+    const subject = String(m.subject || '').trim();
+    const from = String(m.sender || '');
+    const isNews = NEWSLETTER_RE.test(subject) || NEWSLETTER_RE.test(from);
+    const isNotice = NOTICE_RE.test(from);
+    if (MEETING_RE.test(subject)) meeting += 1;
+    else if (isNews) newsletter += 1;
+    else if (isNotice) notice += 1;
+    if (!isNews && !isNotice) {
+      const name = senderName(from);
+      const g = bySender.get(name) || { name, count: 0, subjects: [] };
+      g.count += 1;
+      if (subject) g.subjects.push(subject);
+      bySender.set(name, g);
+    }
+  }
+
+  const threads = [...bySender.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((g) => ({ name: g.name, count: g.count, topic: threadTopic(g.subjects) }));
+
+  const parts = threads.map((t) =>
+    t.count > 1
+      ? `${t.count} from ${t.name}${t.topic ? ` about ${t.topic}` : ''}`
+      : `${t.name}${t.topic ? ` · ${t.topic}` : ''}`
+  );
+  if (meeting) parts.push(`${meeting} meeting invite${meeting > 1 ? 's' : ''}`);
+  if (newsletter) parts.push(`${newsletter} newsletter${newsletter > 1 ? 's' : ''}`);
+  if (notice) parts.push(`${notice} notification${notice > 1 ? 's' : ''}`);
+  const summary = `${total} new email${total > 1 ? 's' : ''} — ${parts.join(', ')}.`;
+  return { ok: true, total, summary, threads, counts: { meeting, newsletter, notice } };
+}
+
 export async function emailSummary({ limit = 25 } = {}) {
   let result = await runOsascript(MAIL_TODAY_SCRIPT);
   // Mail can be slow to answer on first access (cold launch) or when it is busy; a single
@@ -208,7 +274,7 @@ export async function emailSummary({ limit = 25 } = {}) {
       return { sender: (sender || '').trim(), subject: (subject || '').trim() };
     })
     .slice(0, limit);
-  return { ok: true, messages, count: messages.length };
+  return { ok: true, messages, count: messages.length, summary: summarizeEmailDigest(messages).summary };
 }
 
 /**

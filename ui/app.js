@@ -694,11 +694,8 @@ function renderBriefing() {
 
   let emailHtml;
   if (b.email?.ok && b.email.count) {
-    const shown = (b.email.messages || [])
-      .slice(0, 4)
-      .map((m) => `<li><span class="brief-title">${escapeHtml(m.subject)}</span><span class="brief-meta">${escapeHtml(m.sender)}</span></li>`)
-      .join('');
-    emailHtml = `<div class="brief-body"><strong>${b.email.count}</strong> new today</div><ol class="brief-list">${shown}</ol>`;
+    // A summary of the inbox, not a list of every message.
+    emailHtml = `<div class="brief-body">${escapeHtml(b.email.summary || `${b.email.count} new emails today.`)}</div>`;
   } else if (b.email?.ok) {
     emailHtml = '<div class="brief-body quiet">No new messages today.</div>';
   } else {
