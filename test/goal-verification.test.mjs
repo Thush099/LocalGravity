@@ -117,3 +117,44 @@ test('goal records persist unverified markers so later turns see them', async ()
   assert.ok(note.includes('(unverified)'), 'the re-surfaced goal shows the marker');
   assert.ok(note.includes('[x] Deploy the staging box'));
 });
+
+test('a fully-done but unverified plan keeps its record until the claims are backed', async () => {
+  const paths = getRuntimePaths();
+  // Every step is marked done, but nothing was verified — the record must
+  // survive so later turns can still see the unverified markers.
+  await persistGoalState(
+    [
+      { text: 'Rotate the API token', status: 'done' },
+      { text: 'Update the deployment secrets', status: 'done' },
+    ],
+    { paths, sessionId: 'verify-all-done', unverifiedTexts: ['Rotate the API token', 'Update the deployment secrets'] },
+  );
+  const goals = await loadOpenGoals(paths);
+  const record = goals.find((g) => g.sessionId === 'verify-all-done');
+  assert.ok(record, 'an all-done but unverified plan is still an open concern');
+  assert.ok(record.steps.every((s) => s.unverified === true));
+
+  // Once the same claims are backed (no unverified texts), the record clears.
+  await persistGoalState(
+    [
+      { text: 'Rotate the API token', status: 'done' },
+      { text: 'Update the deployment secrets', status: 'done' },
+    ],
+    { paths, sessionId: 'verify-all-done', unverifiedTexts: [] },
+  );
+  const after = await loadOpenGoals(paths);
+  assert.equal(after.find((g) => g.sessionId === 'verify-all-done'), undefined);
+});
+
+test('goalContinuityNote surfaces unverified-only goals for continuation questions', async () => {
+  const paths = getRuntimePaths();
+  await persistGoalState([{ text: 'Enable full-disk backups', status: 'done' }], {
+    paths,
+    sessionId: 'verify-note',
+    unverifiedTexts: ['Enable full-disk backups'],
+  });
+  const goals = await loadOpenGoals(paths);
+  const note = goalContinuityNote(goals, 'where were we?');
+  assert.ok(note.includes('Enable full-disk backups'));
+  assert.ok(note.includes('(unverified)'), 'the marker is visible in the note');
+});

@@ -45,6 +45,15 @@ export function goalMatchesQuery(steps, query) {
   return words.some((word) => haystack.includes(word));
 }
 
+/** Pure: a goal that still owes the user something — unfinished steps, or done
+ * claims that were never backed by an observable action (unverified). */
+function isOpenGoal(goal) {
+  if (!goal || !Array.isArray(goal.steps)) return false;
+  return (
+    unfinishedPlanSteps(goal.steps).length > 0 || goal.steps.some((s) => s && s.unverified === true)
+  );
+}
+
 function goalBlock(goal) {
   const when = String(goal.updatedAt || '').slice(0, 10) || 'earlier';
   const lines = goal.steps
@@ -61,13 +70,11 @@ function goalBlock(goal) {
  * `query`, or '' when nothing open is relevant — silence is the default.
  */
 export function goalContinuityNote(goals, query, { maxChars = 900, maxGoals = 2 } = {}) {
-  const open = (Array.isArray(goals) ? goals : []).filter(
-    (goal) => goal && Array.isArray(goal.steps) && unfinishedPlanSteps(goal.steps).length > 0,
-  );
+  const open = (Array.isArray(goals) ? goals : []).filter(isOpenGoal);
   const relevant = open.filter((goal) => goalMatchesQuery(goal.steps, query)).slice(-maxGoals);
   if (relevant.length === 0) return '';
   const note =
-    '## Open Goals (your own published plans, unfinished)\n' +
+    '## Open Goals (your own published plans, unfinished or unverified)\n' +
     `${relevant.map(goalBlock).join('\n\n')}\n` +
     'These are promises from earlier turns. Continue them when the user is asking about this work; otherwise answer what was actually asked.';
   return note.slice(0, maxChars);
@@ -92,8 +99,10 @@ export async function persistGoalState(
       ...(s.status === 'done' && unverified.has(s.text.trim()) ? { unverified: true } : {}),
     }));
   const rest = (await loadOpenGoals(paths)).filter((goal) => goal.sessionId !== key);
-  const goals =
-    unfinishedPlanSteps(steps).length > 0 ? [...rest, { sessionId: key, updatedAt: now, steps }] : rest;
+  // The record survives while the plan owes something: unfinished steps, or
+  // done claims still marked unverified. It clears only once every step is
+  // done and backed.
+  const goals = isOpenGoal({ steps }) ? [...rest, { sessionId: key, updatedAt: now, steps }] : rest;
   await fs.mkdir(paths.root, { recursive: true });
   await fs.writeFile(paths.goalsFile, `${JSON.stringify({ goals }, null, 2)}\n`, { mode: 0o600 });
   return goals;
