@@ -297,6 +297,85 @@ export function renderMemoryDonut(memory = {}, ollamaVramBytes = 0, { size = 152
   };
 }
 
+function formatBytes(bytes) {
+  const b = Math.max(0, Number(bytes) || 0);
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GB`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MB`;
+  if (b >= 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${b} B`;
+}
+
+const APP_COLORS = [
+  'var(--app-1)', 'var(--app-2)', 'var(--app-3)', 'var(--app-4)', 'var(--app-5)',
+  'var(--app-6)', 'var(--app-7)', 'var(--app-8)', 'var(--app-9)', 'var(--app-10)',
+];
+
+/**
+ * Per-app network usage as a colored donut ring + legend. Each app takes its own color
+ * from the categorical palette so the mix reads at a glance; the longest tail is folded
+ * into a muted "Other" arc. Returns the same shape as renderMemoryDonut.
+ */
+export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this month' } = {}) {
+  const s = Math.max(120, Number(size) || 176);
+  const cx = s / 2;
+  const cy = s / 2;
+  const r = s * 0.36;
+  const strokeW = Math.max(12, Math.round(s * 0.1));
+  const circumference = 2 * Math.PI * r;
+
+  const list = (Array.isArray(apps) ? apps : [])
+    .map((a) => ({ name: String(a?.name || 'Unknown'), bytes: Math.max(0, Number(a?.total ?? a?.totalBytes ?? 0)) }))
+    .filter((a) => a.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
+
+  const total = list.reduce((sum, a) => sum + a.bytes, 0);
+
+  const MAX = 7;
+  let shown = list.slice(0, MAX);
+  const rest = list.slice(MAX);
+  if (rest.length) {
+    shown = [...shown, { name: 'Other', bytes: rest.reduce((sum, a) => sum + a.bytes, 0), muted: true }];
+  }
+
+  const denom = Math.max(1, total);
+  const segments = shown.map((a, i) => ({
+    label: a.name,
+    bytes: a.bytes,
+    color: a.muted ? 'var(--app-10)' : APP_COLORS[i % APP_COLORS.length],
+    pct: (a.bytes / denom) * 100,
+  }));
+
+  let offset = 0;
+  const arcsHtml = segments
+    .map((seg) => {
+      const len = Math.max(0, (seg.bytes / denom) * circumference);
+      if (len <= 0.5) return '';
+      const arc = `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="${seg.color}" stroke-width="${strokeW}" stroke-dasharray="${len.toFixed(2)} ${(circumference - len).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})" />`;
+      offset += len;
+      return arc;
+    })
+    .join('');
+
+  const svg = `<svg viewBox="0 0 ${s} ${s}" class="donut-svg" role="img" aria-label="Network usage by app">
+    <circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="currentColor" stroke-opacity="0.1" stroke-width="${strokeW}" />
+    ${arcsHtml}
+    <text x="${cx}" y="${(cy - 3).toFixed(1)}" text-anchor="middle" class="donut-pct">${escapeHtml(formatBytes(total))}</text>
+    <text x="${cx}" y="${(cy + 14).toFixed(1)}" text-anchor="middle" class="donut-sub">${escapeHtml(centerLabel)}</text>
+  </svg>`;
+
+  const legendHtml = segments
+    .map(
+      (seg) => `<div class="donut-legend-row">
+        <span class="donut-swatch" style="background:${seg.color}"></span>
+        <span class="donut-legend-label">${escapeHtml(seg.label)}</span>
+        <span class="donut-legend-val">${escapeHtml(formatBytes(seg.bytes))}</span>
+      </div>`
+    )
+    .join('');
+
+  return { svg, legendHtml, segments, total };
+}
+
 /**
  * Render weekly timetable focus-hour distribution SVG bar chart (Mon -> Sun).
  */
