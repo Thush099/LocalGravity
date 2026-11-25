@@ -35,6 +35,20 @@ test('goalContinuityNote surfaces open goals for questions about the work', () =
   assert.ok(note.includes('Deploy the staging box'), 'word overlap with the goal steps is enough');
 });
 
+test('goalContinuityNote keeps its guidance line under truncation', () => {
+  const steps = Array.from({ length: 8 }, (_, i) => ({
+    text: `Refactor module number ${i + 1} with a fairly long description of the work involved`,
+    status: 'pending',
+  }));
+  const note = goalContinuityNote([{ sessionId: 's', steps }], 'continue the plan', { maxChars: 300 });
+  assert.ok(note.length <= 300);
+  assert.ok(
+    note.includes('answer what was actually asked'),
+    'the truncation must never drop the guidance that keeps the note from hijacking ordinary turns',
+  );
+  assert.ok(!note.includes('involv'), 'truncation drops whole steps, never cuts mid-word');
+});
+
 test('goalContinuityNote stays silent on unrelated turns', () => {
   assert.equal(goalContinuityNote([openGoal], 'what is the weather in Colombo?'), '');
   assert.equal(goalContinuityNote([openGoal], 'summarize this paragraph: ...'), '');

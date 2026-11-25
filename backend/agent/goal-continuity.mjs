@@ -85,11 +85,22 @@ export function goalContinuityNote(goals, query, { maxChars = 900, maxGoals = 2 
   const open = (Array.isArray(goals) ? goals : []).filter(isOpenGoal);
   const relevant = open.filter((goal) => goalMatchesQuery(goal.steps, query)).slice(-maxGoals);
   if (relevant.length === 0) return '';
-  const note =
-    '## Open Goals (your own published plans, unfinished or unverified)\n' +
-    `${relevant.map(goalBlock).join('\n\n')}\n` +
+  const header = '## Open Goals (your own published plans, unfinished or unverified)';
+  const guidance =
     'These are promises from earlier turns. Continue them when the user is asking about this work; otherwise answer what was actually asked.';
-  return note.slice(0, maxChars);
+  // Fit whole lines between header and guidance: truncation drops trailing
+  // step lines (and then whole goals) but never cuts mid-line, and the
+  // guidance — the guardrail that keeps the note from hijacking ordinary
+  // turns — is never a casualty of the budget.
+  const goalLines = relevant.map(goalBlock);
+  let body = goalLines.join('\n\n');
+  while (body.length > 0 && `${header}\n${body}\n${guidance}`.length > maxChars) {
+    const lines = body.split('\n');
+    lines.pop();
+    body = lines.join('\n').replace(/\n+$/, '');
+  }
+  if (!body.trim()) return '';
+  return `${header}\n${body}\n${guidance}`;
 }
 
 /**
