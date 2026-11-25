@@ -401,9 +401,10 @@ export function renderNetworkHistoryChart(history = {}, { month = '', width = 52
     .map((v, i) => {
       const h = v.bytes > 0 ? Math.max(2, (v.bytes / max) * plotH) : 0;
       const x = i * (barW + gap);
-      return h > 0
-        ? `<rect x="${x.toFixed(1)}" y="${(baseY - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${color}" />`
-        : '';
+      if (h <= 0) return '';
+      const dt = new Date(y, m - 1, v.day);
+      const label = dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `<rect x="${x.toFixed(1)}" y="${(baseY - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${color}"><title>${escapeHtml(label)}: ${escapeHtml(formatBytes(v.bytes))}</title></rect>`;
     })
     .join('');
 
