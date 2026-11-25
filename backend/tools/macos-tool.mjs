@@ -103,9 +103,21 @@ export async function pasteFromClipboardTool() {
   };
 }
 
+// Whether the LocalGravity app is in the foreground (reported by the UI on focus/blur).
+// While the user is actively looking at the app, a notification banner is redundant, so
+// suppress it — notifications should only interrupt when the app is in the background.
+let appForeground = false;
+export function setAppForeground(value) {
+  appForeground = !!value;
+}
+export function isAppForeground() {
+  return appForeground;
+}
+
 export async function showNotificationTool({ title = 'LocalGravity', message }) {
   const msg = String(message ?? '').trim();
   if (!msg) return { ok: false, output: 'Notification message is empty.' };
+  if (isAppForeground()) return { ok: true, output: 'Notification suppressed — LocalGravity is in the foreground.' };
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "${escapeAppleScriptString(title)}"`;
   const res = await runBinary('osascript', ['-e', script], { timeout: 10000 });
   if (!res.ok) return { ok: false, output: `Notification failed: ${res.stderr || 'unknown error'}` };
@@ -164,7 +176,7 @@ export async function setReminderTool({ seconds, message }) {
   }
   const delay = Math.min(Math.floor(raw), MAX_REMINDER_SECONDS);
   const msg = String(message ?? `Reminder from LocalGravity (${delay}s)`).trim();
-  const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder" sound name "Glass"`;
+  const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder"`;
   const invocation = buildReminderInvocation(delay, script);
   const child = spawn('nohup', [invocation.bin, ...invocation.args], {
     detached: true,

@@ -704,7 +704,7 @@ function renderBriefing() {
 
   const w = b.weather;
   const weatherHtml = w?.ok
-    ? `<div class="brief-body"><strong>${w.temp != null ? `${w.temp}°C` : '—'}</strong> ${escapeHtml(String(w.description || ''))} · High ${w.high ?? '—'}° · Low ${w.low ?? '—'}°${w.city ? ` · ${escapeHtml(String(w.city))}` : ''}</div>`
+    ? `<div class="brief-body"><span class="weather-icon" aria-hidden="true">${w.icon || ''}</span><strong>${w.temp != null ? `${w.temp}°C` : '—'}</strong> ${escapeHtml(String(w.description || ''))}${w.feelsLike != null ? ` · feels like ${w.feelsLike}°` : ''} · high ${w.high ?? '—'}° · low ${w.low ?? '—'}°${w.city ? ` · ${escapeHtml(String(w.city))}` : ''}</div>`
     : `<div class="brief-body quiet">${escapeHtml(String(w?.error || 'Weather unavailable.'))}</div>`;
 
   el.innerHTML = `
@@ -4647,6 +4647,19 @@ function wireEvents() {
   });
 }
 
+// Report window focus so the backend suppresses notification banners while the user is
+// actively looking at the app — a banner then would be redundant and annoying.
+function wireAppFocusReporting() {
+  const report = () => {
+    const focused = !document.hidden && document.hasFocus?.() !== false;
+    apiRequest('/api/app-focus', { method: 'POST', body: JSON.stringify({ focused }) }).catch(() => {});
+  };
+  window.addEventListener('focus', report);
+  window.addEventListener('blur', report);
+  document.addEventListener('visibilitychange', report);
+  report();
+}
+
 async function init() {
   try {
     setSidebarCollapsed(localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1', false);
@@ -4659,6 +4672,7 @@ async function init() {
   renderInstantActions();
   wireEvents();
   wireStatTiles();
+  wireAppFocusReporting();
   tickClock();
   setInterval(tickClock, 30000);
   await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);

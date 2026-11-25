@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { INSTANT_ACTION_IDS, runInstantAction } from './actions.mjs';
+import { setAppForeground } from './tools/macos-tool.mjs';
 import { compactConversation } from './agent/compactor.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
@@ -548,7 +549,7 @@ export function createAgentServer({
               error: email.error || null,
             },
             weather: weather.ok
-              ? { ok: true, city: weather.city, temp: weather.temp, description: weather.description, high: weather.high, low: weather.low }
+              ? { ok: true, city: weather.city, icon: weather.icon, temp: weather.temp, feelsLike: weather.feelsLike, description: weather.description, high: weather.high, low: weather.low, wind: weather.wind }
               : { ok: false, error: weather.error || 'Weather unavailable.' },
             network: {
               topApps: (appsResult.apps || []).map((a) => ({ name: a.name, total: a.total })),
@@ -578,6 +579,15 @@ export function createAgentServer({
           result.ok ? 200 : 502,
           result.ok ? { ok: true, mbps: result.mbps } : { ok: false, error: result.error || 'Speed test failed' }
         );
+        return;
+      }
+
+      // Report whether the app window is focused, so notifications can be suppressed
+      // while the user is actively looking at LocalGravity (a banner then is redundant).
+      if (req.method === 'POST' && pathname === '/api/app-focus') {
+        const body = await readJsonBody(req).catch(() => ({}));
+        setAppForeground(!!body?.focused);
+        sendJson(res, 200, { ok: true });
         return;
       }
 

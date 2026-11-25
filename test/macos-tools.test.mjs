@@ -7,10 +7,23 @@ import {
   runShortcutTool,
   setReminderTool,
   showNotificationTool,
+  setAppForeground,
+  isAppForeground,
   buildReminderInvocation,
   appendBoundedOutput,
 } from '../backend/tools/macos-tool.mjs';
 import { evaluateToolSafety } from '../backend/tools/registry.mjs';
+
+test('show_notification is suppressed while the app is in the foreground', async () => {
+  setAppForeground(true);
+  assert.equal(isAppForeground(), true);
+  const suppressed = await showNotificationTool({ message: 'in-app banner would be redundant' });
+  assert.equal(suppressed.ok, true);
+  assert.match(suppressed.output, /suppressed/i);
+  // Reset so later tests that exercise real notification behaviour aren't affected.
+  setAppForeground(false);
+  assert.equal(isAppForeground(), false);
+});
 
 test('clipboard tools round-trip text through pbcopy/pbpaste', async () => {
   const marker = `localgravity-clip-${Date.now()}-${Math.random()}`;
