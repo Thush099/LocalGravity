@@ -99,10 +99,6 @@ export function openWorkSummary(goals = [], { maxGoals = MAX_OPEN_WORK_ITEMS } =
   return { count: open.length, items };
 }
 
-function hhmm(date) {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
 /**
  * Pure briefing composer. Accepts injected metrics + schedule entries so it is
  * deterministic and testable; the async tool wrapper fills these from the live
@@ -118,18 +114,16 @@ export function summarizeBriefing({
 } = {}) {
   const attention = deriveAttention(metrics, now);
 
-  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now)
-    .slice()
-    .sort((a, b) => String(a.time).localeCompare(String(b.time)));
-  const nowStr = hhmm(now);
-  const upcoming = todays.filter((e) => String(e.time) >= nowStr);
+  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  // entriesForDate already sorts by real start time and carries startMinutes;
+  // string comparisons would misread unpadded times like '9:00'.
+  const upcoming = todays.filter((e) => e.startMinutes >= nowMinutes);
 
   let next = null;
   if (upcoming.length > 0) {
     next = { title: upcoming[0].title, time: upcoming[0].time };
-    const [h, m] = String(upcoming[0].time).split(':').map(Number);
-    const [nh, nm] = nowStr.split(':').map(Number);
-    const inMinutes = (h * 60 + m) - (nh * 60 + nm);
+    const inMinutes = upcoming[0].startMinutes - nowMinutes;
     if (inMinutes >= 0 && inMinutes <= UPCOMING_WINDOW_MINUTES) {
       attention.push({
         area: 'schedule',
