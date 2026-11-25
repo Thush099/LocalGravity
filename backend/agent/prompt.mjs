@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { boundedMemoryContent } from './memory-capture.mjs';
 
 const MODE_DIRECTIVES = {
   engineer:
@@ -55,7 +56,7 @@ export function buildSystemPrompt({
       ? knowledgeDocs.map((d) => `- ${d.name}: ${d.title}`).join('\n')
       : '- (no knowledge documents yet)';
 
-  const trimmedMemory = String(memoryContent || '').trim().slice(0, compact ? 600 : 1200);
+  const trimmedMemory = boundedMemoryContent(memoryContent, { maxChars: compact ? 600 : 1200 });
   const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, compact ? 500 : 1000);
   const modeLine = isHeadless
     ? allowAutoRun
