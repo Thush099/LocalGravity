@@ -20,6 +20,7 @@ export function buildSystemPrompt({
   suggestedSkills = [],
   knowledgeDocs = [],
   memoryContent = '',
+  goalContext = '',
   memoryQuery = '',
   learnedFixesContent = '',
   repoPath = '',
@@ -61,6 +62,7 @@ export function buildSystemPrompt({
     maxChars: compact ? 600 : 1200,
     query: memoryQuery,
   });
+  const trimmedGoals = String(goalContext || '').trim().slice(0, compact ? 400 : 900);
   const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, compact ? 500 : 1000);
   const modeLine = isHeadless
     ? allowAutoRun
@@ -86,6 +88,7 @@ export function buildSystemPrompt({
       '2. Expand only when the user asks for detail, and include every requested point.',
       '3. Finish the requested task, then stop.',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+      trimmedGoals ? `\n## Open Goals\n${trimmedGoals}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
       .join('\n')
@@ -115,6 +118,7 @@ export function buildSystemPrompt({
       `\n## Knowledge Docs\n${knowledgeLines}`,
       trimmedFixes ? `\n## Learned Fixes\n${trimmedFixes}` : '',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+      trimmedGoals ? `\n## Open Goals\n${trimmedGoals}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
       .join('\n')
@@ -153,6 +157,7 @@ export function buildSystemPrompt({
     knowledgeLines,
     trimmedFixes ? `\n## Self-Learned Mistake Prevention Rules (LEARNED_FIXES.md)\n${trimmedFixes}` : '',
     trimmedMemory ? `\n## Persistent User Memory (MEMORY.md)\n${trimmedMemory}` : '',
+    trimmedGoals ? `\n## Open Goals (your own published plans)\n${trimmedGoals}` : '',
   ]
     .filter((line) => line !== undefined)
     .join('\n')
