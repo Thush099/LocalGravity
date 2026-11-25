@@ -7,6 +7,7 @@ import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
   renderNetworkDonut,
+  renderNetworkHistoryChart,
   renderMultiSeriesChart,
   renderSparkline,
   renderWeeklyScheduleChart,
@@ -716,16 +717,19 @@ function renderNetwork() {
     return;
   }
   const donut = renderNetworkDonut(net.topApps || [], { size: 188, centerLabel: 'this month' });
+  const bars = renderNetworkHistoryChart(net.history || {}, { month: net.month || '' });
+  const speedMbps = state.lastSpeedMbps ?? net.lastSpeedMbps ?? null;
   el.innerHTML = `
     <div class="net-flex">
       ${donut.svg}
       <div class="donut-legend">${donut.legendHtml}</div>
     </div>
+    ${bars ? `<div class="net-bars-wrap"><div class="brief-label">Daily usage this month</div>${bars}</div>` : ''}
     <div class="net-stats">
       <div class="net-stat"><span class="k">This month</span><span class="v">${escapeHtml(formatBytes(net.monthBytes || 0))}</span></div>
       <div class="net-stat"><span class="k">Today</span><span class="v">${escapeHtml(formatBytes(net.todayBytes || 0))}</span></div>
       <div class="net-stat"><span class="k">Since restart</span><span class="v">${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</span></div>
-      <div class="net-stat"><span class="k">Live speed</span><span class="v" id="dash-live-speed">—</span></div>
+      <div class="net-stat"><span class="k">Live speed</span><span class="v" id="dash-live-speed">${speedMbps ? `${Math.round(speedMbps)} Mbps` : '—'}</span></div>
     </div>`;
 }
 
@@ -739,6 +743,7 @@ async function runSpeedTest() {
   if (speedEl) speedEl.textContent = '…';
   try {
     const data = await apiRequest('/api/network/speed', { method: 'POST' });
+    if (data.mbps) state.lastSpeedMbps = data.mbps;
     if (speedEl) speedEl.textContent = data.mbps ? `${Math.round(data.mbps)} Mbps` : '—';
   } catch {
     if (speedEl) speedEl.textContent = 'failed';

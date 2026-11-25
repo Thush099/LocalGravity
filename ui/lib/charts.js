@@ -377,6 +377,48 @@ export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this 
 }
 
 /**
+ * Daily network usage for the current month as a compact column chart — one bar per
+ * day, so the month's rhythm (quiet days, heavy days) reads at a glance. history is a
+ * { 'YYYY-MM-DD': bytes } map; month is 'YYYY-MM'. Pure SVG.
+ */
+export function renderNetworkHistoryChart(history = {}, { month = '', width = 520, height = 122, color = 'var(--accent)' } = {}) {
+  const [y, m] = String(month || '').split('-').map(Number);
+  if (!y || !m) return '';
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const values = [];
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const key = `${month}-${String(d).padStart(2, '0')}`;
+    values.push({ day: d, bytes: Math.max(0, Number(history?.[key]) || 0) });
+  }
+  const max = Math.max(1, ...values.map((v) => v.bytes));
+  const baseY = height - 16;
+  const topY = 8;
+  const plotH = baseY - topY;
+  const gap = 3;
+  const barW = (width - gap * (daysInMonth - 1)) / daysInMonth;
+
+  const bars = values
+    .map((v, i) => {
+      const h = v.bytes > 0 ? Math.max(2, (v.bytes / max) * plotH) : 0;
+      const x = i * (barW + gap);
+      return h > 0
+        ? `<rect x="${x.toFixed(1)}" y="${(baseY - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" fill="${color}" />`
+        : '';
+    })
+    .join('');
+
+  const labelDays = [1, Math.ceil(daysInMonth / 2), daysInMonth];
+  const labels = labelDays
+    .map((d) => {
+      const x = (d - 1) * (barW + gap) + barW / 2;
+      return `<text x="${x.toFixed(1)}" y="${(height - 3).toFixed(1)}" text-anchor="middle" class="net-bar-label">${d}</text>`;
+    })
+    .join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" class="net-bars" role="img" aria-label="Daily network usage for ${escapeHtml(month)}">${bars}${labels}</svg>`;
+}
+
+/**
  * Render weekly timetable focus-hour distribution SVG bar chart (Mon -> Sun).
  */
 export function renderWeeklyScheduleChart(entries = [], todayDay = new Date().getDay(), referenceDate = new Date()) {

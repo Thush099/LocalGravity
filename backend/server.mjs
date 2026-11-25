@@ -347,6 +347,7 @@ export function createAgentServer({
   let inFlightMetrics = null;
   let cachedBriefing = null;
   let cachedBriefingAt = 0;
+  let lastSpeedMbps = null;
   const metricsHistory = [];
   let lastMemoryReclaimAt = 0;
   const previewArtifacts = new Map();
@@ -550,6 +551,9 @@ export function createAgentServer({
               sinceBootBytes: sinceBoot,
               monthBytes: usage.monthTotal || 0,
               todayBytes: usage.dayTotal || 0,
+              month: usage.month,
+              history: usage.history || {},
+              lastSpeedMbps,
             },
             updatedAt: new Date().toISOString(),
           };
@@ -564,6 +568,7 @@ export function createAgentServer({
       if (req.method === 'POST' && pathname === '/api/network/speed') {
         const { speedTest } = await import('./network-monitor.mjs');
         const result = await speedTest({ seconds: 4 });
+        if (result.ok) lastSpeedMbps = result.mbps;
         sendJson(
           res,
           result.ok ? 200 : 502,
