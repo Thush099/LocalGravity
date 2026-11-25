@@ -1,29 +1,30 @@
 :root {
-  --bg-canvas: #0a0a0c;
-  --bg-sidebar: #0d0d10;
-  --bg-surface: #161619;
-  --bg-elevated: #1e1e22;
-  --bg-hover: rgba(255, 255, 255, 0.055);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.15);
+  --bg-canvas: #0b0c0f;
+  --bg-sidebar: #111318;
+  --bg-sidebar-translucent: rgba(17, 19, 24, 0.74);
+  --bg-surface: #15181f;
+  --bg-elevated: #1c2029;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.075);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
   --text-primary: #f5f5f7;
-  --text-secondary: #a1a1a6;
-  --text-muted: #88888c;
+  --text-secondary: #a1a1aa;
+  --text-muted: #84848e;
   --accent: #0a84ff;
   --accent-hover: #409cff;
   --btn-accent-bg: #0a84ff;
-  --btn-accent-hover: #409cff;
+  --btn-accent-hover: #2b94ff;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
   --accent-2: #64d2ff;
   --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #0071e3 100%);
-  --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.5);
-  --card-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.52);
+  --card-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.055);
   --signal-green: #30d158;
   --signal-amber: #ff9f0a;
   --signal-red: #ff453a;
 
-  /* Categorical palette for per-app data (network usage, charts). Vibrant enough to
-     read each app distinctly on the dark surface, harmonious enough to stay calm. */
+  /* Categorical palette for per-app data (network usage, charts). */
   --app-1: #0a84ff;
   --app-2: #bf5af2;
   --app-3: #ff375f;
@@ -34,7 +35,7 @@
   --app-8: #ac8e68;
   --app-9: #5e5ce6;
   --app-10: #8e8e93;
-  --code-bg: #0e0e11;
+  --code-bg: #0e1015;
   --tok-comment: #6e6e73;
   --tok-string: #30d158;
   --tok-keyword: #0a84ff;
@@ -47,15 +48,17 @@
 
 @media (prefers-color-scheme: light) {
   html:not([data-theme="dark"]) {
-    --bg-canvas: #ffffff;
-    --bg-sidebar: #fbfbfd;
+    --bg-canvas: #f4f5f8;
+    --bg-sidebar: #ebedf2;
+    --bg-sidebar-translucent: rgba(235, 237, 242, 0.78);
     --bg-surface: #ffffff;
-    --bg-elevated: #f5f5f7;
+    --bg-elevated: #f0f2f6;
     --bg-hover: rgba(0, 0, 0, 0.045);
-    --border-subtle: rgba(0, 0, 0, 0.08);
-    --border-strong: rgba(0, 0, 0, 0.16);
+    --border-subtle: rgba(0, 0, 0, 0.075);
+    --border: rgba(0, 0, 0, 0.075);
+    --border-strong: rgba(0, 0, 0, 0.15);
     --text-primary: #1d1d1f;
-    --text-secondary: #5b5b60;
+    --text-secondary: #515156;
     --text-muted: #6e6e73;
     --accent: #0071e3;
     --accent-hover: #0077ed;
@@ -65,7 +68,7 @@
     --accent-2: #0071e3;
     --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #0071e3 100%);
     --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.12);
-    --card-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --card-sheen: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.85);
     --signal-green: #237f39;
     --signal-amber: #c76a00;
     --signal-red: #d70015;
@@ -80,15 +83,17 @@
 }
 
 html[data-theme="light"] {
-  --bg-canvas: #ffffff;
-  --bg-sidebar: #fbfbfd;
+  --bg-canvas: #f4f5f8;
+  --bg-sidebar: #ebedf2;
+  --bg-sidebar-translucent: rgba(235, 237, 242, 0.78);
   --bg-surface: #ffffff;
-  --bg-elevated: #f5f5f7;
+  --bg-elevated: #f0f2f6;
   --bg-hover: rgba(0, 0, 0, 0.045);
-  --border-subtle: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.16);
+  --border-subtle: rgba(0, 0, 0, 0.075);
+  --border: rgba(0, 0, 0, 0.075);
+  --border-strong: rgba(0, 0, 0, 0.15);
   --text-primary: #1d1d1f;
-  --text-secondary: #5b5b60;
+  --text-secondary: #515156;
   --text-muted: #6e6e73;
   --accent: #0071e3;
   --accent-hover: #0077ed;
@@ -98,7 +103,7 @@ html[data-theme="light"] {
   --accent-2: #0071e3;
   --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #0071e3 100%);
   --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.12);
-  --card-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --card-sheen: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.85);
   --signal-green: #237f39;
   --signal-amber: #c76a00;
   --signal-red: #d70015;
@@ -114,19 +119,21 @@ html[data-theme="light"] {
 html[data-theme="nord"] {
   --bg-canvas: #2e3440;
   --bg-sidebar: #242933;
+  --bg-sidebar-translucent: rgba(36, 41, 51, 0.78);
   --bg-surface: #3b4252;
   --bg-elevated: #434c5e;
-  --bg-hover: rgba(216, 222, 233, 0.05);
+  --bg-hover: rgba(216, 222, 233, 0.06);
   --border-subtle: rgba(216, 222, 233, 0.1);
+  --border: rgba(216, 222, 233, 0.1);
   --border-strong: rgba(216, 222, 233, 0.2);
   --text-primary: #eceff4;
   --text-secondary: #d8dee9;
-  --text-muted: #4c566a;
+  --text-muted: #939fb1;
   --accent: #88c0d0;
   --accent-hover: #81a1c1;
   --btn-accent-bg: #5e81ac;
   --btn-accent-hover: #81a1c1;
-  --accent-soft: rgba(136, 192, 208, 0.15);
+  --accent-soft: rgba(136, 192, 208, 0.16);
   --accent-2: #8fbcbb;
   --accent-gradient: linear-gradient(135deg, #88c0d0 0%, #5e81ac 100%);
   --signal-green: #a3be8c;
@@ -135,28 +142,56 @@ html[data-theme="nord"] {
   --code-bg: #242933;
 }
 
+html[data-theme="solarized"] {
+  --bg-canvas: #002b36;
+  --bg-sidebar: #00212b;
+  --bg-sidebar-translucent: rgba(0, 33, 43, 0.78);
+  --bg-surface: #073642;
+  --bg-elevated: #0b414f;
+  --bg-hover: rgba(147, 161, 161, 0.08);
+  --border-subtle: rgba(147, 161, 161, 0.14);
+  --border: rgba(147, 161, 161, 0.14);
+  --border-strong: rgba(147, 161, 161, 0.26);
+  --text-primary: #fdf6e3;
+  --text-secondary: #93a1a1;
+  --text-muted: #76888d;
+  --accent: #268bd2;
+  --accent-hover: #3ca0e6;
+  --btn-accent-bg: #268bd2;
+  --btn-accent-hover: #3ca0e6;
+  --accent-soft: rgba(38, 139, 210, 0.18);
+  --accent-2: #2aa198;
+  --accent-gradient: linear-gradient(135deg, #268bd2 0%, #2aa198 100%);
+  --signal-green: #859900;
+  --signal-amber: #b58900;
+  --signal-red: #dc322f;
+  --code-bg: #00212b;
+}
+
 html[data-theme="cyberpunk"] {
-  --bg-canvas: #0d0221;
-  --bg-sidebar: #050110;
-  --bg-surface: #190044;
-  --bg-elevated: #240066;
-  --bg-hover: rgba(0, 255, 255, 0.1);
-  --border-subtle: rgba(0, 255, 255, 0.2);
-  --border-strong: rgba(255, 0, 255, 0.4);
-  --text-primary: #00ffff;
-  --text-secondary: #ff00ff;
-  --text-muted: #6e00ff;
-  --accent: #ffff00;
-  --accent-hover: #00ff00;
-  --btn-accent-bg: #ff00ff;
-  --btn-accent-hover: #ff77ff;
-  --accent-soft: rgba(255, 255, 0, 0.1);
-  --accent-2: #00ff00;
-  --accent-gradient: linear-gradient(135deg, #ff00ff 0%, #00ffff 100%);
-  --signal-green: #00ff00;
-  --signal-amber: #ffff00;
-  --signal-red: #ff0000;
-  --code-bg: #050110;
+  --bg-canvas: #0b0716;
+  --bg-sidebar: #080510;
+  --bg-sidebar-translucent: rgba(8, 5, 16, 0.78);
+  --bg-surface: #130d24;
+  --bg-elevated: #1b1333;
+  --bg-hover: rgba(34, 211, 238, 0.08);
+  --border-subtle: rgba(167, 139, 250, 0.16);
+  --border: rgba(167, 139, 250, 0.16);
+  --border-strong: rgba(34, 211, 238, 0.34);
+  --text-primary: #f4f0ff;
+  --text-secondary: #b4a5d9;
+  --text-muted: #8474ad;
+  --accent: #22d3ee;
+  --accent-hover: #67e8f9;
+  --btn-accent-bg: #e11d48;
+  --btn-accent-hover: #f43f5e;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-2: #f472b6;
+  --accent-gradient: linear-gradient(135deg, #e11d48 0%, #22d3ee 100%);
+  --signal-green: #34d399;
+  --signal-amber: #fbbf24;
+  --signal-red: #fb7185;
+  --code-bg: #080510;
 }
 
 * {
@@ -906,14 +941,16 @@ button, input, textarea, select {
 }
 
 .msg-user {
-  background: linear-gradient(135deg, var(--app-1) 0%, var(--app-2) 100%);
-  color: #ffffff;
-  padding: 11px 16px;
-  border-radius: 16px 16px 4px 16px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-subtle));
+  padding: 10px 15px;
+  border-radius: 14px 14px 4px 14px;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 14.5px;
   line-height: 1.55;
+  box-shadow: var(--card-sheen);
 }
 
 .user-msg-actions {
@@ -1642,17 +1679,27 @@ button, input, textarea, select {
 }
 
 .send-btn, .primary-btn {
-  background: linear-gradient(135deg, var(--app-1) 0%, var(--app-2) 100%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #ffffff 14%, var(--btn-accent-bg)) 0%,
+    var(--btn-accent-bg) 100%
+  );
   color: #ffffff;
-  border: none;
-  border-radius: 10px;
-  padding: 8px 15px;
-  font-weight: 500;
+  border: 1px solid color-mix(in srgb, var(--btn-accent-bg) 70%, #000000);
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-weight: 560;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: filter 120ms ease, transform 80ms ease;
 }
 
 .send-btn:hover, .primary-btn:hover {
-  filter: brightness(1.12);
+  filter: brightness(1.08);
+}
+
+.send-btn:active, .primary-btn:active {
+  transform: scale(0.985);
 }
 
 .secondary-btn {
@@ -2011,7 +2058,9 @@ button, input, textarea, select {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.58);
+  background: rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
   z-index: 80;
@@ -2466,7 +2515,9 @@ button, input, textarea, select {
   justify-content: center;
   align-items: flex-start;
   padding: 11vh 20px 20px;
-  background: rgba(0, 0, 0, 0.56);
+  background: rgba(0, 0, 0, 0.52);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .palette-card {
@@ -2942,68 +2993,60 @@ button, input, textarea, select {
 .stat-tile {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 14px;
-  padding: 15px 16px 16px;
+  border-radius: 13px;
+  padding: 14px 16px 15px;
   box-shadow: var(--card-sheen);
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
 }
 
-/* Colourful stat tiles — each metric its own vibrant identity. */
 .stat-tile[data-metric="cpu"] { --tile: var(--app-1); }
 .stat-tile[data-metric="mem"] { --tile: var(--app-2); }
 .stat-tile[data-metric="gpu"] { --tile: var(--app-3); }
 .stat-tile[data-metric="disk"] { --tile: var(--app-5); }
-.stat-tile[data-metric] {
-  position: relative;
-  overflow: hidden;
-  border-color: color-mix(in srgb, var(--tile) 28%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--tile) 16%, var(--bg-surface)) 0%, var(--bg-surface) 62%);
-}
-.stat-tile[data-metric]::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--tile), color-mix(in srgb, var(--tile) 25%, transparent));
-}
-.stat-tile[data-metric] .stat-value { color: var(--tile); }
-.stat-tile[data-metric] .stat-label { color: color-mix(in srgb, var(--tile) 65%, var(--text-primary)); }
 
-/* ---- Vibrant accent pass: colourful capability cards and hero panels ---- */
-.superpowers-grid .superpower-card:nth-child(5n+1) { --sh: var(--app-1); }
-.superpowers-grid .superpower-card:nth-child(5n+2) { --sh: var(--app-2); }
-.superpowers-grid .superpower-card:nth-child(5n+3) { --sh: var(--app-4); }
-.superpowers-grid .superpower-card:nth-child(5n+4) { --sh: var(--app-5); }
-.superpowers-grid .superpower-card:nth-child(5n+5) { --sh: var(--app-3); }
+.stat-tile[data-metric] .stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-tile[data-metric] .stat-label::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tile);
+  flex: none;
+}
+
+.stat-tile[data-metric] .stat-value {
+  color: var(--text-primary);
+}
+
 .superpower-card {
   position: relative;
-  overflow: hidden;
-  border-color: color-mix(in srgb, var(--sh, var(--accent)) 26%, transparent);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--sh, var(--accent)) 12%, var(--bg-elevated)) 0%, var(--bg-elevated) 72%);
+  border-color: var(--border-subtle);
+  background: var(--bg-elevated);
 }
-.superpower-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: var(--sh, var(--accent));
-}
-.superpower-card .superpower-tag { color: var(--sh, var(--accent)); }
 
-.dash-briefing-card, .dash-network-card { position: relative; overflow: hidden; }
-.dash-briefing-card { --sh: var(--app-4); }
-.dash-network-card { --sh: var(--app-6); }
-.dash-briefing-card::before, .dash-network-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--sh), color-mix(in srgb, var(--sh) 16%, transparent));
+.superpower-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
 }
-.dash-briefing-card h3 { color: var(--app-4); }
-.dash-network-card h3 { color: var(--app-6); }
+
+.superpower-card .superpower-tag {
+  color: var(--accent);
+}
+
+.dash-briefing-card,
+.dash-network-card {
+  position: relative;
+  box-shadow: var(--card-sheen);
+}
 
 .stat-top {
   display: flex;
@@ -4449,3 +4492,410 @@ button, input, textarea, select {
     max-width: 130px;
   }
 }
+
+/* ---- Native macOS Window Integration & Sequoia Chrome ---- */
+.chrome-icon-sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.sidebar,
+.workspace-header,
+.view-header,
+button,
+.pill,
+.card-tag,
+.nav-btn {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.is-macos-native body {
+  background: transparent;
+}
+
+html.is-macos-native .sidebar {
+  padding-top: 42px;
+  background: var(--bg-sidebar-translucent);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+}
+
+html.is-macos-native .workspace {
+  background: var(--bg-canvas);
+}
+
+html.is-macos-native .workspace-header {
+  padding-top: 14px;
+  min-height: 54px;
+}
+
+html.is-macos-native .app-shell.sidebar-collapsed .workspace-header {
+  padding-left: 88px;
+}
+
+html.is-macos-native #view-dashboard,
+html.is-macos-native #view-monitor,
+html.is-macos-native #view-schedule {
+  padding-top: 34px;
+}
+
+html.is-macos-native .view-header {
+  padding-top: 28px;
+}
+
+html.is-macos-native .app-shell.sidebar-collapsed .sidebar-expand-fab {
+  top: 38px;
+  left: 18px;
+}
+
+html.is-macos-native .app-shell.sidebar-collapsed #view-dashboard,
+html.is-macos-native .app-shell.sidebar-collapsed #view-monitor,
+html.is-macos-native .app-shell.sidebar-collapsed #view-schedule {
+  padding-top: 76px;
+}
+
+html.is-macos-native .app-shell.sidebar-collapsed #view-skills .view-header,
+html.is-macos-native .app-shell.sidebar-collapsed #view-automations .view-header,
+html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
+  padding-left: 72px;
+}
+
+/* ---- Smart Assist Proactive Suggestions ---- */
+.smart-assist-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.smart-assist-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  box-shadow: var(--card-sheen);
+}
+
+.smart-assist-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.smart-assist-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smart-assist-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.smart-assist-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.smart-assist-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.smart-assist-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.smart-assist-action {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.smart-assist-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- Structured Chain of Thought & Performance Strip ---- */
+.thinking-steps {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thinking-steps li {
+  line-height: 1.45;
+}
+
+.attach-chip.clickable {
+  cursor: pointer;
+}
+
+.attach-chip.clickable span:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.perf-telemetry-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Large List Scroll Acceleration ---- */
+#chat-history-items > .msg-row,
+.card-grid > .card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+}
+
+/* ---- Dashboard colour language -------------------------------------------
+   Every dashboard surface owns one hue: metric tiles take their metric colour,
+   the hero cards use amber (briefing) and cyan (network), capabilities cycle the
+   categorical palette, and suggestions take their tone colour. Each hue is mixed
+   into the active theme surface, so the wash stays legible in dark, light, and
+   Nord themes instead of being hard-coded. */
+.stat-tile {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(140% 110% at 0% 0%, color-mix(in srgb, var(--tile) 16%, transparent) 0%, transparent 62%),
+    var(--bg-surface);
+  border-color: color-mix(in srgb, var(--tile) 24%, var(--border-subtle));
+}
+
+.stat-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--tile) 0%, color-mix(in srgb, var(--tile) 30%, transparent) 55%, transparent 100%);
+}
+
+.stat-tile:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--tile) 44%, var(--border-subtle));
+}
+
+/* Storage flips to the alert hue while it is genuinely tight. */
+.stat-tile.is-critical {
+  --tile: var(--signal-red);
+}
+
+.net-empty-hint {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.stat-tile[data-metric] .stat-label {
+  color: color-mix(in srgb, var(--tile) 58%, var(--text-secondary));
+  font-weight: 620;
+}
+
+.stat-tile .stat-sub {
+  color: color-mix(in srgb, var(--tile) 24%, var(--text-muted));
+}
+
+/* Hero cards: a warm briefing, a cool network read. */
+.dash-briefing-card { --hero: var(--signal-amber); }
+.dash-network-card { --hero: var(--accent-2); }
+
+.dash-hero .dash-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 130% at 100% 0%, color-mix(in srgb, var(--hero) 17%, transparent) 0%, transparent 58%),
+    var(--bg-surface);
+  border-color: color-mix(in srgb, var(--hero) 22%, var(--border-subtle));
+}
+
+.dash-hero .dash-card::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--hero) 0%, color-mix(in srgb, var(--hero) 32%, transparent) 58%, transparent 100%);
+}
+
+.dash-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dash-card-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: color-mix(in srgb, var(--hero) 72%, var(--text-primary));
+  background: color-mix(in srgb, var(--hero) 15%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--hero) 26%, transparent);
+}
+
+/* Smart Assist: tone-tinted cards so urgency reads before the copy does. */
+.smart-assist-card {
+  --tone: var(--accent);
+  position: relative;
+  padding-left: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 12%, var(--bg-surface)) 0%, var(--bg-surface) 72%);
+  border-color: color-mix(in srgb, var(--tone) 22%, var(--border-subtle));
+  border-left: 3px solid color-mix(in srgb, var(--tone) 78%, transparent);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.smart-assist-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--tone) 38%, var(--border-subtle));
+  border-left-color: var(--tone);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--tone) 12%, transparent);
+}
+
+.smart-assist-card[data-tone="urgent"] { --tone: var(--signal-red); }
+.smart-assist-card[data-tone="warn"] { --tone: var(--signal-amber); }
+.smart-assist-card[data-tone="calm"] { --tone: var(--signal-green); }
+.smart-assist-card[data-tone="info"] { --tone: var(--accent); }
+
+.smart-assist-icon {
+  color: color-mix(in srgb, var(--tone) 72%, var(--text-primary));
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 24%, transparent);
+}
+
+.smart-assist-top {
+  gap: 9px;
+}
+
+.smart-assist-title {
+  flex: 1;
+  font-weight: 620;
+}
+
+.smart-assist-detail,
+.smart-assist-foot {
+  margin-left: 35px;
+}
+
+.smart-assist-foot {
+  justify-content: flex-start;
+}
+
+.smart-assist-action {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--tone) 38%, transparent);
+  background: color-mix(in srgb, var(--tone) 12%, var(--bg-elevated));
+  color: color-mix(in srgb, var(--tone) 62%, var(--text-primary));
+}
+
+.smart-assist-action:hover {
+  border-color: color-mix(in srgb, var(--tone) 62%, transparent);
+  background: color-mix(in srgb, var(--tone) 20%, var(--bg-elevated));
+  color: color-mix(in srgb, var(--tone) 80%, var(--text-primary));
+}
+
+/* Capability cards cycle through the palette so the grid has rhythm. */
+.superpowers-grid .superpower-card:nth-child(6n + 1) { --tone: var(--app-1); }
+.superpowers-grid .superpower-card:nth-child(6n + 2) { --tone: var(--app-2); }
+.superpowers-grid .superpower-card:nth-child(6n + 3) { --tone: var(--app-3); }
+.superpowers-grid .superpower-card:nth-child(6n + 4) { --tone: var(--app-4); }
+.superpowers-grid .superpower-card:nth-child(6n + 5) { --tone: var(--app-5); }
+.superpowers-grid .superpower-card:nth-child(6n + 6) { --tone: var(--app-6); }
+
+.superpower-card {
+  background: linear-gradient(150deg, color-mix(in srgb, var(--tone) 9%, var(--bg-elevated)) 0%, var(--bg-elevated) 68%);
+  border-color: color-mix(in srgb, var(--tone) 18%, var(--border-subtle));
+}
+
+.superpower-card:hover {
+  border-color: color-mix(in srgb, var(--tone) 46%, var(--border-strong));
+  background: linear-gradient(150deg, color-mix(in srgb, var(--tone) 17%, var(--bg-elevated)) 0%, var(--bg-elevated) 76%);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--tone) 10%, transparent);
+}
+
+.superpower-card .superpower-tag {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 580;
+  color: color-mix(in srgb, var(--tone) 62%, var(--text-primary));
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 22%, transparent);
+}
+
+/* Keep hero toolbars on one line now that each head carries an icon chip. */
+.dash-hero .dash-card-head .toolbar-actions {
+  flex: none;
+}
+
+.dash-hero .dash-card-head .secondary-btn {
+  white-space: nowrap;
+}
+
+/* Quick ask picks up the accent without turning into a neon bar. */
+.dash-quick-ask {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 6%, var(--bg-surface)) 0%, var(--bg-surface) 62%);
+}
+
+.dash-quick-ask:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+#dash-greeting {
+  background: linear-gradient(96deg, var(--text-primary) 0%, color-mix(in srgb, var(--accent) 78%, var(--text-primary)) 82%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
