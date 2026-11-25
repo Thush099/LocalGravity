@@ -10,9 +10,9 @@ const execFileAsync = promisify(execFile);
  * The Jarvis-style daily briefing: gather what matters today from on-device sources and
  * public feeds, so the dashboard can surface a morning digest. World news comes from the
  * BBC and NYT world RSS feeds (editor-curated leads). Email is read on-device from Apple
- * Mail via AppleScript (permission-gated). WhatsApp is deliberately NOT scraped: its
- * stores are encrypted and it exposes no macOS automation API, so there is no reliable,
- * privacy-respecting way to read messages — see whatsappSummary() for the honest status.
+ * Mail via AppleScript (permission-gated). Weather comes from Open-Meteo (free, no key)
+ * using an approximate, IP-derived location — it replaces the old WhatsApp slot, which
+ * was never readable on macOS.
  */
 
 const NEWS_FEEDS = [
@@ -278,29 +278,94 @@ export async function emailSummary({ limit = 25 } = {}) {
 }
 
 /**
- * WhatsApp is deliberately NOT scraped. Its message stores are encrypted and it exposes
- * no macOS AppleScript/automation API, so there is no reliable, privacy-respecting way to
- * read messages on a Mac. Return an honest status instead of pretending to read them.
+ * Weather for the daily briefing. Sourced from Open-Meteo (free, no API key) using an
+ * approximate, city-level location derived from the public IP, so no account or key is
+ * needed and the answer is honest about its precision. Fails soft to a clear status.
  */
-export function whatsappSummary() {
-  return {
-    ok: false,
-    available: false,
-    messages: [],
-    note: "WhatsApp messages can't be read reliably on macOS — WhatsApp stores them encrypted and offers no automation API. I won't pretend otherwise. To summarize something from WhatsApp, paste it here, or read it in WhatsApp directly.",
-  };
+const WMO_CODES = {
+  0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Icy fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 56: 'Freezing drizzle', 57: 'Freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 66: 'Freezing rain', 67: 'Freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Rain showers', 81: 'Rain showers', 82: 'Violent rain showers', 85: 'Snow showers', 86: 'Snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Thunderstorm with hail',
+};
+
+export function weatherDescription(code) {
+  return WMO_CODES[Number(code)] || 'Unknown';
+}
+
+let cachedLocation = null;
+export async function fetchApproxLocation() {
+  if (cachedLocation) return cachedLocation;
+  try {
+    const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    // ipinfo.io returns `loc` as a "lat,lon" string.
+    const [latStr, lonStr] = String(data.loc || '').split(',');
+    const loc = { lat: Number(latStr), lon: Number(lonStr), city: String(data.city || '') };
+    if (Number.isFinite(loc.lat) && Number.isFinite(loc.lon)) {
+      cachedLocation = loc;
+      return loc;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function weatherSummary({ lat, lon, city } = {}) {
+  try {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      const loc = await fetchApproxLocation();
+      if (!loc) return { ok: false, error: 'Could not determine an approximate location for weather.' };
+      ({ lat, lon } = loc);
+      city = city || loc.city;
+    }
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}` +
+      `&longitude=${encodeURIComponent(lon)}` +
+      '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m' +
+      '&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1';
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return { ok: false, error: `Weather lookup failed (HTTP ${res.status}).` };
+    const data = await res.json();
+    const cur = data.current || {};
+    const daily = data.daily || {};
+    return {
+      ok: true,
+      city: city || '',
+      temp: Number.isFinite(Number(cur.temperature_2m)) ? Math.round(Number(cur.temperature_2m)) : null,
+      feelsLike: Number.isFinite(Number(cur.apparent_temperature)) ? Math.round(Number(cur.apparent_temperature)) : null,
+      description: weatherDescription(cur.weather_code),
+      high: Number.isFinite(Number(daily.temperature_2m_max?.[0])) ? Math.round(Number(daily.temperature_2m_max[0])) : null,
+      low: Number.isFinite(Number(daily.temperature_2m_min?.[0])) ? Math.round(Number(daily.temperature_2m_min[0])) : null,
+      wind: Number.isFinite(Number(cur.wind_speed_10m)) ? Math.round(Number(cur.wind_speed_10m)) : null,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
 }
 
 /**
- * Gather the raw material for a morning briefing (world news, today's email, WhatsApp
- * status) so the model can compose a friendly summary. The model turns this into prose.
+ * Gather the raw material for a morning briefing (weather, world news, today's email)
+ * so the model can compose a friendly summary. The model turns this into prose.
  */
 export async function dailyBriefingReport({ count = 3, emailLimit = 20 } = {}) {
-  const news = await fetchWorldNews({ count });
-  const email = await emailSummary({ limit: emailLimit });
-  const whatsapp = whatsappSummary();
+  const [news, email, weather] = await Promise.all([
+    fetchWorldNews({ count }),
+    emailSummary({ limit: emailLimit }),
+    weatherSummary(),
+  ]);
 
   const sections = [];
+  if (weather.ok) {
+    const where = weather.city ? ` in ${weather.city}` : '';
+    sections.push(`Weather${where}: ${weather.temp}°C, ${weather.description.toLowerCase()} (high ${weather.high}°, low ${weather.low}°).`);
+  } else {
+    sections.push(`Weather: ${weather.error}`);
+  }
+
   if (news.ok && news.items.length) {
     sections.push(
       `World news (top ${Math.min(count, news.items.length)} important):\n` +
@@ -321,6 +386,5 @@ export async function dailyBriefingReport({ count = 3, emailLimit = 20 } = {}) {
     sections.push(`Email today: ${email.error}`);
   }
 
-  sections.push(`WhatsApp: ${whatsapp.note}`);
   return sections.join('\n\n');
 }

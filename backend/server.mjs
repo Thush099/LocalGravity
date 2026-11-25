@@ -522,17 +522,18 @@ export function createAgentServer({
         return;
       }
 
-      // Jarvis-style daily briefing: top world news, today's email, WhatsApp status, and a
+      // Jarvis-style daily briefing: the day's weather, top world news, today's email, and a
       // light network snapshot. Cached for a few minutes — news and Mail don't change
       // every second, and both are too slow to gather on every dashboard poll.
       if (req.method === 'GET' && pathname === '/api/briefing') {
         const now = Date.now();
         if (!cachedBriefing || now - cachedBriefingAt > 300000) {
-          const { fetchWorldNews, emailSummary, whatsappSummary } = await import('./daily-briefing.mjs');
+          const { fetchWorldNews, emailSummary, weatherSummary } = await import('./daily-briefing.mjs');
           const { perAppUsage, totalInterfaceBytes, networkUsageSummary } = await import('./network-monitor.mjs');
-          const [news, email, appsResult, sinceBoot, usage] = await Promise.all([
+          const [news, email, weather, appsResult, sinceBoot, usage] = await Promise.all([
             fetchWorldNews({ count: 5 }),
             emailSummary({ limit: 15 }),
+            weatherSummary().catch(() => ({ ok: false, error: 'Weather unavailable.' })),
             perAppUsage({ limit: 12 }),
             totalInterfaceBytes().catch(() => 0),
             networkUsageSummary().catch(() => ({})),
@@ -546,7 +547,9 @@ export function createAgentServer({
               messages: (email.messages || []).slice(0, 8),
               error: email.error || null,
             },
-            whatsapp: whatsappSummary(),
+            weather: weather.ok
+              ? { ok: true, city: weather.city, temp: weather.temp, description: weather.description, high: weather.high, low: weather.low }
+              : { ok: false, error: weather.error || 'Weather unavailable.' },
             network: {
               topApps: (appsResult.apps || []).map((a) => ({ name: a.name, total: a.total })),
               sinceBootBytes: sinceBoot,

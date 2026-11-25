@@ -677,7 +677,7 @@ function renderBriefing() {
     el.textContent = 'Loading today’s briefing…';
     return;
   }
-  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · news, email & WhatsApp`;
+  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · weather, news & email`;
 
   const newsItems = (b.news || []).slice(0, 3);
   const newsHtml = newsItems.length
@@ -702,12 +702,15 @@ function renderBriefing() {
     emailHtml = `<div class="brief-body quiet">${escapeHtml(b.email?.error || 'Email unavailable.')}</div>`;
   }
 
-  const waHtml = `<div class="brief-body quiet">${escapeHtml(b.whatsapp?.note || 'WhatsApp cannot be read on macOS.')}</div>`;
+  const w = b.weather;
+  const weatherHtml = w?.ok
+    ? `<div class="brief-body"><strong>${w.temp != null ? `${w.temp}°C` : '—'}</strong> ${escapeHtml(String(w.description || ''))} · High ${w.high ?? '—'}° · Low ${w.low ?? '—'}°${w.city ? ` · ${escapeHtml(String(w.city))}` : ''}</div>`
+    : `<div class="brief-body quiet">${escapeHtml(String(w?.error || 'Weather unavailable.'))}</div>`;
 
   el.innerHTML = `
     <div class="brief-cols">
       <div class="brief-col"><div class="brief-label">World news</div>${newsHtml}</div>
-      <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">WhatsApp</div>${waHtml}</div>
+      <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">Weather</div>${weatherHtml}</div>
     </div>`;
 }
 
