@@ -16,6 +16,7 @@
   --btn-accent-bg: #0a84ff;
   --btn-accent-hover: #2b94ff;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --text-faint: #6e6e78;
   --accent-2: #64d2ff;
   --accent-gradient: linear-gradient(135deg, #0a84ff 0%, #0071e3 100%);
   --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.52);
@@ -1285,6 +1286,41 @@ button, input, textarea, select {
 }
 
 /* Markdown */
+.permission-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.permission-btn {
+  margin-left: auto;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.permission-btn:hover { background: var(--bg-hover); }
+
+.empty-reply-note {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
 .md-body {
   max-width: 72ch;
 }

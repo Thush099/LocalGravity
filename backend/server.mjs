@@ -836,6 +836,25 @@ export function createAgentServer({
         return sendJson(res, 200, { ok: true, id, previewUrl: `/preview-sandbox/${id}` });
       }
 
+      // Deep link into the right Privacy & Security pane. macOS folder access can
+      // only be granted by a human, so the UI offers this instead of repeating a
+      // dialog the app cannot dismiss.
+      if (req.method === 'POST' && pathname === '/api/system/privacy-pane') {
+        const body = await readJsonBody(req);
+        const panes = {
+          allfiles: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+          filesandfolders: 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
+          automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation',
+          accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        };
+        const target = panes[String(body.pane || '')];
+        if (!target) {
+          return sendJson(res, 400, { ok: false, error: 'Unknown privacy pane.' });
+        }
+        spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+        return sendJson(res, 200, { ok: true, opened: String(body.pane) });
+      }
+
       // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)
       if (req.method === 'POST' && pathname === '/api/reminders') {
         const body = await readJsonBody(req);

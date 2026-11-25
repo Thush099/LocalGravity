@@ -121,3 +121,21 @@ test('dialogs hide the page behind them from keyboard and assistive tech', async
   assert.match(html, /id="modal-backdrop"[^>]*aria-labelledby="modal-title"/, 'dialog needs an accessible name');
 });
 
+
+test('a silent assistant turn renders an explanation instead of an empty bubble', async () => {
+  const app = await readAppSource();
+  assert.match(app, /empty-reply-note/, 'the blank-reply fallback class is missing');
+  assert.match(app, /No written reply came back/, 'the blank-reply explanation is missing');
+  assert.match(app, /const showActions = !item\.isStreaming \|\| item\.isError;/, 'retry actions must appear for silent turns');
+  const css = await fs.readFile(new URL('../ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.empty-reply-note \{/, 'the blank-reply style is missing');
+});
+
+test('permission denials offer a one-click route to Privacy settings', async () => {
+  const app = await readAppSource();
+  assert.match(app, /permission-note/, 'the permission hint markup is missing');
+  assert.match(app, /data-privacy-pane/, 'the permission button target is missing');
+  assert.match(app, /api\/system\/privacy-pane/, 'the privacy pane endpoint is not wired');
+  const css = await fs.readFile(new URL('../ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.permission-note \{/, 'the permission hint style is missing');
+});

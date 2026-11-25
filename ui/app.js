@@ -1844,6 +1844,23 @@ function buildToolBodyHtml(tool) {
   return `<pre class="tool-body">${escapeHtml(JSON.stringify(tool.arguments || {}, null, 2))}</pre>`;
 }
 
+/**
+ * macOS blocks protected folders (Downloads, Desktop, Documents) with a system
+ * dialog the app cannot click. When a tool reports that denial, point at the one
+ * place a human can grant it permanently instead of silently failing again.
+ */
+function permissionHintHtml(tool) {
+  const output = String(tool.output || '');
+  if (!output || tool.status === 'running') return '';
+  const denied =
+    /(?:not authorized|operation not permitted|permission denied|errno -1|tcc|full disk access)/i.test(output);
+  if (!denied) return '';
+  return `<div class="permission-note">
+    <span>macOS blocked a protected folder for this action. Grant it once; LocalGravity's signature is stable now, so it stays granted.</span>
+    <button type="button" class="permission-btn" data-privacy-pane="allfiles">Open Privacy settings</button>
+  </div>`;
+}
+
 function formatToolDisplayMeta(tool) {
   const meta = HUMAN_TOOL_META[tool.name];
   const label = meta ? meta.label : tool.name;
@@ -1907,6 +1924,7 @@ function buildToolsHtml(tools = []) {
             <span class="tool-head-right">${durationHtml}<span class="tool-badge ${badgeCls}">${badgeLabel}</span></span>
           </div>
           ${buildToolBodyHtml(t)}
+          ${permissionHintHtml(t)}
           ${thumbs}
           ${approvalHtml}
         </div>`;
@@ -1972,6 +1990,13 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
     return `<div class="msg-row"><div class="msg-user-wrap"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div><div class="user-msg-actions"><button type="button" class="msg-action-btn user-copy-btn" data-idx="${idx}">Copy</button><button type="button" class="msg-action-btn user-edit-btn" data-idx="${idx}">Edit &amp; re-run</button><button type="button" class="msg-action-btn user-fork-btn" data-idx="${idx}">Branch</button></div></div></div>`;
   }
 
+  const hasVisibleText = Boolean(String(item.content || '').trim());
+  // A silent turn used to render as an empty bubble with no actions, which read
+  // like the app had frozen. Say what happened and offer the retry.
+  const blankReplyHtml =
+    !item.isStreaming && !hasVisibleText
+      ? '<div class="md-body empty-reply-note">No written reply came back from the model. Regenerate to try again.</div>'
+      : '';
   const thinkingCombined = (item.thinking || []).join('').trim();
   const thinkingHtml = formatThinkingHtml(thinkingCombined, item.isStreaming && !item.content);
 
@@ -2001,7 +2026,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
   const provLabel = provKey === 'ollama' ? 'Local' : state.presets?.[provKey]?.label?.split(' ')[0] || provKey;
   const isSpeaking = state.speakingMessageIndex === idx;
 
-  const showActions = (!item.isStreaming && item.content) || item.isError;
+  const showActions = !item.isStreaming || item.isError;
   const actionsHtml = showActions
     ? `<div class="msg-actions">
         <button type="button" class="msg-action-btn retry-turn-btn" data-idx="${idx}">Regenerate</button>
@@ -2036,7 +2061,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
         <div class="live-thinking-slot">${thinkingHtml}</div>
         <div class="live-tools-slot">${toolsSummaryHtml}${toolsHtml}</div>
         <div class="live-self-improved-slot">${selfImprovedHtml}</div>
-        <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}</div>
+        <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}${blankReplyHtml}</div>
         ${actionsHtml}
         ${buildFollowupChipsHtml(item, idx, isLastCompleted)}
       </div>
@@ -4106,6 +4131,19 @@ function wireEvents() {
 
   // Single delegated event listener on #chat-messages so buttons work smoothly even while streaming
   $('#chat-messages').addEventListener('click', async (e) => {
+    const privacyBtn = e.target.closest('[data-privacy-pane]');
+    if (privacyBtn) {
+      try {
+        await apiRequest('/api/system/privacy-pane', {
+          method: 'POST',
+          body: JSON.stringify({ pane: privacyBtn.dataset.privacyPane || 'allfiles' }),
+        });
+        showToast('Opened Privacy & Security settings');
+      } catch (err) {
+        showToast(err.message || 'Could not open Privacy settings.');
+      }
+      return;
+    }
     const copyCodeBtn = e.target.closest('.copy-code-btn');
     if (copyCodeBtn) {
       navigator.clipboard.writeText(copyCodeBtn.dataset.code || '');
