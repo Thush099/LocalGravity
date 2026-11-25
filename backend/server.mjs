@@ -327,6 +327,11 @@ function maskConfigForClient(cfg) {
   return { config: rest, configuredKeys };
 }
 
+/** Speak text aloud with macOS `say`. Injectable so tests never make noise. */
+function defaultSpeakFn(text) {
+  return spawn('/usr/bin/say', [text], { stdio: 'ignore' });
+}
+
 export function createAgentServer({
   authToken,
   paths = getRuntimePaths(),
@@ -337,6 +342,7 @@ export function createAgentServer({
   warmModelFn = warmOllamaModel,
   unloadModelsFn = unloadOllamaModels,
   runAgentTurnFn = runAgentTurn,
+  speakFn = defaultSpeakFn,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
@@ -600,7 +606,7 @@ export function createAgentServer({
         const speech = stripMarkdownForSpeech(body.text);
         if (!speech) return sendJson(res, 400, { ok: false, error: 'Nothing to read aloud.' });
         stopSpeaking();
-        const child = spawn('/usr/bin/say', [speech], { stdio: 'ignore' });
+        const child = speakFn(speech);
         activeSpeakProc = child;
         child.on('exit', () => {
           if (activeSpeakProc === child) activeSpeakProc = null;
@@ -864,6 +870,9 @@ export function createAgentServer({
 
         if (action === 'run' && req.method === 'POST') {
           const body = await readJsonBody(req);
+          // Barge-in: the user sends a new message while LocalGravity is reading
+          // aloud, so in-flight speech stops immediately — the user speaks first.
+          stopSpeaking();
           const existingRun = activeRuns.get(sessionId);
           if (existingRun) {
             existingRun.abortController.abort();
