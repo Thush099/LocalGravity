@@ -13,6 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { captureExplicitMemory } from './memory-capture.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
+import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import {
   loadLearnedFixesExcerpt,
@@ -286,6 +287,8 @@ export async function runAgentTurn({
   const tracker = new TurnStruggleTracker();
   const executedToolResults = [];
   let emptyOutputRetried = false;
+  let latestPlan = null;
+  let planNudged = false;
 
   const [skills, knowledgeDocs, memoryDoc, learnedFixesExcerpt] = await Promise.all([
     listSkills(paths),
@@ -424,6 +427,33 @@ export async function runAgentTurn({
       // Clean up temporary self-correction prompt from persisted history once resolved
       session.messages = session.messages.filter((m) => !m.isSelfCorrection);
 
+      // Plan accountability: never end a turn that silently abandons its own
+      // published plan. Nudge once to finish the remaining steps; if the model
+      // still ends there, append an honest note so the user sees what remains.
+      const isFinalAnswer = normalizedCalls.length === 0;
+      const unfinishedSteps = unfinishedPlanSteps(latestPlan);
+      if (isFinalAnswer && unfinishedSteps.length > 0 && !planNudged && step < maxSteps - 1) {
+        planNudged = true;
+        session.messages.push({
+          role: 'assistant',
+          content: finalContent || response.content || '',
+          thinking: response.thinking || '',
+          createdAt: new Date().toISOString(),
+        });
+        session.messages.push({
+          role: 'user',
+          content: planNudgeMessage(unfinishedSteps),
+          isSelfCorrection: true,
+          createdAt: new Date().toISOString(),
+        });
+        continue;
+      }
+      if (isFinalAnswer && unfinishedSteps.length > 0) {
+        const note = planCompletionNote(unfinishedSteps);
+        finalContent = `${finalContent || response.content || ''}${note}`;
+        onEvent?.({ type: 'text_delta', text: note });
+      }
+
       const assistantEntry = {
         role: 'assistant',
         content: normalizedCalls.length > 0 ? '' : finalContent || response.content || '',
@@ -490,6 +520,9 @@ export async function runAgentTurn({
       };
 
       const recordCompletedToolCall = (tc, effectiveArgs, result) => {
+        if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
+          latestPlan = result.plan;
+        }
         const outcome = tracker.recordToolOutcome({
           name: tc.name,
           args: effectiveArgs,
