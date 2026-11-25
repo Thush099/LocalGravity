@@ -302,7 +302,10 @@ async function readWithIdleGuard(reader, idleTimeoutMs) {
       err.code = 'STREAM_STALLED';
       reject(err);
     }, ms);
-    timer.unref?.();
+    // Deliberately NOT unref'd: the watchdog must keep the event loop alive until
+    // it fires. An unref'd timer drains with the loop when the stalled read is the
+    // only pending work (one-shot CLI runs, node --test children), and the read
+    // then hangs forever. The timer is cleared the moment the read settles.
   });
 
   try {
