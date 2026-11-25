@@ -10,9 +10,9 @@ const execFileAsync = promisify(execFile);
  * The Jarvis-style daily briefing: gather what matters today from on-device sources and
  * public feeds, so the dashboard can surface a morning digest. World news comes from the
  * BBC and NYT world RSS feeds (editor-curated leads). Email is read on-device from Apple
- * Mail via AppleScript (permission-gated). WhatsApp is deliberately NOT scraped: its
- * stores are encrypted and it exposes no macOS automation API, so there is no reliable,
- * privacy-respecting way to read messages — see whatsappSummary() for the honest status.
+ * Mail via AppleScript (permission-gated). Weather comes from Open-Meteo (free, no key)
+ * using an approximate, IP-derived location — it replaces the old WhatsApp slot, which
+ * was never readable on macOS.
  */
 
 const NEWS_FEEDS = [
@@ -183,6 +183,72 @@ const MAIL_TODAY_SCRIPT = `tell application "Mail"
 end tell`;
 
 /** Read today's emails from Apple Mail. Permission-gated; degrades to a clear message. */
+// Deterministic inbox digest: group real conversations by sender and summarise bulk
+// mail into counts, so the briefing reads as a summary instead of a message list.
+const MEETING_RE = /\b(meeting|invite|invitation|calendar|zoom|teams|standup|1:1|sync|appointment|interview|reminder|rsvp|schedule|agenda)\b/i;
+const NEWSLETTER_RE = /\b(newsletter|digest|weekly|monthly|roundup|unsubscribe|promo|offer|sale|edition)\b/i;
+const NOTICE_RE = /\b(no-?reply|do-?not-?reply|alert|notification|notify|automated|daemon|monitor|security|postmaster|noreply|build|github)\b/i;
+
+function senderName(raw) {
+  const s = String(raw || '').trim();
+  const angle = s.match(/^(.*?)\s*<[^>]*>$/);
+  const name = (angle ? angle[1] : s).replace(/^["']|["']$/g, '').trim();
+  return name || s.split('@')[0] || 'Unknown';
+}
+
+function threadTopic(subjects) {
+  const list = (subjects || []).map((s) => String(s).replace(/^(re|fwd?):\s*/i, '').trim()).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0].slice(0, 42);
+  const stop = new Set(['the','a','an','of','for','to','and','or','in','on','at','is','your','you','our','update','updates','v2','final','new','today','please','thanks','thank','request','question','draft','copy','file','files','report','reports','meeting','agenda','call','re','fw','fwd','review']);
+  const sets = list.map((s) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !stop.has(w))));
+  const shared = [...sets[0]].filter((w) => sets.every((set) => set.has(w)));
+  return (shared.slice(0, 4).join(' ') || list[0].slice(0, 42)).trim();
+}
+
+export function summarizeEmailDigest(messages = []) {
+  const list = (messages || []).filter((m) => m && (m.sender || m.subject));
+  const total = list.length;
+  if (!total) return { ok: true, total: 0, summary: 'No new emails.', threads: [] };
+
+  const bySender = new Map();
+  let meeting = 0;
+  let newsletter = 0;
+  let notice = 0;
+  for (const m of list) {
+    const subject = String(m.subject || '').trim();
+    const from = String(m.sender || '');
+    const isNews = NEWSLETTER_RE.test(subject) || NEWSLETTER_RE.test(from);
+    const isNotice = NOTICE_RE.test(from);
+    if (MEETING_RE.test(subject)) meeting += 1;
+    else if (isNews) newsletter += 1;
+    else if (isNotice) notice += 1;
+    if (!isNews && !isNotice) {
+      const name = senderName(from);
+      const g = bySender.get(name) || { name, count: 0, subjects: [] };
+      g.count += 1;
+      if (subject) g.subjects.push(subject);
+      bySender.set(name, g);
+    }
+  }
+
+  const threads = [...bySender.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((g) => ({ name: g.name, count: g.count, topic: threadTopic(g.subjects) }));
+
+  const parts = threads.map((t) =>
+    t.count > 1
+      ? `${t.count} from ${t.name}${t.topic ? ` about ${t.topic}` : ''}`
+      : `${t.name}${t.topic ? ` · ${t.topic}` : ''}`
+  );
+  if (meeting) parts.push(`${meeting} meeting invite${meeting > 1 ? 's' : ''}`);
+  if (newsletter) parts.push(`${newsletter} newsletter${newsletter > 1 ? 's' : ''}`);
+  if (notice) parts.push(`${notice} notification${notice > 1 ? 's' : ''}`);
+  const summary = `${total} new email${total > 1 ? 's' : ''} — ${parts.join(', ')}.`;
+  return { ok: true, total, summary, threads, counts: { meeting, newsletter, notice } };
+}
+
 export async function emailSummary({ limit = 25 } = {}) {
   let result = await runOsascript(MAIL_TODAY_SCRIPT);
   // Mail can be slow to answer on first access (cold launch) or when it is busy; a single
@@ -208,33 +274,112 @@ export async function emailSummary({ limit = 25 } = {}) {
       return { sender: (sender || '').trim(), subject: (subject || '').trim() };
     })
     .slice(0, limit);
-  return { ok: true, messages, count: messages.length };
+  return { ok: true, messages, count: messages.length, summary: summarizeEmailDigest(messages).summary };
 }
 
 /**
- * WhatsApp is deliberately NOT scraped. Its message stores are encrypted and it exposes
- * no macOS AppleScript/automation API, so there is no reliable, privacy-respecting way to
- * read messages on a Mac. Return an honest status instead of pretending to read them.
+ * Weather for the daily briefing. Sourced from Open-Meteo (free, no API key) using an
+ * approximate, city-level location derived from the public IP, so no account or key is
+ * needed and the answer is honest about its precision. Fails soft to a clear status.
  */
-export function whatsappSummary() {
-  return {
-    ok: false,
-    available: false,
-    messages: [],
-    note: "WhatsApp messages can't be read reliably on macOS — WhatsApp stores them encrypted and offers no automation API. I won't pretend otherwise. To summarize something from WhatsApp, paste it here, or read it in WhatsApp directly.",
-  };
+const WMO_CODES = {
+  0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Icy fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 56: 'Freezing drizzle', 57: 'Freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 66: 'Freezing rain', 67: 'Freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Rain showers', 81: 'Rain showers', 82: 'Violent rain showers', 85: 'Snow showers', 86: 'Snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Thunderstorm with hail',
+};
+
+export function weatherDescription(code) {
+  return WMO_CODES[Number(code)] || 'Unknown';
+}
+
+const WMO_ICONS = {
+  0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️', 45: '🌫️', 48: '🌫️',
+  51: '🌦️', 53: '🌧️', 55: '🌧️', 56: '🌧️', 57: '🌧️',
+  61: '🌧️', 63: '🌧️', 65: '🌧️', 66: '🌧️', 67: '🌧️',
+  71: '🌨️', 73: '🌨️', 75: '❄️', 77: '❄️',
+  80: '🌦️', 81: '🌧️', 82: '🌧️', 85: '🌨️', 86: '🌨️',
+  95: '⛈️', 96: '⛈️', 99: '⛈️',
+};
+
+export function weatherIcon(code) {
+  return WMO_ICONS[Number(code)] || '🌡️';
+}
+
+let cachedLocation = null;
+export async function fetchApproxLocation() {
+  if (cachedLocation) return cachedLocation;
+  try {
+    const res = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    // ipinfo.io returns `loc` as a "lat,lon" string.
+    const [latStr, lonStr] = String(data.loc || '').split(',');
+    const loc = { lat: Number(latStr), lon: Number(lonStr), city: String(data.city || '') };
+    if (Number.isFinite(loc.lat) && Number.isFinite(loc.lon)) {
+      cachedLocation = loc;
+      return loc;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function weatherSummary({ lat, lon, city } = {}) {
+  try {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      const loc = await fetchApproxLocation();
+      if (!loc) return { ok: false, error: 'Could not determine an approximate location for weather.' };
+      ({ lat, lon } = loc);
+      city = city || loc.city;
+    }
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}` +
+      `&longitude=${encodeURIComponent(lon)}` +
+      '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m' +
+      '&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1';
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return { ok: false, error: `Weather lookup failed (HTTP ${res.status}).` };
+    const data = await res.json();
+    const cur = data.current || {};
+    const daily = data.daily || {};
+    return {
+      ok: true,
+      city: city || '',
+      temp: Number.isFinite(Number(cur.temperature_2m)) ? Math.round(Number(cur.temperature_2m)) : null,
+      feelsLike: Number.isFinite(Number(cur.apparent_temperature)) ? Math.round(Number(cur.apparent_temperature)) : null,
+      description: weatherDescription(cur.weather_code),
+      icon: weatherIcon(cur.weather_code),
+      high: Number.isFinite(Number(daily.temperature_2m_max?.[0])) ? Math.round(Number(daily.temperature_2m_max[0])) : null,
+      low: Number.isFinite(Number(daily.temperature_2m_min?.[0])) ? Math.round(Number(daily.temperature_2m_min[0])) : null,
+      wind: Number.isFinite(Number(cur.wind_speed_10m)) ? Math.round(Number(cur.wind_speed_10m)) : null,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
 }
 
 /**
- * Gather the raw material for a morning briefing (world news, today's email, WhatsApp
- * status) so the model can compose a friendly summary. The model turns this into prose.
+ * Gather the raw material for a morning briefing (weather, world news, today's email)
+ * so the model can compose a friendly summary. The model turns this into prose.
  */
 export async function dailyBriefingReport({ count = 3, emailLimit = 20 } = {}) {
-  const news = await fetchWorldNews({ count });
-  const email = await emailSummary({ limit: emailLimit });
-  const whatsapp = whatsappSummary();
+  const [news, email, weather] = await Promise.all([
+    fetchWorldNews({ count }),
+    emailSummary({ limit: emailLimit }),
+    weatherSummary(),
+  ]);
 
   const sections = [];
+  if (weather.ok) {
+    const where = weather.city ? ` in ${weather.city}` : '';
+    sections.push(`Weather${where}: ${weather.temp}°C, ${weather.description.toLowerCase()} (high ${weather.high}°, low ${weather.low}°).`);
+  } else {
+    sections.push(`Weather: ${weather.error}`);
+  }
+
   if (news.ok && news.items.length) {
     sections.push(
       `World news (top ${Math.min(count, news.items.length)} important):\n` +
@@ -255,6 +400,5 @@ export async function dailyBriefingReport({ count = 3, emailLimit = 20 } = {}) {
     sections.push(`Email today: ${email.error}`);
   }
 
-  sections.push(`WhatsApp: ${whatsapp.note}`);
   return sections.join('\n\n');
 }

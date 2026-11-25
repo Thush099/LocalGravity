@@ -91,11 +91,19 @@ export async function listKnowledge(paths = getRuntimePaths()) {
           const [raw, stat] = await Promise.all([fs.readFile(fullPath, 'utf8'), fs.stat(fullPath)]);
           const parsed = parseFrontmatter(raw);
           return {
-            name,
-            title: parsed.title || name,
-            tags: parsed.tags,
-            sizeBytes: stat.size,
-            updatedAt: stat.mtime.toISOString(),
+            summary: {
+              name,
+              title: parsed.title || name,
+              tags: parsed.tags,
+              sizeBytes: stat.size,
+              updatedAt: stat.mtime.toISOString(),
+            },
+            full: {
+              name,
+              title: parsed.title || name,
+              tags: parsed.tags,
+              content: parsed.body,
+            },
           };
         } catch {
           return null;
@@ -103,15 +111,17 @@ export async function listKnowledge(paths = getRuntimePaths()) {
       })
     );
 
-    const docs = loaded.filter(Boolean);
+    const items = loaded.filter(Boolean);
     const rank = (name) => (name === 'LEARNED_FIXES' ? 0 : name === 'MEMORY' ? 1 : 2);
-    docs.sort((a, b) => {
-      const ra = rank(a.name);
-      const rb = rank(b.name);
+    items.sort((a, b) => {
+      const ra = rank(a.summary.name);
+      const rb = rank(b.summary.name);
       if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
+      return a.summary.name.localeCompare(b.summary.name);
     });
-    knowledgeDirCache.set(paths.knowledgeDir, { mtimeMs: dirStat.mtimeMs, docs });
+    const docs = items.map((item) => item.summary);
+    const fullDocs = items.map((item) => item.full);
+    knowledgeDirCache.set(paths.knowledgeDir, { mtimeMs: dirStat.mtimeMs, docs, fullDocs });
     return docs;
   } catch {
     return [];
@@ -188,7 +198,10 @@ export async function searchKnowledge(query, paths = getRuntimePaths()) {
   if (terms.length === 0) return [];
 
   const docs = await listKnowledge(paths);
-  const fullDocs = await Promise.all(docs.map((doc) => readKnowledge(doc.name, paths)));
+  const cached = knowledgeDirCache.get(paths.knowledgeDir);
+  const fullDocs = Array.isArray(cached?.fullDocs)
+    ? cached.fullDocs
+    : await Promise.all(docs.map((doc) => readKnowledge(doc.name, paths)));
   const results = [];
 
   for (const full of fullDocs) {

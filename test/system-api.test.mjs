@@ -1,4 +1,7 @@
 import test from 'node:test';
+// The reminder endpoint spawns a detached macOS notification. Running the suite
+// should never surface one, so the kill switch is on for the whole file.
+process.env.LOCALGRAVITY_DISABLE_NOTIFICATIONS = '1';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -84,8 +87,7 @@ test('system metrics and schedule APIs work over authenticated HTTP', async () =
     assert.equal(res.status, 200);
     data = await res.json();
     assert.equal(data.ok, true);
-    assert.match(data.output, /Reminder set for 300 seconds/);
-    assert.ok(Number.isFinite(new Date(data.fireAt).getTime()));
+    assert.match(data.output, /Notifications are disabled/);
 
     // Cross-origin mutation stays blocked.
     res = await fetch(`${base}/api/schedule`, {
