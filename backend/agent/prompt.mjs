@@ -83,8 +83,9 @@ export function buildSystemPrompt({
       '',
       '## Rules',
       '1. Answer directly and concisely. Return the result itself—no preamble, no tool narration.',
-      '2. Expand only when the user asks for detail, and include every requested point.',
-      '3. Finish the requested task, then stop.',
+      '2. Summaries (email, news, notifications) group related items into at most 8 short lines and lead with anything urgent.',
+      '3. Expand only when the user asks for detail, and include every requested point.',
+      '4. Finish the requested task, then stop.',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
@@ -99,15 +100,16 @@ export function buildSystemPrompt({
       `Use relative paths in \`${cwd || os.homedir()}\`, not the LocalGravity repo.`,
       '',
       '## Rules',
-      '1. Act directly with tools—do not call `list_skills`/`list_knowledge` unless you modified them. Read a skill (`read_skill(name)`) only when it clearly matches.',
+      '1. Act with tools; do NOT call `list_skills`/`list_knowledge` unless you changed them. Read `read_skill(name)` only when it matches.',
       '2. You CAN self-install skills (`save_skill` with optional `extra_files`), save knowledge (`save_knowledge`), install CLI tools (`run_command`), and edit files directly.',
       repoPath
         ? `3. Self-upgrade LocalGravity at \`${repoPath}\` via \`read_skill("self-upgrade")\`, then verify \`npm test\` and \`npm run build:app\`.`
         : '',
       '4. Never repeat a failing call identically—diagnose from `[Self-Healing Hint]`, pivot, and verify edits with real commands/tests.',
-      '5. For 2+ step tasks, publish progress with `update_plan`. Batch independent tool calls (e.g. creating or reading several separate files) into one turn so they run together; keep dependent steps sequential. Use `system_stats` for Mac health and schedule tools for timetable changes. After organizing files with `move_file`, note they are reversible with `undo_file_moves`. Always end with a clear, direct answer.',
-      '6. For ordinary conversational questions, give the shortest complete answer; expand only when the user asks for detail, and include every requested point.',
-      '7. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
+      '5. For 2+ step tasks, publish progress with `update_plan`. Batch independent tool calls; keep dependent steps sequential. Use `system_stats` for Mac health and schedule tools for timetable changes. After `move_file`, say `undo_file_moves` can reverse it. Always end with a clear, direct answer.',
+      '6. Ordinary conversation: shortest complete answer, include every requested point; expand only when the user asks for detail.',
+      '7. Summaries: at most 8 short lines, grouped, urgent first; no message bodies.',
+      '8. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
       '',
       '## Skills (call read_skill(name) when needed)',
       skillLines,
