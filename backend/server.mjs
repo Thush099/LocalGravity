@@ -481,12 +481,13 @@ export function createAgentServer({
 
   const computeSuggestions = async () => {
     await ensureBriefingDiskCacheLoaded();
-    const downloadsDir = path.join(os.homedir(), 'Downloads');
-    const [diskStat, downloadsEntries, scheduleEntries, dismissed] = await Promise.all([
+    // Do not read ~/Downloads just to count files for a suggestion: on macOS that
+    // raises the folder-permission dialog at launch, before the user asked for
+    // anything. The agent reads the folder only when a turn actually needs it.
+    const [diskStat, scheduleEntries, dismissed] = await Promise.all([
       cachedMetrics?.disks?.[0]
         ? Promise.resolve(null)
         : fs.statfs(os.homedir()).catch(() => null),
-      fs.readdir(downloadsDir).catch(() => null),
       loadSchedule(paths).catch(() => []),
       loadDismissed(paths).catch(() => ({})),
     ]);
@@ -498,14 +499,11 @@ export function createAgentServer({
       storageFreePercent = (diskStat.bavail / diskStat.blocks) * 100;
     }
 
-    const downloadsCount = Array.isArray(downloadsEntries)
-      ? downloadsEntries.filter((name) => name && !name.startsWith('.')).length
-      : null;
-
     const snap = {
       hourOfDay: new Date().getHours(),
       storageFreePercent,
-      downloadsCount,
+      // Left null on purpose: see the note above the statfs call.
+      downloadsCount: null,
       emailCount: cachedBriefing?.email?.ok ? Number(cachedBriefing.email.count ?? 0) : null,
       scheduledToday: entriesForDate(scheduleEntries).length,
       monthNetworkGB:
@@ -1439,6 +1437,16 @@ export function createAgentServer({
           apiKeys: nextKeys,
         };
         const updated = await saveConfig(patch, paths);
+        // Apply the toggle immediately; previously it only took effect after a
+        // restart, and the restart re-enabled the notifier regardless.
+        if (body.agendaNotifications !== undefined) {
+          if (updated.agendaNotifications && !agendaStop) {
+            agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
+          } else if (!updated.agendaNotifications && agendaStop) {
+            agendaStop();
+            agendaStop = null;
+          }
+        }
         for (const model of modelWarmups.keys()) {
           if (updated.provider !== 'ollama' || updated.model !== model) {
             modelWarmupControllers.get(model)?.abort();
@@ -1648,12 +1656,14 @@ export function createAgentServer({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const instance = createAgentServer({ agendaNotifications: true });
+  const runtimePaths = getRuntimePaths();
+  // Respect the saved setting instead of forcing the notifier on at every launch.
+  const startupConfig = await loadConfig(runtimePaths).catch(() => ({}));
+  const instance = createAgentServer({ agendaNotifications: startupConfig.agendaNotifications === true });
 
   // Keep the local model daemon warm-but-lean in the background: it auto-starts
   // Ollama (and restarts it after a crash) when a local model is active and
   // memory allows, without ever blocking a request or the UI thread.
-  const runtimePaths = getRuntimePaths();
   const daemonSupervisor = createDaemonSupervisor({
     getProvider: async () => (await loadConfig(runtimePaths)).provider,
     checkHealth: async () => ({

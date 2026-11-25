@@ -118,6 +118,9 @@ export async function showNotificationTool({ title = 'LocalGravity', message }) 
   const msg = String(message ?? '').trim();
   if (!msg) return { ok: false, output: 'Notification message is empty.' };
   if (isAppForeground()) return { ok: true, output: 'Notification suppressed — LocalGravity is in the foreground.' };
+  if (process.env.LOCALGRAVITY_DISABLE_NOTIFICATIONS === '1') {
+    return { ok: true, output: 'Notifications are disabled.' };
+  }
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "${escapeAppleScriptString(title)}"`;
   const res = await runBinary('osascript', ['-e', script], { timeout: 10000 });
   if (!res.ok) return { ok: false, output: `Notification failed: ${res.stderr || 'unknown error'}` };
@@ -169,6 +172,26 @@ export function buildReminderInvocation(seconds, message) {
   };
 }
 
+// A reminder is a fire-and-forget detached process, so nothing stops a caller
+// from scheduling the same one over and over. Identical reminders within this
+// window are treated as already pending, and only a few may pile up at once.
+const REMINDER_DEDUPE_MS = 10 * 60 * 1000;
+const MAX_PENDING_REMINDERS = 5;
+let pendingReminders = new Map();
+
+/** True when this reminder should be spawned; prunes expired entries first. */
+export function reminderShouldSchedule(key, now, registry = pendingReminders) {
+  for (const [k, at] of registry) {
+    if (now - at > REMINDER_DEDUPE_MS) registry.delete(k);
+  }
+  if (registry.has(key)) return false;
+  return registry.size < MAX_PENDING_REMINDERS;
+}
+
+export function _resetReminderRegistry() {
+  pendingReminders = new Map();
+}
+
 export async function setReminderTool({ seconds, message }) {
   const raw = Number(seconds);
   if (!Number.isFinite(raw) || raw <= 0) {
@@ -176,6 +199,20 @@ export async function setReminderTool({ seconds, message }) {
   }
   const delay = Math.min(Math.floor(raw), MAX_REMINDER_SECONDS);
   const msg = String(message ?? `Reminder from LocalGravity (${delay}s)`).trim();
+  if (process.env.LOCALGRAVITY_DISABLE_NOTIFICATIONS === '1') {
+    return { ok: true, output: 'Notifications are disabled, so no reminder was scheduled.' };
+  }
+  const key = `${delay}|${msg}`;
+  const now = Date.now();
+  if (!reminderShouldSchedule(key, now)) {
+    const duplicate = pendingReminders.has(key);
+    return {
+      ok: duplicate,
+      output: duplicate
+        ? `A reminder for "${msg.slice(0, 120)}" is already pending; not scheduling it again.`
+        : `Too many reminders are already pending (maximum ${MAX_PENDING_REMINDERS}).`,
+    };
+  }
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder"`;
   const invocation = buildReminderInvocation(delay, script);
   const child = spawn('nohup', [invocation.bin, ...invocation.args], {
@@ -183,6 +220,7 @@ export async function setReminderTool({ seconds, message }) {
     stdio: 'ignore',
   });
   child.unref();
+  pendingReminders.set(key, now);
   return {
     ok: true,
     output: `Reminder set for ${delay} seconds from now: "${msg.slice(0, 120)}"`,
