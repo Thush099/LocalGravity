@@ -95,7 +95,16 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
 PLIST
 
 echo -n "APPL????" > "${CONTENTS}/PkgInfo"
-codesign --force --deep --sign - "${APP_BUNDLE}" || true
+# Sign with a stable identity when available: an ad-hoc signature changes on every
+# build, so macOS treats each rebuild as a new app and forgets the folder access
+# the user already granted (Downloads, Desktop, Documents).
+SIGN_IDENTITY="$("${REPO_ROOT}/scripts/ensure-signing-identity.sh" 2>/dev/null || true)"
+if [ -n "${SIGN_IDENTITY}" ]; then
+  codesign --force --deep --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+else
+  echo "warning: no signing identity; folder permissions will need granting again after a rebuild" >&2
+  codesign --force --deep --sign - "${APP_BUNDLE}" || true
+fi
 
 if [ -x "${LSREGISTER}" ]; then
   "${LSREGISTER}" -f "${APP_BUNDLE}" 2>/dev/null || true

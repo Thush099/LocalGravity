@@ -261,3 +261,96 @@ test('file-organization requests receive plan and move tools instead of shell-on
   assert.ok(rename.has('move_file'));
   assert.ok(rename.has('update_plan'));
 });
+
+test('inbox requests reach the mail tool however the qualifiers are ordered', () => {
+  const inbox = [
+    'Summarize my unread emails and flag anything urgent.',
+    'check my inbox',
+    'anything urgent in my mail?',
+    'read my new email',
+  ];
+  for (const message of inbox) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map(
+      (t) => t.function.name
+    );
+    assert.ok(names.includes('read_email'), `${message} -> ${names.join(',') || '(none)'}`);
+  }
+  // A pasted email to rewrite is still a text transform, not an inbox read.
+  assert.deepEqual(
+    selectToolsForTurn(TOOL_DEFINITIONS, {
+      provider: 'ollama',
+      userMessage: 'Rewrite this email: hi team, attached is the report for your review.',
+    }),
+    []
+  );
+});
+
+test('a bare mention of today does not drag the timetable into unrelated turns', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'what did I work on today?',
+  }).map((t) => t.function.name);
+  assert.ok(!names.includes('add_schedule_item'), names.join(',') || '(none)');
+  const scheduled = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'what is on my schedule today?',
+  }).map((t) => t.function.name);
+  assert.ok(scheduled.includes('list_schedule_items'), scheduled.join(',') || '(none)');
+});
+
+test('everyday system asks reach a real tool instead of none', () => {
+  const cases = [
+    ["what's the weather like today", 'daily_briefing'],
+    ['any rain this afternoon?', 'daily_briefing'],
+    ["what's my IP address", 'run_command'],
+    ['turn off wifi', 'run_applescript'],
+    ['turn on do not disturb', 'run_applescript'],
+    ['empty my trash', 'run_command'],
+    ['what time is it in Tokyo', 'run_command'],
+  ];
+  for (const [message, expected] of cases) {
+    const names = selectToolsForTurn(TOOL_DEFINITIONS, { provider: 'ollama', userMessage: message }).map(
+      (t) => t.function.name
+    );
+    assert.ok(names.includes(expected), `${message} should reach ${expected}, got ${names.join(',') || '(none)'}`);
+  }
+});
+
+test('a link in the message is fetched instead of being treated as pasted text', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'Summarize this article: https://example.com/post',
+  }).map((t) => t.function.name);
+  assert.ok(names.includes('fetch_url'), `expected fetch_url, got ${names.join(',') || '(none)'}`);
+});
+
+test('a volume change does not load the calculator', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'set the volume to 30 percent',
+  }).map((t) => t.function.name);
+  assert.ok(!names.includes('calculate'), 'percent as a level is not a calculation');
+  assert.ok(names.includes('run_applescript'));
+  const math = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'calculate 18 percent of 240',
+  }).map((t) => t.function.name);
+  assert.ok(math.includes('calculate'), 'a real percentage calculation still gets the calculator');
+});
+
+test('drafting a reply reads the mail first', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'draft a reply to the Hult Prize email',
+  }).map((t) => t.function.name);
+  assert.ok(names.includes('read_email'), `expected read_email, got ${names.join(',') || '(none)'}`);
+});
+
+test('a file move does not drag screenshot capture along', () => {
+  const names = selectToolsForTurn(TOOL_DEFINITIONS, {
+    provider: 'ollama',
+    userMessage: 'move the screenshots on my desktop into a folder called Shots',
+  }).map((t) => t.function.name);
+  assert.ok(names.includes('move_file'));
+  assert.ok(!names.includes('take_screenshot'), 'moving saved screenshots does not capture the screen');
+});
