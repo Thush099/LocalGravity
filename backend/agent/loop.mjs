@@ -15,6 +15,7 @@ import { captureStandingPreference } from './standing-preferences.mjs';
 import { memoryCaptureNotices } from './memory-notices.mjs';
 import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
 import { captureForget, forgetNotices } from './memory-forget.mjs';
+import { priorSessionNote } from './session-digest.mjs';
 import { appendAction, isTrailTool } from './action-log.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
@@ -232,6 +233,8 @@ export async function runAgentTurn({
   const forgotten = await captureForget(userMessage, paths);
 
   if (!Array.isArray(session.messages)) session.messages = [];
+  // A brand-new session is not a blank slate: the last conversation is on disk.
+  const isFirstTurn = session.messages.length === 0;
   if (fullUserText || attached.images.length > 0) {
     session.messages.push({
       role: 'user',
@@ -242,6 +245,21 @@ export async function runAgentTurn({
     });
     session.updatedAt = new Date().toISOString();
     if (persistSession) await saveSession(session, paths);
+  }
+
+  // Continuity: on the first turn only, hand the model where the last session
+  // actually stopped — quoted, bounded, and explicitly ignorable. Turn-local,
+  // like the memory notices below, so it never becomes a standing preamble.
+  if (isFirstTurn && !isHeadless) {
+    const continuity = await priorSessionNote({ paths, excludeSessionId: session?.id }).catch(() => '');
+    if (continuity) {
+      session.messages.push({
+        role: 'user',
+        content: continuity,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
   }
 
   // A capture the user cannot see is a capture they will not trust: tell the
