@@ -53,6 +53,8 @@ test('goalMatchesQuery only fires on plausible links', () => {
   assert.equal(goalMatchesQuery(steps, 'what is left?'), true);
   assert.equal(goalMatchesQuery(steps, 'how is the ingestion pipeline doing?'), true);
   assert.equal(goalMatchesQuery(steps, 'book a table for two'), false);
+  // Word-boundary matching: 'board' inside 'dashboard' is not a real link.
+  assert.equal(goalMatchesQuery([{ text: 'Redesign the dashboard layout', status: 'pending' }], 'board the ship tonight'), false);
   assert.equal(goalMatchesQuery([], 'continue'), false);
 });
 

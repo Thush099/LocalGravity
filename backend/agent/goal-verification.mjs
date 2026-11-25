@@ -50,6 +50,16 @@ const EVIDENCE_STOPWORDS = new Set([
 ]);
 const EVIDENCE_MIN_WORD = 4;
 
+/** Pure: does `word` appear in `text` as a real token (split on non-alphanumerics,
+ * so snake_case and dotted names count)? A substring inside an unrelated word
+ * never counts; light plural/tense suffixes still do. */
+export function wordMatchesText(word, text) {
+  const w = String(word || '').toLowerCase();
+  if (!w) return false;
+  const tokens = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  return tokens.some((t) => t === w || t === `${w}s` || t === `${w}es` || t === `${w}ing` || t === `${w}ed`);
+}
+
 function stepEvidenceWords(text) {
   return [
     ...new Set(
@@ -88,7 +98,7 @@ export function unverifiedCompletions(previousPlan, nextPlan, toolCalls) {
   return newlyDone.filter((step) => {
     const words = stepEvidenceWords(step.text);
     if (words.length === 0) return true;
-    return !words.some((word) => corpus.includes(word));
+    return !words.some((word) => wordMatchesText(word, corpus));
   });
 }
 

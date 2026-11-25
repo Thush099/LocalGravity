@@ -90,6 +90,28 @@ test('unverifiedCompletions does not accept a prior plan as evidence — a claim
   assert.deepEqual(flagged.map((s) => s.text), ['Deploy the staging box']);
 });
 
+test('unverifiedCompletions matches words on boundaries — a substring inside an unrelated word is not evidence', () => {
+  const previous = [{ text: 'Open the port for the scanner', status: 'active' }];
+  const next = [{ text: 'Open the port for the scanner', status: 'done' }];
+  // 'port' appears inside 'export'/'important' — a substring collision is
+  // not evidence of opening a port.
+  const tools = [
+    { name: 'run_command', args: { command: 'python export_report.py' }, ok: true, output: 'exported the important totals' },
+  ];
+  const flagged = unverifiedCompletions(previous, next, tools);
+  assert.deepEqual(flagged.map((s) => s.text), ['Open the port for the scanner']);
+});
+
+test('unverifiedCompletions still accepts natural suffix variants as evidence', () => {
+  const previous = [{ text: 'Refactor the parser module', status: 'active' }];
+  const next = [{ text: 'Refactor the parser module', status: 'done' }];
+  // 'parsers'/'modules' should still back 'parser'/'module'.
+  const tools = [
+    { name: 'edit_file', args: { path: 'src/x.js' }, ok: true, output: 'refactored the parsers and modules' },
+  ];
+  assert.deepEqual(unverifiedCompletions(previous, next, tools), []);
+});
+
 test('verificationNudgeMessage names the exact steps and the honest alternative', () => {
   const msg = verificationNudgeMessage([{ text: 'Deploy the staging box', status: 'done' }]);
   assert.ok(msg.includes('Deploy the staging box'));

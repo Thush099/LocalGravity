@@ -28,6 +28,16 @@ const GOAL_STOPWORDS = new Set([
   'should', 'now', 'just', 'like', 'get', 'got', 'need', 'want', 'make', 'made', 'also',
 ]);
 
+/** Pure: does `word` appear in `text` as a real token (split on non-alphanumerics,
+ * so snake_case and dotted names count)? A substring inside an unrelated word
+ * never counts; light plural/tense suffixes still do. */
+function wordMatchesText(word, text) {
+  const w = String(word || '').toLowerCase();
+  if (!w) return false;
+  const tokens = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  return tokens.some((t) => t === w || t === `${w}s` || t === `${w}es` || t === `${w}ing` || t === `${w}ed`);
+}
+
 /** Pure: does this message plausibly concern these plan steps? */
 export function goalMatchesQuery(steps, query) {
   const text = String(query || '');
@@ -42,7 +52,7 @@ export function goalMatchesQuery(steps, query) {
   ];
   if (words.length === 0) return false;
   const haystack = steps.map((s) => String(s?.text || '')).join(' ').toLowerCase();
-  return words.some((word) => haystack.includes(word));
+  return words.some((word) => wordMatchesText(word, haystack));
 }
 
 /** Pure: a goal that still owes the user something — unfinished steps, or done
