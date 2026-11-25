@@ -65,6 +65,8 @@ function tempPaths() {
 test('runAgendaTick announces once and dedupes across ticks', async () => {
   const paths = tempPaths();
   await saveSchedule([recurringEntry], paths);
+  // Notifications are opt-in in the app config, so the test must opt in.
+  fs.writeFileSync(paths.configFile, JSON.stringify({ agendaNotifications: true, agendaLeadMinutes: 5 }));
   const messages = [];
   const notify = async (n) => messages.push(n.message);
 
@@ -92,6 +94,7 @@ test('runAgendaTick announces once and dedupes across ticks', async () => {
 test('runAgendaTick retries when the notifier resolves with an error result', async () => {
   const paths = tempPaths();
   await saveSchedule([recurringEntry], paths);
+  fs.writeFileSync(paths.configFile, JSON.stringify({ agendaNotifications: true, agendaLeadMinutes: 5 }));
   let attempts = 0;
   const notify = async () => {
     attempts += 1;
