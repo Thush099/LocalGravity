@@ -7,6 +7,8 @@ import {
   matchExplicitMemory,
   rememberFact,
   captureExplicitMemory,
+  boundedMemoryContent,
+  MEMORY_TRIMMED_NOTICE,
 } from '../backend/agent/memory-capture.mjs';
 import { readKnowledge } from '../backend/knowledge-engine.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
@@ -69,4 +71,44 @@ test('captureExplicitMemory persists only real memory requests and never throws'
   // Multi-line messages must never capture: MEMORY.md is injected into future
   // prompts, so only single-line facts are safe to persist deterministically.
   assert.equal(matchExplicitMemory('remember that I like green tea\n\n[Attached files]\nnote.md'), null);
+});
+
+test('boundedMemoryContent keeps small memory docs untouched', () => {
+  const doc = '# Memory\n- **Preferred editor**: Neovim';
+  assert.equal(boundedMemoryContent(doc, { maxChars: 1200 }), doc);
+  assert.equal(boundedMemoryContent('', { maxChars: 1200 }), '');
+  assert.equal(boundedMemoryContent(undefined, { maxChars: 1200 }), '');
+});
+
+test('boundedMemoryContent keeps the curated head and the most recent captures', () => {
+  const lines = ['# Memory', '## Preferences'];
+  for (let i = 0; i < 40; i += 1) lines.push(`- standing preference number ${i}`);
+  lines.push('## 2026-11-24 \u00b7 preferences');
+  lines.push('- I prefer tabs over spaces');
+  const bounded = boundedMemoryContent(lines.join('\n'), { maxChars: 400 });
+  assert.ok(bounded.length <= 400, `expected <= 400 chars, got ${bounded.length}`);
+  assert.ok(bounded.startsWith('# Memory'), 'curated head should survive');
+  assert.ok(
+    bounded.includes('- I prefer tabs over spaces'),
+    'the newest captured fact must stay visible in the prompt, not drop off the tail',
+  );
+  assert.ok(bounded.includes(MEMORY_TRIMMED_NOTICE), 'the gap must be marked so the model knows to read_knowledge');
+});
+
+test('boundedMemoryContent never shows a line twice and never splits a line', () => {
+  const lines = [];
+  for (let i = 0; i < 30; i += 1) lines.push(`- bullet ${i}`);
+  const bounded = boundedMemoryContent(lines.join('\n'), { maxChars: 300 });
+  for (const line of lines) {
+    const count = bounded.split('\n').filter((l) => l === line).length;
+    assert.ok(count <= 1, `line "${line}" appeared ${count} times`);
+    if (count === 1) assert.ok(lines.includes(line), 'output lines must be whole original lines');
+  }
+});
+
+test('boundedMemoryContent falls back to a hard cut when no line fits', () => {
+  const oneLine = 'x'.repeat(500);
+  const bounded = boundedMemoryContent(oneLine, { maxChars: 50 });
+  assert.ok(bounded.length <= 50, `expected <= 50 chars, got ${bounded.length}`);
+  assert.ok(bounded.startsWith('x'.repeat(40)), 'hard-cut fallback should keep the head of the line');
 });
