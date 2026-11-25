@@ -15,6 +15,7 @@ import {
 } from '../backend/knowledge-engine.mjs';
 import { perAppUsage } from '../backend/network-monitor.mjs';
 import { renderMarkdown } from '../ui/lib/markdown.js';
+import { perfSummary } from '../ui/lib/performance.js';
 
 function rawHttpGet(port, reqPath, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -306,4 +307,15 @@ test('searchKnowledge uses updated cache and renderMarkdown memoizes determinist
     const out = renderMarkdown(`Unique entry number ${i}`);
     assert.match(out, new RegExp(`Unique entry number ${i}`));
   }
+});
+
+test('settings telemetry shows a measured ready time and drops impossible paints', () => {
+  assert.deepEqual(
+    perfSummary({ readyMs: 812, fcpMs: 240, latencyMs: 1234, tokens: 1500 }),
+    ['UI ready in 812 ms', 'First paint 240 ms', 'Last turn latency: 1.23 s', 'Last turn tokens: 1,500']
+  );
+  // An occluded launch can report minutes of paint time; never show that as a stat.
+  assert.deepEqual(perfSummary({ readyMs: 640, fcpMs: 65528 }), ['UI ready in 640 ms']);
+  assert.deepEqual(perfSummary({ readyMs: 0 }), ['UI ready in 0 ms']);
+  assert.deepEqual(perfSummary(), [], 'nothing measured means no chips');
 });

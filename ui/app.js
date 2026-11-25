@@ -5,8 +5,7 @@ import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
 import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import { debounce } from './lib/utils.js';
-import { getPerformanceMetrics, recordLatency, recordTokenUsage } from './lib/performance.js';
-import { startPaintObserver } from './lib/performanceTracker.js';
+import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage } from './lib/performance.js';
 import {
   renderMemoryDonut,
   renderNetworkDonut,
@@ -2924,18 +2923,21 @@ function renderSettingsView() {
 
   const perfEl = $('#ui-perf-telemetry');
   if (perfEl) {
-    let fcp = null;
     let metrics = { latency: 0, tokens: 0 };
     try {
-      fcp = localStorage.getItem('lg-paint-first-contentful');
       metrics = getPerformanceMetrics();
     } catch {
       // storage optional
     }
-    const items = [];
-    if (fcp) items.push(`First Contentful Paint: ${fcp} ms`);
-    if (metrics.latency > 0) items.push(`Last turn latency: ${(metrics.latency / 1000).toFixed(2)} s`);
-    if (metrics.tokens > 0) items.push(`Last turn tokens: ${metrics.tokens.toLocaleString()}`);
+    // Read paint timing from this page load instead of localStorage, so a value
+    // captured by an earlier (possibly occluded) launch can never resurface.
+    const paint = (performance.getEntriesByType?.('paint') || []).find((e) => e.name === 'first-contentful-paint');
+    const items = perfSummary({
+      readyMs: state.uiReadyMs,
+      fcpMs: paint ? paint.startTime : null,
+      latencyMs: metrics.latency,
+      tokens: metrics.tokens,
+    });
     perfEl.innerHTML = items.length
       ? items.map((t) => `<span class="telemetry-stat-pill">${escapeHtml(t)}</span>`).join('')
       : '<span class="telemetry-stat-pill">Telemetry collects after your first prompt</span>';
@@ -4966,7 +4968,6 @@ function wireAppFocusReporting() {
 }
 
 async function init() {
-  startPaintObserver();
   try {
     setSidebarCollapsed(localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1', false);
     applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'auto', false);
@@ -4985,6 +4986,10 @@ async function init() {
   syncSessionToolbar();
   renderMessages(true);
   switchView('dashboard');
+  // Time from navigation start to the first fully-populated screen. This is the
+  // number that matters to a desktop app; paint entries can lag when the window
+  // launches behind another app.
+  state.uiReadyMs = performance.now();
 }
 
 init().catch((err) => showToast(err.message));

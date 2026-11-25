@@ -29,3 +29,20 @@ export function recordTokenUsage(count) {
     localStorage.setItem('lg-token-usage', String(count));
   }
 }
+
+/**
+ * Build the settings-page telemetry chips from one session's numbers.
+ *
+ * A paint measurement is only trustworthy when the window was actually visible
+ * at launch: an occluded or backgrounded start can report minutes. Anything
+ * beyond `maxPaintMs` is discarded rather than displayed as a scary stat, while
+ * the measured UI-ready time is always shown.
+ */
+export function perfSummary({ readyMs = null, fcpMs = null, latencyMs = 0, tokens = 0, maxPaintMs = 20000 } = {}) {
+  const items = [];
+  if (Number.isFinite(readyMs) && readyMs >= 0) items.push(`UI ready in ${Math.round(readyMs)} ms`);
+  if (Number.isFinite(fcpMs) && fcpMs >= 0 && fcpMs <= maxPaintMs) items.push(`First paint ${Math.round(fcpMs)} ms`);
+  if (latencyMs > 0) items.push(`Last turn latency: ${(latencyMs / 1000).toFixed(2)} s`);
+  if (tokens > 0) items.push(`Last turn tokens: ${tokens.toLocaleString()}`);
+  return items;
+}
