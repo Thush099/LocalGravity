@@ -148,6 +148,15 @@ test('permission denials offer a one-click route to Privacy settings', async () 
   assert.match(css, /\.permission-note \{/, 'the permission hint style is missing');
 });
 
+test('Smart Assist refreshes after dashboard signals load and ignores stale responses', async () => {
+  const app = await readAppSource();
+  assert.match(app, /suggestionRequestId/, 'suggestion responses need a monotonic freshness guard');
+  const metrics = extractBlock(app, 'async function refreshSystemMetrics()', '\nfunction updateMonitorAutoRefresh(');
+  assert.match(metrics, /if \(!hadMetrics\) refreshSuggestions\(\)/, 'first live metrics should refresh dashboard suggestions');
+  const briefing = extractBlock(app, 'async function refreshBriefing(', '\nfunction renderBriefing(');
+  assert.match(briefing, /refreshSuggestions\(\)/, 'a refreshed briefing should refresh derived suggestions');
+});
+
 test('the dashboard preloads the configured local model instead of waiting for a prompt', async () => {
   const app = await readAppSource();
   assert.match(

@@ -668,9 +668,13 @@ function describeModelRuntime() {
   return describeRuntimeState(state.config || {}, state.presets || {}, state.health || {});
 }
 
+let suggestionRequestId = 0;
+
 async function refreshSuggestions() {
+  const requestId = ++suggestionRequestId;
   try {
     const data = await apiRequest('/api/suggestions');
+    if (requestId !== suggestionRequestId) return;
     state.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     renderSmartAssist();
   } catch {
@@ -738,6 +742,7 @@ async function refreshBriefing(force = false) {
     state.briefingAt = Date.now();
     renderBriefing();
     renderNetwork();
+    refreshSuggestions();
   } catch {
     // Keep the last briefing; the next refresh retries.
   } finally {
@@ -1129,6 +1134,7 @@ function renderMonitor() {
 async function refreshSystemMetrics() {
   try {
     const data = await apiRequest('/api/system/metrics');
+    const hadMetrics = Boolean(state.metrics);
     state.metrics = data.metrics || null;
     if (Array.isArray(data.history) && data.history.length > 0) {
       state.metricsHistory = data.history;
@@ -1142,8 +1148,10 @@ async function refreshSystemMetrics() {
       });
       if (state.metricsHistory.length > 60) state.metricsHistory.shift();
     }
-    if (state.view === 'dashboard') renderDashboard();
-    else if (state.view === 'monitor') renderMonitor();
+    if (state.view === 'dashboard') {
+      renderDashboard();
+      if (!hadMetrics) refreshSuggestions();
+    } else if (state.view === 'monitor') renderMonitor();
   } catch {
     // Keep the last snapshot; the next tick retries.
   }
