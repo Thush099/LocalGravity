@@ -434,9 +434,9 @@ button, input, textarea, select {
 }
 
 .session-item.active {
-  background: var(--bg-elevated);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 5%, transparent));
   color: var(--text-primary);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .session-title {
@@ -4214,7 +4214,7 @@ button, input, textarea, select {
   width: 20px;
   height: 20px;
   border-radius: 6px;
-  background: linear-gradient(135deg, #0a84ff, #0071e3);
+  background: linear-gradient(135deg, var(--app-1), var(--app-2));
   color: #ffffff;
   display: grid;
   place-items: center;
