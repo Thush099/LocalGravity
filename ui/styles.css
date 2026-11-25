@@ -3189,6 +3189,15 @@ button, input, textarea, select {
   line-height: 1.35;
 }
 
+.brief-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+.brief-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .brief-meta {
   font-size: 11px;
   color: var(--text-muted);

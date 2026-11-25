@@ -682,7 +682,13 @@ function renderBriefing() {
   const newsItems = (b.news || []).slice(0, 3);
   const newsHtml = newsItems.length
     ? `<ol class="brief-list">${newsItems
-        .map((n) => `<li><span class="brief-title">${escapeHtml(n.title)}</span><span class="brief-meta">${escapeHtml(n.source)}</span></li>`)
+        .map((n) => {
+          const href = String(n.link || '').trim();
+          const titleHtml = /^https?:\/\//i.test(href)
+            ? `<a class="brief-title brief-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(n.title)}</a>`
+            : `<span class="brief-title">${escapeHtml(n.title)}</span>`;
+          return `<li>${titleHtml}<span class="brief-meta">${escapeHtml(n.source)}</span></li>`;
+        })
         .join('')}</ol>`
     : '<div class="brief-body quiet">News unavailable right now.</div>';
 
