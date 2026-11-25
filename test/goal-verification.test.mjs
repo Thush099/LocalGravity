@@ -217,6 +217,7 @@ test('the loop nudges decomposition once when acting on a compound request witho
     paths,
     providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
     persistSession: false,
+    cwd: tmpRoot,
     chatFn: scriptedChat(
       [
         {
@@ -270,6 +271,7 @@ test('the loop nudges verification for unbacked completions and keeps the marker
     paths,
     providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
     persistSession: false,
+    cwd: tmpRoot,
     chatFn: scriptedChat(
       [
         {
@@ -301,4 +303,59 @@ test('the loop nudges verification for unbacked completions and keeps the marker
   const final = result.session.messages.at(-1);
   assert.match(final.content, /unverified/);
   assert.match(final.content, /Rotate the API token/);
+});
+
+test('a claim backed later in the same turn is not reported unverified at turn end', async (t) => {
+  const tmpRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'lg-verify-late-'));
+  t.after(() => fsPromises.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const seen = [];
+  const session = { id: 'verify-late', title: 'Verify late', messages: [] };
+
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'Rotate the API token.',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
+    persistSession: false,
+    cwd: tmpRoot,
+    chatFn: scriptedChat(
+      [
+        {
+          content: '',
+          toolCalls: [
+            {
+              id: 'p1',
+              name: 'update_plan',
+              arguments: { steps: [{ text: 'Rotate the API token', status: 'done' }] },
+            },
+          ],
+        },
+        {
+          content: '',
+          toolCalls: [
+            {
+              id: 'c1',
+              name: 'run_command',
+              arguments: { command: 'echo token rotated' },
+            },
+          ],
+        },
+        { content: 'Token rotated.', toolCalls: [] },
+      ],
+      seen
+    ),
+  });
+
+  assert.equal(result.status, 'completed');
+  // The nudge at claim time was honest (no evidence yet), but the work landed
+  // later in the same turn — the closing note must not call it unverified.
+  const final = result.session.messages.at(-1);
+  assert.equal(final.content, 'Token rotated.');
+  const goals = await loadOpenGoals(paths);
+  const record = goals.find((g) => g.sessionId === 'verify-late');
+  assert.ok(
+    !record || record.steps.every((s) => !s.unverified),
+    'the persisted goal record must not carry a stale unverified marker',
+  );
 });

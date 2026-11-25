@@ -460,7 +460,24 @@ export async function runAgentTurn({
         });
         continue;
       }
-      const unverifiedSteps = [...unverifiedDone].map((text) => ({ text }));
+      // A claim backed by an action later in this same turn is no longer
+      // unverified at turn end: re-check the flagged set against the full
+      // tool log and correct the persisted goal record to match.
+      let unverifiedSteps = [...unverifiedDone].map((text) => ({ text }));
+      if (isFinalAnswer && unverifiedDone.size > 0) {
+        unverifiedSteps = unverifiedCompletions(
+          [],
+          unverifiedSteps.map((s) => ({ ...s, status: 'done' })),
+          executedToolResults,
+        );
+        if (latestPlan && unverifiedSteps.length !== unverifiedDone.size) {
+          await persistGoalState(latestPlan, {
+            paths,
+            sessionId: session?.id,
+            unverifiedTexts: unverifiedSteps.map((s) => s.text),
+          }).catch(() => {});
+        }
+      }
       if (isFinalAnswer && (unfinishedSteps.length > 0 || unverifiedSteps.length > 0)) {
         const note = planCompletionNote(unfinishedSteps) + unverifiedCompletionNote(unverifiedSteps);
         finalContent = `${finalContent || response.content || ''}${note}`;
