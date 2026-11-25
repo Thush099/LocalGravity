@@ -18,7 +18,9 @@ export const DEFAULT_CONFIG = {
   customModel: '',
   apiKeys: {},
   allowedReadCommands: [],
-  agendaNotifications: true,
+  // Off by default: unsolicited notifications are noise, not a feature. The
+  // toggle in Settings turns them on.
+  agendaNotifications: false,
   agendaLeadMinutes: 5,
 };
 
