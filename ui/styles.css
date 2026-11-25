@@ -21,6 +21,19 @@
   --signal-green: #30d158;
   --signal-amber: #ff9f0a;
   --signal-red: #ff453a;
+
+  /* Categorical palette for per-app data (network usage, charts). Vibrant enough to
+     read each app distinctly on the dark surface, harmonious enough to stay calm. */
+  --app-1: #0a84ff;
+  --app-2: #bf5af2;
+  --app-3: #ff375f;
+  --app-4: #ff9f0a;
+  --app-5: #30d158;
+  --app-6: #64d2ff;
+  --app-7: #ffd60a;
+  --app-8: #ac8e68;
+  --app-9: #5e5ce6;
+  --app-10: #8e8e93;
   --code-bg: #0e0e11;
   --tok-comment: #6e6e73;
   --tok-string: #30d158;
@@ -3058,9 +3071,67 @@ button, input, textarea, select {
   grid-column: 1 / -1;
 }
 
-/* The daily briefing is the morning overview — full width, three quiet columns. */
-.dash-grid > .dash-briefing-card {
-  grid-column: 1 / -1;
+/* The Today hero: briefing + network, front and center on open. The briefing is wider;
+   the network card carries the colored per-app donut. */
+.dash-hero {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .dash-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+.net-flex {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.net-flex .donut-svg {
+  width: 184px;
+  height: 184px;
+  flex: none;
+}
+
+.net-flex .donut-legend {
+  flex: 1;
+  min-width: 150px;
+}
+
+.net-stats {
+  display: flex;
+  gap: 22px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.net-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.net-stat .k {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.net-stat .v {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .dash-briefing {

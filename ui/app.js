@@ -6,6 +6,7 @@ import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import {
   renderMemoryDonut,
+  renderNetworkDonut,
   renderMultiSeriesChart,
   renderSparkline,
   renderWeeklyScheduleChart,
@@ -676,7 +677,7 @@ function renderBriefing() {
     el.textContent = 'Loading today’s briefing…';
     return;
   }
-  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · news, email, WhatsApp & network`;
+  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · news, email & WhatsApp`;
 
   const newsItems = (b.news || []).slice(0, 3);
   const newsHtml = newsItems.length
@@ -700,19 +701,54 @@ function renderBriefing() {
 
   const waHtml = `<div class="brief-body quiet">${escapeHtml(b.whatsapp?.note || 'WhatsApp cannot be read on macOS.')}</div>`;
 
-  const net = b.network || {};
-  const topApps = (net.topApps || [])
-    .slice(0, 3)
-    .map((a) => `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.total || 0))})`)
-    .join(', ');
-  const netHtml = `<div class="brief-body">Since restart: <strong>${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</strong>${topApps ? ` · Top: ${topApps}` : ''}</div>`;
-
   el.innerHTML = `
     <div class="brief-cols">
       <div class="brief-col"><div class="brief-label">World news</div>${newsHtml}</div>
       <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">WhatsApp</div>${waHtml}</div>
-      <div class="brief-col"><div class="brief-label">Network</div>${netHtml}</div>
     </div>`;
+}
+
+function renderNetwork() {
+  const el = $('#dash-network');
+  const net = state.briefing?.network;
+  if (!el) return;
+  if (!net) {
+    el.textContent = 'Loading network usage…';
+    return;
+  }
+  const donut = renderNetworkDonut(net.topApps || [], { size: 188, centerLabel: 'this month' });
+  el.innerHTML = `
+    <div class="net-flex">
+      ${donut.svg}
+      <div class="donut-legend">${donut.legendHtml}</div>
+    </div>
+    <div class="net-stats">
+      <div class="net-stat"><span class="k">This month</span><span class="v">${escapeHtml(formatBytes(net.monthBytes || 0))}</span></div>
+      <div class="net-stat"><span class="k">Today</span><span class="v">${escapeHtml(formatBytes(net.todayBytes || 0))}</span></div>
+      <div class="net-stat"><span class="k">Since restart</span><span class="v">${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</span></div>
+      <div class="net-stat"><span class="k">Live speed</span><span class="v" id="dash-live-speed">—</span></div>
+    </div>`;
+}
+
+async function runSpeedTest() {
+  const btn = $('#dash-speed-test');
+  const speedEl = $('#dash-live-speed');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Testing…';
+  }
+  if (speedEl) speedEl.textContent = '…';
+  try {
+    const data = await apiRequest('/api/network/speed', { method: 'POST' });
+    if (speedEl) speedEl.textContent = data.mbps ? `${Math.round(data.mbps)} Mbps` : '—';
+  } catch {
+    if (speedEl) speedEl.textContent = 'failed';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Test speed';
+    }
+  }
 }
 
 function renderDashboard() {
@@ -760,6 +796,7 @@ function renderDashboard() {
   }
   renderSidebarBadges();
   renderBriefing();
+  renderNetwork();
   if (!state.briefing || Date.now() - (state.briefingAt || 0) > 300000) refreshBriefing();
 
   const snapshot = $('#dash-snapshot');
@@ -3768,6 +3805,7 @@ function wireEvents() {
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
   $('#dash-briefing-refresh')?.addEventListener('click', () => refreshBriefing());
+  $('#dash-speed-test')?.addEventListener('click', runSpeedTest);
   $('#dash-briefing-ask')?.addEventListener('click', () =>
     runCapability("Give me my daily briefing: summarize today's top world news, my email, and anything I should know.", true)
   );
