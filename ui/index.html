@@ -375,7 +375,7 @@
           </div>
 
           <div id="dash-stats" class="stat-grid" aria-live="polite">
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="cpu">
               <div class="stat-top">
                 <span class="stat-label">CPU</span>
                 <span class="stat-value" id="dash-cpu">—</span>
@@ -383,7 +383,7 @@
               <div class="stat-spark" id="dash-cpu-spark"></div>
               <div class="stat-sub" id="dash-cpu-sub">Sampling…</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="mem">
               <div class="stat-top">
                 <span class="stat-label">Memory</span>
                 <span class="stat-value" id="dash-mem">—</span>
@@ -391,7 +391,7 @@
               <div class="stat-spark" id="dash-mem-spark"></div>
               <div class="stat-sub" id="dash-mem-sub">Unified RAM</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="gpu">
               <div class="stat-top">
                 <span class="stat-label">GPU</span>
                 <span class="stat-value" id="dash-gpu">—</span>
@@ -399,7 +399,7 @@
               <div class="stat-spark" id="dash-gpu-spark"></div>
               <div class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="disk">
               <div class="stat-top">
                 <span class="stat-label">Storage</span>
                 <span class="stat-value" id="dash-disk">—</span>

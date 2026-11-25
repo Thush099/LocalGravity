@@ -768,10 +768,10 @@ function renderDashboard() {
   const disk = topDisk(metrics);
   const hist = state.metricsHistory || [];
   const series = (key) => hist.map((h) => h[key]);
-  setStatSpark('#dash-cpu-spark', '#dash-cpu', metrics?.cpu?.percent, null, series('cpu'));
-  setStatSpark('#dash-mem-spark', '#dash-mem', mem.usedPercent, mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—', series('mem'));
-  setStatSpark('#dash-gpu-spark', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—', series('gpu'));
-  setStatSpark('#dash-disk-spark', '#dash-disk', disk?.usedPercent, disk ? `${formatBytes(disk.availableBytes)} free` : '—', series('disk'));
+  setStatSpark('#dash-cpu-spark', '#dash-cpu', metrics?.cpu?.percent, null, series('cpu'), 'var(--app-1)');
+  setStatSpark('#dash-mem-spark', '#dash-mem', mem.usedPercent, mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—', series('mem'), 'var(--app-2)');
+  setStatSpark('#dash-gpu-spark', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—', series('gpu'), 'var(--app-3)');
+  setStatSpark('#dash-disk-spark', '#dash-disk', disk?.usedPercent, disk ? `${formatBytes(disk.availableBytes)} free` : '—', series('disk'), 'var(--app-5)');
   renderStorageAlert(disk);
 
   const cpuSub = $('#dash-cpu-sub');

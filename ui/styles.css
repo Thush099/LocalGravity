@@ -1642,7 +1642,7 @@ button, input, textarea, select {
 }
 
 .send-btn, .primary-btn {
-  background: var(--btn-accent-bg);
+  background: linear-gradient(135deg, var(--app-1) 0%, var(--app-2) 100%);
   color: #ffffff;
   border: none;
   border-radius: 10px;
@@ -1652,7 +1652,7 @@ button, input, textarea, select {
 }
 
 .send-btn:hover, .primary-btn:hover {
-  background: var(--btn-accent-hover);
+  filter: brightness(1.12);
 }
 
 .secondary-btn {
@@ -2949,6 +2949,61 @@ button, input, textarea, select {
   flex-direction: column;
   gap: 11px;
 }
+
+/* Colourful stat tiles — each metric its own vibrant identity. */
+.stat-tile[data-metric="cpu"] { --tile: var(--app-1); }
+.stat-tile[data-metric="mem"] { --tile: var(--app-2); }
+.stat-tile[data-metric="gpu"] { --tile: var(--app-3); }
+.stat-tile[data-metric="disk"] { --tile: var(--app-5); }
+.stat-tile[data-metric] {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--tile) 28%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tile) 16%, var(--bg-surface)) 0%, var(--bg-surface) 62%);
+}
+.stat-tile[data-metric]::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--tile), color-mix(in srgb, var(--tile) 25%, transparent));
+}
+.stat-tile[data-metric] .stat-value { color: var(--tile); }
+.stat-tile[data-metric] .stat-label { color: color-mix(in srgb, var(--tile) 65%, var(--text-primary)); }
+
+/* ---- Vibrant accent pass: colourful capability cards and hero panels ---- */
+.superpowers-grid .superpower-card:nth-child(5n+1) { --sh: var(--app-1); }
+.superpowers-grid .superpower-card:nth-child(5n+2) { --sh: var(--app-2); }
+.superpowers-grid .superpower-card:nth-child(5n+3) { --sh: var(--app-4); }
+.superpowers-grid .superpower-card:nth-child(5n+4) { --sh: var(--app-5); }
+.superpowers-grid .superpower-card:nth-child(5n+5) { --sh: var(--app-3); }
+.superpower-card {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--sh, var(--accent)) 26%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sh, var(--accent)) 12%, var(--bg-elevated)) 0%, var(--bg-elevated) 72%);
+}
+.superpower-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--sh, var(--accent));
+}
+.superpower-card .superpower-tag { color: var(--sh, var(--accent)); }
+
+.dash-briefing-card, .dash-network-card { position: relative; overflow: hidden; }
+.dash-briefing-card { --sh: var(--app-4); }
+.dash-network-card { --sh: var(--app-6); }
+.dash-briefing-card::before, .dash-network-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--sh), color-mix(in srgb, var(--sh) 16%, transparent));
+}
+.dash-briefing-card h3 { color: var(--app-4); }
+.dash-network-card h3 { color: var(--app-6); }
 
 .stat-top {
   display: flex;
