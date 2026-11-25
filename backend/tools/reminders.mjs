@@ -21,6 +21,7 @@ export const REMINDERS_FILE = 'reminders.json';
 export const MAX_REMINDERS = 200;
 export const REMINDER_RETENTION_DAYS = 30;
 export const DUE_LIMIT = 3;
+export const UPCOMING_LIMIT = 3;
 export const MAX_MESSAGE_CHARS = 400;
 
 export function remindersFile(paths = getRuntimePaths()) {
@@ -68,7 +69,7 @@ function prune(reminders, now) {
  * time is not something we can stand behind — a reminder we cannot honour is worse
  * than a refusal.
  */
-export async function addReminder(paths, { message, fireAt }, options = {}) {
+export async function addReminder(paths, { message, fireAt, pid = null }, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const text = cleanText(message, MAX_MESSAGE_CHARS);
   if (!text) return null;
@@ -79,6 +80,8 @@ export async function addReminder(paths, { message, fireAt }, options = {}) {
     fireAt: new Date(fireAt).toISOString(),
     createdAt: now.toISOString(),
     acknowledgedAt: null,
+    cancelledAt: null,
+    pid: Number.isFinite(pid) ? pid : null,
   };
   const existing = prune(await readReminders(paths), now);
   await writeReminders(paths, [...existing, record]);
@@ -94,13 +97,71 @@ export async function dueReminders(paths, options = {}) {
   const limit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : DUE_LIMIT;
   const all = prune(await readReminders(paths), now);
   return all
-    .filter((entry) => !entry.acknowledgedAt && Date.parse(entry.fireAt) <= now.getTime())
+    .filter(
+      (entry) => !entry.cancelledAt && !entry.acknowledgedAt && Date.parse(entry.fireAt) <= now.getTime(),
+    )
     .sort((a, b) => Date.parse(a.fireAt) - Date.parse(b.fireAt))
     .slice(0, limit)
     .map((entry) => ({
       ...entry,
       overdue_minutes: Math.max(0, Math.round((now.getTime() - Date.parse(entry.fireAt)) / 60000)),
     }));
+}
+
+/**
+ * Reminders still ahead of us, soonest first. This is the answer to "did it stick?" —
+ * without it a reminder is invisible until the moment it is already late.
+ */
+export async function upcomingReminders(paths, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const limit = Number.isFinite(options.limit) ? Math.max(1, options.limit) : UPCOMING_LIMIT;
+  const all = prune(await readReminders(paths), now);
+  return all
+    .filter(
+      (entry) =>
+        !entry.cancelledAt && !entry.acknowledgedAt && Date.parse(entry.fireAt) > now.getTime(),
+    )
+    .sort((a, b) => Date.parse(a.fireAt) - Date.parse(b.fireAt))
+    .slice(0, limit)
+    .map((entry) => ({
+      ...entry,
+      minutes_until: Math.max(1, Math.round((Date.parse(entry.fireAt) - now.getTime()) / 60000)),
+    }));
+}
+
+/**
+ * Cancel a reminder the user has changed their mind about: stop the detached notification
+ * if it is still alive, and retire the record so the briefing stops reporting it. Matching
+ * by id is exact; matching by text takes the soonest match so the choice is predictable.
+ */
+export async function cancelReminder(paths, { id = '', message = '' } = {}, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const killFn = options.killFn ?? ((pid) => process.kill(pid, 'SIGTERM'));
+  const all = prune(await readReminders(paths), now);
+  const wantedId = String(id ?? '').trim();
+  const wantedText = cleanText(message, MAX_MESSAGE_CHARS).toLowerCase();
+  if (!wantedId && !wantedText) return null;
+  const open = all
+    .filter((entry) => !entry.cancelledAt && !entry.acknowledgedAt)
+    .sort((a, b) => Date.parse(a.fireAt) - Date.parse(b.fireAt));
+  const match = wantedId
+    ? open.find((entry) => entry.id === wantedId)
+    : open.find((entry) => entry.message.toLowerCase().includes(wantedText));
+  if (!match) return null;
+  if (Number.isFinite(match.pid)) {
+    try {
+      killFn(match.pid);
+    } catch {
+      // The scheduled process may already have fired or the machine may have restarted;
+      // retiring the record is what actually stops it from being reported.
+    }
+  }
+  const cancelled = { ...match, cancelledAt: now.toISOString() };
+  await writeReminders(
+    paths,
+    all.map((entry) => (entry.id === match.id ? cancelled : entry)),
+  );
+  return cancelled;
 }
 
 /** Mark delivered reminders as acknowledged, so the briefing says each one once. */

@@ -145,7 +145,7 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:clipboard|copy|paste|pbcopy|pbpaste)\b/i,
   },
   {
-    tools: ['show_notification', 'set_reminder'],
+    tools: ['show_notification', 'set_reminder', 'cancel_reminder'],
     pattern: /\b(?:notify|notification|alert|remind|reminder|timer|alarm|nudge|in \d+\s*(?:sec|second|min|minute|hour|hr)s?)\b/i,
   },
   {

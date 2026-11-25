@@ -9,6 +9,8 @@ import {
   readReminders,
   dueReminders,
   acknowledgeReminders,
+  upcomingReminders,
+  cancelReminder,
   REMINDERS_FILE,
 } from '../backend/tools/reminders.mjs';
 import { setReminderTool } from '../backend/tools/macos-tool.mjs';
@@ -78,6 +80,65 @@ test('the briefing delivers a due reminder once, in the user own words', async (
   assert.equal(second.due_reminders.count, 0, 'a delivered reminder is not repeated');
 });
 
+test('pending reminders are visible before they are late', async (t) => {
+  const { root, paths } = await tmpPaths();
+  t.after(() => fsPromises.rm(root, { recursive: true, force: true }));
+  await addReminder(paths, { message: 'stretch', fireAt: at(60) }, { now: NOW });
+  await addReminder(paths, { message: 'stand up', fireAt: at(180) }, { now: NOW });
+  await addReminder(paths, { message: 'already due', fireAt: at(-5) }, { now: NOW });
+  const soon = await upcomingReminders(paths, { now: NOW });
+  assert.deepEqual(soon.map((r) => r.message), ['stretch', 'stand up']);
+  assert.equal(soon[0].minutes_until, 60);
+  const bounded = await upcomingReminders(paths, { now: NOW, limit: 1 });
+  assert.equal(bounded.length, 1, 'bounded, not dumped');
+});
+
+test('cancelling a reminder stops the pending notification and retires the record', async (t) => {
+  const { root, paths } = await tmpPaths();
+  t.after(() => fsPromises.rm(root, { recursive: true, force: true }));
+  await addReminder(paths, { message: 'stretch', fireAt: at(60), pid: 4242 }, { now: NOW });
+  const killed = [];
+  const cancelled = await cancelReminder(
+    paths,
+    { message: 'STRETCH' },
+    { now: NOW, killFn: (pid) => killed.push(pid) },
+  );
+  assert.equal(cancelled.pid, 4242);
+  assert.deepEqual(killed, [4242], 'the scheduled notification is actually stopped');
+  assert.deepEqual(await upcomingReminders(paths, { now: NOW }), []);
+  assert.equal((await readReminders(paths))[0].cancelledAt, NOW.toISOString());
+  assert.equal(await cancelReminder(paths, { message: 'nothing like it' }, { now: NOW }), null);
+  assert.equal(await cancelReminder(paths, {}, { now: NOW }), null, 'it must be told which one');
+});
+
+test('a dead scheduled process does not stop the reminder being retired', async (t) => {
+  const { root, paths } = await tmpPaths();
+  t.after(() => fsPromises.rm(root, { recursive: true, force: true }));
+  await addReminder(paths, { message: 'stretch', fireAt: at(60), pid: 999 }, { now: NOW });
+  const cancelled = await cancelReminder(
+    paths,
+    { message: 'stretch' },
+    {
+      now: NOW,
+      killFn: () => {
+        throw new Error('ESRCH');
+      },
+    },
+  );
+  assert.ok(cancelled.cancelledAt);
+  assert.deepEqual(await upcomingReminders(paths, { now: NOW }), []);
+});
+
+test('the briefing shows what is coming, not only what is late', async (t) => {
+  const { root, paths } = await tmpPaths();
+  t.after(() => fsPromises.rm(root, { recursive: true, force: true }));
+  await addReminder(paths, { message: 'stand up', fireAt: new Date(Date.now() + 45 * 60000).toISOString() });
+  const report = await briefingTool({ include_system: false, include_schedule: false, paths });
+  assert.equal(report.upcoming_reminders.count, 1);
+  assert.equal(report.upcoming_reminders.items[0].message, 'stand up');
+  assert.equal(report.upcoming_reminders.items[0].minutes_until, 45);
+  assert.equal(report.attention.filter((flag) => flag.area === 'reminder').length, 0, 'a future reminder is not an alarm');
+});
 test('setting a reminder writes it down as well as scheduling the notification', async (t) => {
   const { root, paths } = await tmpPaths();
   t.after(() => fsPromises.rm(root, { recursive: true, force: true }));

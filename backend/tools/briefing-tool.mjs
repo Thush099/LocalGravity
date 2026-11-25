@@ -14,7 +14,7 @@ import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.
 import { entriesForDate, loadSchedule } from '../schedule.mjs';
 import { readActions } from '../agent/action-log.mjs';
 import { loadOpenGoals } from '../agent/goal-continuity.mjs';
-import { dueReminders, acknowledgeReminders } from './reminders.mjs';
+import { dueReminders, upcomingReminders, acknowledgeReminders } from './reminders.mjs';
 
 export const CPU_HIGH_PERCENT = 80;
 export const MEMORY_HIGH_PERCENT = 85;
@@ -113,6 +113,7 @@ export function summarizeBriefing({
   recentActions = [],
   openGoals = [],
   dueReminderEntries = [],
+  upcomingReminderEntries = [],
 } = {}) {
   const attention = deriveAttention(metrics, now);
 
@@ -176,6 +177,16 @@ export function summarizeBriefing({
     });
   }
 
+  // What is still ahead: the answer to "did it stick?", shown as a fact rather than an
+  // alarm — a reminder that has not come due yet is not a problem to solve.
+  const upcomingRemindersOut = (Array.isArray(upcomingReminderEntries) ? upcomingReminderEntries : [])
+    .slice(0, 3)
+    .map((entry) => ({
+      message: String(entry?.message ?? ''),
+      fire_at: String(entry?.fireAt ?? ''),
+      minutes_until: Number.isFinite(entry?.minutes_until) ? entry.minutes_until : 0,
+    }));
+
   return {
     generated_at: now.toISOString(),
     system_summary: metrics ? summarizeSystemMetrics(metrics) : 'System metrics unavailable.',
@@ -198,6 +209,7 @@ export function summarizeBriefing({
     // Outstanding promises from earlier sessions: the agent's own published steps.
     open_work: openWork,
     due_reminders: { count: dueRemindersOut.length, items: dueRemindersOut },
+    upcoming_reminders: { count: upcomingRemindersOut.length, items: upcomingRemindersOut },
     focus: focus ? String(focus) : null,
   };
 }
@@ -208,12 +220,13 @@ export function summarizeBriefing({
  */
 export async function briefingTool({ focus = '', include_system = true, include_schedule = true, paths } = {}) {
   const now = new Date();
-  const [metrics, scheduleEntries, recentActions, openGoals, due] = await Promise.all([
+  const [metrics, scheduleEntries, recentActions, openGoals, due, upcoming] = await Promise.all([
     include_system ? collectSystemMetrics().catch(() => null) : null,
     include_schedule ? loadSchedule().catch(() => []) : [],
     readActions(paths, { limit: 5 }).catch(() => []),
     loadOpenGoals(paths).catch(() => []),
     dueReminders(paths, { now }).catch(() => []),
+    upcomingReminders(paths, { now }).catch(() => []),
   ]);
   const report = summarizeBriefing({
     metrics,
@@ -223,6 +236,7 @@ export async function briefingTool({ focus = '', include_system = true, include_
     recentActions,
     openGoals,
     dueReminderEntries: due,
+    upcomingReminderEntries: upcoming,
   });
   // Delivered once, then acknowledged: the briefing is the user asking what is going
   // on, so this is the moment the reminder is actually said.

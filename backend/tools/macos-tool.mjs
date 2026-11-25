@@ -168,14 +168,18 @@ export async function setReminderTool({ seconds, message, paths, spawnFn = spawn
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder" sound name "Glass"`;
   const invocation = buildReminderInvocation(delay, script);
   const fireAt = new Date(Date.now() + delay * 1000).toISOString();
-  // Written down before anything is scheduled: the notification only fires while the
-  // machine stays awake, the record survives a reboot and the briefing can hand it back.
-  const record = await addReminder(paths, { message: msg, fireAt }).catch(() => null);
   const child = spawnFn('nohup', [invocation.bin, ...invocation.args], {
     detached: true,
     stdio: 'ignore',
   });
   child.unref();
+  // Written down before this call returns: the notification only fires while the machine
+  // stays awake, the record survives a reboot and the briefing can hand it back. The pid
+  // is kept so a changed mind can actually stop the pending notification.
+  const record = await addReminder(
+    paths,
+    { message: msg, fireAt, pid: child.pid },
+  ).catch(() => null);
   return {
     ok: true,
     output: `Reminder set for ${delay} seconds from now: "${msg.slice(0, 120)}"`,

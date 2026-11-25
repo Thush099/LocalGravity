@@ -23,6 +23,7 @@ import {
   spotlightSearchTool,
   takeScreenshotTool,
 } from './macos-tool.mjs';
+import { cancelReminder } from './reminders.mjs';
 import { searchWebTool } from './web-tool.mjs';
 import { updatePlanTool } from './plan-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
@@ -319,6 +320,21 @@ export const TOOL_DEFINITIONS = [
           message: { type: 'string', description: 'Reminder text.' },
         },
         required: ['seconds', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancel_reminder',
+      description:
+        'Cancel a reminder you set earlier, by its id or by (part of) its text. Stops the pending macOS notification and stops the briefing reporting it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Id of the reminder to cancel.' },
+          message: { type: 'string', description: 'Part of the reminder text, if the id is not known.' },
+        },
       },
     },
   },
@@ -826,6 +842,7 @@ const HARMLESS_ACTION_TOOLS = new Set([
   'open_url',
   'take_screenshot',
   'set_reminder',
+  'cancel_reminder',
 ]);
 
 /**
@@ -1128,6 +1145,25 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await runShortcutTool(args);
       case 'set_reminder':
         return await setReminderTool({ ...args, paths });
+      case 'cancel_reminder': {
+        const cancelled = await cancelReminder(paths, { id: args.id, message: args.message }).catch(
+          () => null,
+        );
+        if (!cancelled) {
+          const asked = String(args.id || args.message || '').trim();
+          return {
+            ok: false,
+            output: asked
+              ? `No pending reminder matches "${asked}".`
+              : 'Say which reminder to cancel — its id or part of its text.',
+          };
+        }
+        return {
+          ok: true,
+          output: `Cancelled the reminder "${cancelled.message}" scheduled for ${new Date(cancelled.fireAt).toLocaleString()}.`,
+          reminderId: cancelled.id,
+        };
+      }
       case 'spotlight_search':
         return await spotlightSearchTool(args);
       case 'take_screenshot':
