@@ -1180,7 +1180,11 @@ function renderScheduleWeek() {
   const kpiHost = $('#schedule-chart-kpis');
   if (chartHost) {
     const chart = renderWeeklyScheduleChart(entries, today);
-    chartHost.innerHTML = chart.svg;
+    chartHost.innerHTML =
+      chart.svg +
+      (chart.totalHours === 0
+        ? '<div class="chart-empty-note">No blocks this week yet — add one on the left and these bars fill in.</div>'
+        : '');
     if (kpiHost) {
       kpiHost.innerHTML = [
         `<span class="telemetry-stat-pill"><strong>${chart.totalHours}h</strong> planned this week</span>`,
@@ -2854,10 +2858,36 @@ async function loadAutomations() {
   renderAutomationsGrid();
 }
 
+/**
+ * Shared "nothing here yet" block. The glyph is trusted inline SVG supplied by
+ * the call site; every text field is escaped here so user-derived copy (skill
+ * slugs, folder paths) can never inject markup.
+ */
+function emptyState({ icon = '', tone = 'var(--accent)', title, detail = '', action = null, compact = false, stacked = false }) {
+  return `<div class="empty-state${compact ? ' compact' : ''}${stacked ? ' stacked' : ''}" role="status" style="--empty-tone:${tone}">
+    ${icon ? `<div class="empty-state-icon" aria-hidden="true">${icon}</div>` : ''}
+    <div class="empty-state-copy">
+      <div class="empty-state-title">${escapeHtml(title)}</div>
+      ${detail ? `<div class="empty-state-detail">${escapeHtml(detail)}</div>` : ''}
+      ${action ? `<button type="button" class="primary-btn empty-state-action" ${action.attrs || ''}>${escapeHtml(action.label)}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+const ZAP_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>';
+const SPARK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.4"/></svg>';
+
 function renderAutomationsGrid() {
   const grid = $('#automations-grid');
   if (state.automations.length === 0) {
-    grid.innerHTML = `<div class="status-sub">No saved automations yet. Click "+ Create automation" or save one from any agent reply.</div>`;
+    grid.innerHTML = emptyState({
+      icon: ZAP_ICON,
+      tone: 'var(--app-4)',
+      title: 'No automations yet',
+      detail: 'Save any agent reply as a one-click workflow, then schedule it to run quietly in the background. Nothing runs until you turn it on.',
+      action: { label: 'Create your first automation', attrs: 'data-empty-action="new-automation"' },
+      stacked: true,
+    });
     return;
   }
   grid.innerHTML = state.automations
@@ -3028,18 +3058,54 @@ function renderSettingsView() {
 
 // Modals
 let modalReturnFocusEl = null;
+let paletteReturnFocusEl = null;
+
+// While a dialog is open nothing behind it should be reachable by Tab, a screen
+// reader, or a stray click. inert does that in one attribute; the Tab handler
+// below keeps focus inside for browsers that only partly implement it.
+function setShellInert(on) {
+  const shell = $('#app-shell') || $('#app');
+  if (shell) shell.inert = Boolean(on);
+}
+
+function focusableIn(container) {
+  if (!container) return [];
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((el) => el.offsetParent !== null);
+}
+
+function trapTabKey(container, e) {
+  if (e.key !== 'Tab') return;
+  const items = focusableIn(container);
+  if (items.length === 0) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || !container.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !container.contains(active))) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 function openModal(title, htmlContent) {
   modalReturnFocusEl = document.activeElement;
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = htmlContent;
   $('#modal-backdrop').classList.remove('hidden');
+  setShellInert(true);
   $('#modal-close-btn')?.focus();
 }
 
 function closeModal() {
   $('#modal-backdrop').classList.add('hidden');
   $('#modal-body').innerHTML = '';
+  if ($('#palette-backdrop').classList.contains('hidden')) setShellInert(false);
   if (modalReturnFocusEl && typeof modalReturnFocusEl.focus === 'function') {
     modalReturnFocusEl.focus();
   }
@@ -3446,11 +3512,23 @@ async function openSkillLibraryModal() {
     metaEl.textContent = `${source.skills.length} skill${source.skills.length === 1 ? '' : 's'} in ${source.dir}${matches.length > shown.length ? ` (showing first ${shown.length})` : ''}`;
 
     if (source.skills.length === 0) {
-      listEl.innerHTML = `<div class="status-sub">No skills found in <code>${escapeHtml(source.dir)}</code>.</div>`;
+      listEl.innerHTML = emptyState({
+        icon: SPARK_ICON,
+        tone: 'var(--app-5)',
+        compact: true,
+        title: 'No skills in this source',
+        detail: `Nothing yet in ${source.dir}. Import a skill from GitHub or add a SKILL.md by hand.`,
+      });
       return;
     }
     if (shown.length === 0) {
-      listEl.innerHTML = '<div class="status-sub">No skills match that filter.</div>';
+      listEl.innerHTML = emptyState({
+        icon: SPARK_ICON,
+        tone: 'var(--app-2)',
+        compact: true,
+        title: 'No matches',
+        detail: `Nothing in ${source.dir} matches "${query}". Try a shorter word.`,
+      });
       return;
     }
 
@@ -3691,9 +3769,11 @@ function movePalette(delta) {
 
 async function openCommandPalette() {
   if (!$('#modal-backdrop').classList.contains('hidden')) closeModal();
+  paletteReturnFocusEl = document.activeElement;
   state.paletteOpen = true;
   state.paletteIndex = 0;
   $('#palette-backdrop').classList.remove('hidden');
+  setShellInert(true);
   const input = $('#palette-input');
   input.value = '';
   input.setAttribute('aria-expanded', 'true');
@@ -3732,6 +3812,11 @@ function closeCommandPalette() {
     input.setAttribute('aria-expanded', 'false');
     input.removeAttribute('aria-activedescendant');
   }
+  if ($('#modal-backdrop').classList.contains('hidden')) setShellInert(false);
+  if (paletteReturnFocusEl && typeof paletteReturnFocusEl.focus === 'function') {
+    paletteReturnFocusEl.focus();
+  }
+  paletteReturnFocusEl = null;
 }
 
 function toggleCommandPalette() {
@@ -4683,10 +4768,15 @@ function wireEvents() {
   });
 
   $('#new-automation-btn').addEventListener('click', () => openAutomationModal());
+  $('#automations-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-automation"]')) openAutomationModal();
+  });
   $('#modal-close-btn').addEventListener('click', closeModal);
   $('#modal-backdrop').addEventListener('click', (e) => {
     if (e.target === $('#modal-backdrop')) closeModal();
   });
+  $('#modal-backdrop').addEventListener('keydown', (e) => trapTabKey($('.modal-card'), e));
+  $('#palette-backdrop').addEventListener('keydown', (e) => trapTabKey($('.palette-card'), e));
 
   $('#num-ctx-select').addEventListener('change', async (e) => {
     const res = await apiRequest('/api/models/config', {

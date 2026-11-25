@@ -4690,6 +4690,7 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
    into the active theme surface, so the wash stays legible in dark, light, and
    Nord themes instead of being hard-coded. */
 .stat-tile {
+  --tile: var(--accent);
   position: relative;
   overflow: hidden;
   background:
@@ -4907,3 +4908,75 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
   color: var(--text-muted);
 }
 
+
+/* ---- Empty states -------------------------------------------------------
+   One shared block for every "nothing here yet" surface: a tinted glyph, a
+   headline, a line of guidance and an optional action. Tint comes from
+   --empty-tone so each view keeps its own colour without new rules. */
+.empty-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 22px 20px;
+  border-radius: var(--radius);
+  border: 1px dashed color-mix(in srgb, var(--empty-tone, var(--accent)) 42%, var(--border-subtle));
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--empty-tone, var(--accent)) 11%, transparent) 0%, transparent 64%),
+    var(--bg-surface);
+}
+
+.empty-state-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--empty-tone, var(--accent));
+  background: color-mix(in srgb, var(--empty-tone, var(--accent)) 14%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--empty-tone, var(--accent)) 26%, var(--border-subtle));
+}
+
+.empty-state-title {
+  font-size: 14.5px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.empty-state-detail {
+  margin-top: 4px;
+  max-width: 48ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.empty-state-action { margin-top: 12px; }
+
+.empty-state.compact { padding: 15px 16px; gap: 11px; }
+.empty-state.compact .empty-state-icon { width: 34px; height: 34px; border-radius: 10px; }
+.empty-state.compact .empty-state-title { font-size: 13.5px; }
+
+#automations-grid .empty-state { grid-column: 1 / -1; }
+
+.chart-empty-note {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* A first-run panel earns more room than an inline hint. */
+.empty-state.stacked {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 44px 26px 46px;
+  gap: 13px;
+}
+
+.empty-state.stacked .empty-state-icon { width: 48px; height: 48px; border-radius: 14px; }
+.empty-state.stacked .empty-state-title { font-size: 16px; }
+.empty-state.stacked .empty-state-detail { margin-inline: auto; max-width: 52ch; font-size: 13px; }
+.empty-state.stacked .empty-state-action { margin-top: 4px; }
