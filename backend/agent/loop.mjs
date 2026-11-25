@@ -13,6 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { captureExplicitMemory } from './memory-capture.mjs';
 import { captureStandingPreference } from './standing-preferences.mjs';
 import { memoryCaptureNotices } from './memory-notices.mjs';
+import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
@@ -311,9 +312,13 @@ export async function runAgentTurn({
   const numCtx = Number(providerConfig.numCtx) || 8192;
   const tracker = new TurnStruggleTracker();
   const executedToolResults = [];
+  // Actions that did not happen this turn (blocked, denied, failed) — the ledger
+  // behind the "never claim a change you did not make" check.
+  const failedActions = [];
   let emptyOutputRetried = false;
   let latestPlan = null;
   let planNudged = false;
+  let failureNudged = false;
   let decompNudged = false;
   let verifyNudged = false;
   const unverifiedDone = new Set();
@@ -462,6 +467,25 @@ export async function runAgentTurn({
       // still ends there, append an honest note so the user sees what remains.
       const isFinalAnswer = normalizedCalls.length === 0;
       const unfinishedSteps = unfinishedPlanSteps(latestPlan);
+      // A change that did not happen must not be reported as done. Nudge once
+      // with the real reason; the note below covers an answer that still
+      // overclaims.
+      if (isFinalAnswer && failedActions.length > 0 && !failureNudged && step < maxSteps - 1) {
+        failureNudged = true;
+        session.messages.push({
+          role: 'assistant',
+          content: finalContent || response.content || '',
+          thinking: response.thinking || '',
+          createdAt: new Date().toISOString(),
+        });
+        session.messages.push({
+          role: 'user',
+          content: failureNudge(failedActions),
+          isSelfCorrection: true,
+          createdAt: new Date().toISOString(),
+        });
+        continue;
+      }
       if (isFinalAnswer && unfinishedSteps.length > 0 && !planNudged && step < maxSteps - 1) {
         planNudged = true;
         session.messages.push({
@@ -498,6 +522,13 @@ export async function runAgentTurn({
       }
       if (isFinalAnswer && (unfinishedSteps.length > 0 || unverifiedSteps.length > 0)) {
         const note = planCompletionNote(unfinishedSteps) + unverifiedCompletionNote(unverifiedSteps);
+        finalContent = `${finalContent || response.content || ''}${note}`;
+        onEvent?.({ type: 'text_delta', text: note });
+      }
+      // The nudge is a request; this is the guarantee. If the answer still makes
+      // no mention of an action that failed, say so, with the tool's own words.
+      if (isFinalAnswer && failedActions.length > 0 && !mentionsFailure(finalContent || response.content || '')) {
+        const note = unreportedFailureNote(failedActions);
         finalContent = `${finalContent || response.content || ''}${note}`;
         onEvent?.({ type: 'text_delta', text: note });
       }
@@ -625,6 +656,9 @@ export async function runAgentTurn({
           ok: result.ok,
           output: result.output,
         });
+        if (!result.ok) {
+          recordActionFailure(failedActions, { name: tc.name, reason: result.output, kind: 'error' });
+        }
 
         session.messages.push({
           role: 'tool',
@@ -695,6 +729,7 @@ export async function runAgentTurn({
             const { tc: batchTc, effectiveArgs: batchArgs } = batch[bIdx];
             const out = batchOutputs[bIdx];
             if (out.isDuplicate) {
+              recordActionFailure(failedActions, { name: batchTc.name, reason: out.message, kind: 'blocked' });
               session.messages.push({
                 role: 'tool',
                 toolCallId: batchTc.id,
@@ -720,6 +755,7 @@ export async function runAgentTurn({
         if (tc.parseError) {
           tracker.recordParseError(tc.name, tc.parseError);
           const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid double-quoted JSON arguments.`;
+          recordActionFailure(failedActions, { name: tc.name, reason: 'arguments failed JSON parsing', kind: 'blocked' });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: errOut });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: errOut });
           continue;
@@ -731,6 +767,7 @@ export async function runAgentTurn({
         // Break infinite duplicate tool call loops within the same turn
         const dupCheck = tracker.checkDuplicateCall(tc.name, effectiveArgs);
         if (dupCheck.isDuplicate) {
+          recordActionFailure(failedActions, { name: tc.name, reason: dupCheck.message, kind: 'blocked' });
           session.messages.push({
             role: 'tool',
             toolCallId: tc.id,
@@ -762,6 +799,7 @@ export async function runAgentTurn({
 
         if (gate.decision === 'block') {
           const blockedMsg = `Blocked by safety policy: ${gate.reason}`;
+          recordActionFailure(failedActions, { name: tc.name, reason: blockedMsg, kind: 'blocked' });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
           continue;
@@ -784,6 +822,7 @@ export async function runAgentTurn({
 
           if (!decision?.approved) {
             const deniedMsg = `User denied ${tc.name}: ${decision?.reason || 'Cancelled by user.'}`;
+            recordActionFailure(failedActions, { name: tc.name, reason: deniedMsg, kind: 'blocked' });
             session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: deniedMsg });
             onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: deniedMsg });
             continue;
