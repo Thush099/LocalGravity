@@ -11,6 +11,7 @@ import { saveConfig, saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
 import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from './compactor.mjs';
 import { captureExplicitMemory } from './memory-capture.mjs';
+import { captureStandingPreference } from './standing-preferences.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
@@ -218,6 +219,10 @@ export async function runAgentTurn({
   // even if the model never calls the knowledge tool itself. Matches the raw
   // user message so attached-file notes can never mask the request.
   await captureExplicitMemory(userMessage, paths);
+  // A durable instruction ("from now on …", "never …") is a standing preference:
+  // it outlives the session and is injected into every later system prompt, so it
+  // is stored before the memory doc is loaded for this turn.
+  await captureStandingPreference(userMessage, paths);
 
   if (!Array.isArray(session.messages)) session.messages = [];
   if (fullUserText || attached.images.length > 0) {
