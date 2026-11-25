@@ -6,11 +6,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import zlib from 'node:zlib';
 import { INSTANT_ACTION_IDS, runInstantAction } from './actions.mjs';
 import { setAppForeground } from './tools/macos-tool.mjs';
 import { compactConversation } from './agent/compactor.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
+import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
+import { networkUsageSummary, perAppUsage, recordNetworkSample, totalInterfaceBytes } from './network-monitor.mjs';
+import { buildSuggestions, dismissSuggestion, loadDismissed } from './smart-assist.mjs';
 import {
   deleteKnowledge,
   ensureKnowledgeSeeded,
@@ -50,12 +54,14 @@ import {
 import { getRuntimePaths } from './state/paths.mjs';
 import {
   SAFE_ID_RE,
+  atomicWriteJson,
   deleteSession,
   listSessions,
   searchSessions,
   loadAutomations,
   loadConfig,
   loadSession,
+  readJsonSafe,
   saveAutomations,
   saveConfig,
   saveSession,
@@ -192,13 +198,28 @@ let cachedToolStatus = null;
 let cachedToolStatusAt = 0;
 const uiAssetCache = new Map();
 
-function sendJson(res, status, data) {
-  res.writeHead(status, {
+function acceptsGzip(req) {
+  return /\bgzip\b/i.test(String(req?.headers?.['accept-encoding'] || ''));
+}
+
+function writeJsonResponse(res, status, data, req = null) {
+  const payload = Buffer.from(JSON.stringify(data), 'utf8');
+  const headers = {
     ...SECURITY_HEADERS,
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
-  });
-  res.end(JSON.stringify(data));
+  };
+  if (payload.length >= 1024 && acceptsGzip(req)) {
+    const gz = zlib.gzipSync(payload, { level: 6 });
+    headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
+    headers['Content-Length'] = gz.length;
+    res.writeHead(status, headers);
+    res.end(gz);
+    return;
+  }
+  res.writeHead(status, headers);
+  res.end(payload);
 }
 
 function isSameOriginRequest(req) {
@@ -337,6 +358,7 @@ export function createAgentServer({
   warmModelFn = warmOllamaModel,
   unloadModelsFn = unloadOllamaModels,
   runAgentTurnFn = runAgentTurn,
+  gatherBriefingFn = null,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
   const activeRuns = new Map();
@@ -346,6 +368,8 @@ export function createAgentServer({
   let cachedMetrics = null;
   let cachedMetricsAt = 0;
   let inFlightMetrics = null;
+  const briefingCacheFile = path.join(paths.root, 'briefing-cache.json');
+  let inFlightBriefing = null;
   let cachedBriefing = null;
   let cachedBriefingAt = 0;
   let lastSpeedMbps = null;
@@ -363,6 +387,7 @@ export function createAgentServer({
     activeSpeakProc = null;
   };
   let agendaStop = null;
+  let networkWarmTimer = null;
   let networkSampleTimer = null;
   const resolveRunApprovals = (runState, reason) => {
     if (!runState?.approvals) return;
@@ -372,9 +397,125 @@ export function createAgentServer({
     runState.approvals.clear();
   };
 
+  const ensureBriefingDiskCacheLoaded = async () => {
+    if (cachedBriefing) return;
+    const saved = await readJsonSafe(briefingCacheFile, null);
+    if (saved && saved.briefing && typeof saved.briefing === 'object') {
+      cachedBriefing = saved.briefing;
+      cachedBriefingAt = Number(saved.savedAt) || 0;
+    }
+  };
+
+  const defaultGatherBriefing = async () => {
+    const appsPromise = perAppUsage({ limit: 12 });
+    const fastAppsPromise = Promise.race([
+      appsPromise,
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, apps: [], timedOut: true }), 1800)),
+    ]);
+    const [news, email, weather, appsResult, sinceBoot, usage] = await Promise.all([
+      fetchWorldNews({ count: 5 }),
+      emailSummary({ limit: 15 }),
+      weatherSummary().catch(() => ({ ok: false, error: 'Weather unavailable.' })),
+      fastAppsPromise,
+      totalInterfaceBytes().catch(() => 0),
+      networkUsageSummary().catch(() => ({})),
+    ]);
+    const initialApps =
+      appsResult.ok && appsResult.apps?.length
+        ? appsResult.apps
+        : (usage.apps || []).slice(0, 12);
+    const result = {
+      news: (news.items || []).map((i) => ({ title: i.title, source: i.source, link: i.link })),
+      email: {
+        ok: email.ok,
+        count: email.count,
+        summary: email.summary || '',
+        messages: (email.messages || []).slice(0, 8),
+        error: email.error || null,
+      },
+      weather: weather.ok
+        ? { ok: true, city: weather.city, icon: weather.icon, temp: weather.temp, feelsLike: weather.feelsLike, description: weather.description, high: weather.high, low: weather.low, wind: weather.wind }
+        : { ok: false, error: weather.error || 'Weather unavailable.' },
+      network: {
+        topApps: initialApps.map((a) => ({ name: a.name, total: a.total })),
+        sinceBootBytes: sinceBoot,
+        monthBytes: usage.monthTotal || 0,
+        todayBytes: usage.dayTotal || 0,
+        month: usage.month,
+        history: usage.history || {},
+        lastSpeedMbps,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    if (appsResult.timedOut) {
+      appsPromise
+        .then((lateRes) => {
+          if (lateRes?.ok && Array.isArray(lateRes.apps) && lateRes.apps.length && cachedBriefing === result) {
+            result.network.topApps = lateRes.apps.map((a) => ({ name: a.name, total: a.total }));
+          }
+        })
+        .catch(() => {});
+    }
+    return result;
+  };
+
+  const refreshBriefingNow = () => {
+    if (inFlightBriefing) return inFlightBriefing;
+    inFlightBriefing = Promise.resolve()
+      .then(() => (gatherBriefingFn ? gatherBriefingFn() : defaultGatherBriefing()))
+      .then(async (briefing) => {
+        cachedBriefing = briefing;
+        cachedBriefingAt = Date.now();
+        await atomicWriteJson(briefingCacheFile, { savedAt: cachedBriefingAt, briefing }).catch(() => {});
+        return briefing;
+      })
+      .finally(() => {
+        inFlightBriefing = null;
+      });
+    return inFlightBriefing;
+  };
+
+  const computeSuggestions = async () => {
+    await ensureBriefingDiskCacheLoaded();
+    const downloadsDir = path.join(os.homedir(), 'Downloads');
+    const [diskStat, downloadsEntries, scheduleEntries, dismissed] = await Promise.all([
+      cachedMetrics?.disks?.[0]
+        ? Promise.resolve(null)
+        : fs.statfs(os.homedir()).catch(() => null),
+      fs.readdir(downloadsDir).catch(() => null),
+      loadSchedule(paths).catch(() => []),
+      loadDismissed(paths).catch(() => ({})),
+    ]);
+
+    let storageFreePercent = null;
+    if (cachedMetrics?.disks?.[0]?.usedPercent !== undefined) {
+      storageFreePercent = Math.max(0, 100 - Number(cachedMetrics.disks[0].usedPercent));
+    } else if (diskStat && diskStat.blocks > 0) {
+      storageFreePercent = (diskStat.bavail / diskStat.blocks) * 100;
+    }
+
+    const downloadsCount = Array.isArray(downloadsEntries)
+      ? downloadsEntries.filter((name) => name && !name.startsWith('.')).length
+      : null;
+
+    const snap = {
+      hourOfDay: new Date().getHours(),
+      storageFreePercent,
+      downloadsCount,
+      emailCount: cachedBriefing?.email?.ok ? Number(cachedBriefing.email.count ?? 0) : null,
+      scheduledToday: entriesForDate(scheduleEntries).length,
+      monthNetworkGB:
+        cachedBriefing?.network?.monthBytes != null
+          ? Number(cachedBriefing.network.monthBytes) / 1024 ** 3
+          : null,
+    };
+    return buildSuggestions(snap, dismissed, { limit: 4 });
+  };
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     const pathname = url.pathname;
+    const sendJson = (targetRes, status, data) => writeJsonResponse(targetRes, status, data, req);
 
     try {
       // Static UI assets + bootstrap cookie + sandboxed artifact iframe
@@ -398,7 +539,8 @@ export function createAgentServer({
         }
 
         const queryToken = url.searchParams.get('token');
-        if (pathname === '/' && queryToken && safeTokenMatch(queryToken, token)) {
+        const hasValidBootstrapToken = Boolean(pathname === '/' && queryToken && safeTokenMatch(queryToken, token));
+        if (hasValidBootstrapToken) {
           res.setHeader('Set-Cookie', `lg_auth=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`);
         }
         const relPath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
@@ -409,22 +551,42 @@ export function createAgentServer({
         }
         try {
           const st = await fs.stat(resolved);
-          const cachedAsset = uiAssetCache.get(resolved);
-          let data;
-          if (cachedAsset && cachedAsset.mtimeMs === st.mtimeMs) {
-            data = cachedAsset.data;
-          } else {
-            data = await fs.readFile(resolved);
-            uiAssetCache.set(resolved, { mtimeMs: st.mtimeMs, data });
+          let entry = uiAssetCache.get(resolved);
+          if (!entry || entry.mtimeMs !== st.mtimeMs) {
+            const data = await fs.readFile(resolved);
+            const etag = `W/"${st.size.toString(16)}-${Math.trunc(st.mtimeMs).toString(16)}"`;
+            const gzipData = data.length >= 1024 ? zlib.gzipSync(data, { level: 6 }) : null;
+            entry = { mtimeMs: st.mtimeMs, etag, data, gzipData };
+            uiAssetCache.set(resolved, entry);
           }
+
+          if (!hasValidBootstrapToken && req.headers['if-none-match'] === entry.etag) {
+            res.writeHead(304, {
+              ...SECURITY_HEADERS,
+              ETag: entry.etag,
+              'Cache-Control': 'no-cache',
+            });
+            res.end();
+            return;
+          }
+
           const ext = path.extname(resolved).toLowerCase();
           const headers = {
             ...SECURITY_HEADERS,
             'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+            ETag: entry.etag,
+            'Cache-Control': 'no-cache',
           };
           if (ext === '.html') headers['Content-Security-Policy'] = UI_CONTENT_SECURITY_POLICY;
+          const useGzip = Boolean(entry.gzipData && acceptsGzip(req));
+          const bodyBuf = useGzip ? entry.gzipData : entry.data;
+          if (useGzip) {
+            headers['Content-Encoding'] = 'gzip';
+            headers['Vary'] = 'Accept-Encoding';
+          }
+          headers['Content-Length'] = bodyBuf.length;
           res.writeHead(200, headers);
-          res.end(data);
+          res.end(bodyBuf);
         } catch {
           res.writeHead(404).end('Not found');
         }
@@ -523,49 +685,38 @@ export function createAgentServer({
         return;
       }
 
-      // Jarvis-style daily briefing: the day's weather, top world news, today's email, and a
-      // light network snapshot. Cached for a few minutes — news and Mail don't change
-      // every second, and both are too slow to gather on every dashboard poll.
+      // Jarvis-style daily briefing: stale-while-revalidate + disk cache + coalesced refresh.
       if (req.method === 'GET' && pathname === '/api/briefing') {
-        const now = Date.now();
-        if (!cachedBriefing || now - cachedBriefingAt > 300000) {
-          const { fetchWorldNews, emailSummary, weatherSummary } = await import('./daily-briefing.mjs');
-          const { perAppUsage, totalInterfaceBytes, networkUsageSummary } = await import('./network-monitor.mjs');
-          const [news, email, weather, appsResult, sinceBoot, usage] = await Promise.all([
-            fetchWorldNews({ count: 5 }),
-            emailSummary({ limit: 15 }),
-            weatherSummary().catch(() => ({ ok: false, error: 'Weather unavailable.' })),
-            perAppUsage({ limit: 12 }),
-            totalInterfaceBytes().catch(() => 0),
-            networkUsageSummary().catch(() => ({})),
-          ]);
-          cachedBriefing = {
-            news: (news.items || []).map((i) => ({ title: i.title, source: i.source, link: i.link })),
-            email: {
-              ok: email.ok,
-              count: email.count,
-              summary: email.summary || '',
-              messages: (email.messages || []).slice(0, 8),
-              error: email.error || null,
-            },
-            weather: weather.ok
-              ? { ok: true, city: weather.city, icon: weather.icon, temp: weather.temp, feelsLike: weather.feelsLike, description: weather.description, high: weather.high, low: weather.low, wind: weather.wind }
-              : { ok: false, error: weather.error || 'Weather unavailable.' },
-            network: {
-              topApps: (appsResult.apps || []).map((a) => ({ name: a.name, total: a.total })),
-              sinceBootBytes: sinceBoot,
-              monthBytes: usage.monthTotal || 0,
-              todayBytes: usage.dayTotal || 0,
-              month: usage.month,
-              history: usage.history || {},
-              lastSpeedMbps,
-            },
-            updatedAt: new Date().toISOString(),
-          };
-          cachedBriefingAt = now;
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        await ensureBriefingDiskCacheLoaded();
+        const isFresh = Boolean(cachedBriefing) && Date.now() - cachedBriefingAt <= 300000;
+        if (!forceRefresh && cachedBriefing) {
+          if (!isFresh) {
+            refreshBriefingNow().catch(() => {});
+          }
+          sendJson(res, 200, { ok: true, briefing: cachedBriefing, stale: !isFresh });
+          return;
         }
-        sendJson(res, 200, { ok: true, briefing: cachedBriefing });
+        const briefing = await refreshBriefingNow();
+        sendJson(res, 200, { ok: true, briefing, stale: false });
         return;
+      }
+
+      // Smart Assist proactive dashboard suggestions + dismissal persistence
+      if (req.method === 'GET' && pathname === '/api/suggestions') {
+        const suggestions = await computeSuggestions();
+        sendJson(res, 200, { ok: true, suggestions });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/suggestions/dismiss') {
+        const body = await readJsonBody(req);
+        if (typeof body.id !== 'string' || !SAFE_ID_RE.test(body.id)) {
+          return sendJson(res, 400, { ok: false, error: 'Invalid suggestion id' });
+        }
+        await dismissSuggestion(paths, body.id);
+        const suggestions = await computeSuggestions();
+        return sendJson(res, 200, { ok: true, suggestions });
       }
 
       // Live internet speed on demand — a short timed throughput test. POST because it
@@ -610,6 +761,34 @@ export function createAgentServer({
           previewUrl: result.images?.[0] ? `data:image/png;base64,${result.images[0]}` : null,
           output: result.output,
         });
+      }
+
+      if (req.method === 'POST' && pathname === '/api/chat/attachment') {
+        const body = await readJsonBody(req, 22 * 1024 * 1024);
+        const rawB64 = String(body.dataBase64 || '').replace(/^data:[^;]+;base64,/i, '').trim();
+        if (!rawB64) {
+          return sendJson(res, 400, { ok: false, error: 'Attachment payload is empty.' });
+        }
+        const buf = Buffer.from(rawB64, 'base64');
+        if (buf.length === 0) {
+          return sendJson(res, 400, { ok: false, error: 'Attachment could not be decoded.' });
+        }
+        if (buf.length > 15 * 1024 * 1024) {
+          return sendJson(res, 413, { ok: false, error: 'Attachment exceeds 15 MB limit.' });
+        }
+        const rawBase = path.basename(String(body.filename || 'attachment.png')).trim() || 'attachment.png';
+        const rawExt = path.extname(rawBase);
+        const safeExt = /^\.[a-zA-Z0-9]{1,8}$/.test(rawExt) ? rawExt.toLowerCase() : '.bin';
+        const rawStem = rawBase.slice(0, rawExt ? -rawExt.length : undefined);
+        const safeStem =
+          rawStem.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'attachment';
+        const displayName = `${safeStem}${safeExt}`;
+        const attachmentsDir = path.join(paths.root, 'attachments');
+        await fs.mkdir(attachmentsDir, { recursive: true });
+        const uniqueName = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}-${displayName}`;
+        const destPath = path.join(attachmentsDir, uniqueName);
+        await fs.writeFile(destPath, buf, { mode: 0o600 });
+        return sendJson(res, 200, { ok: true, path: destPath, name: displayName, sizeBytes: buf.length });
       }
 
       if (req.method === 'POST' && pathname === '/api/chat/speak') {
@@ -1416,8 +1595,11 @@ export function createAgentServer({
     server,
     authToken: token,
     async start(port = 0) {
-      await syncStarterSkills(paths);
-      await ensureKnowledgeSeeded(paths);
+      await Promise.all([
+        syncStarterSkills(paths),
+        ensureKnowledgeSeeded(paths),
+        ensureBriefingDiskCacheLoaded().catch(() => {}),
+      ]);
       await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, '127.0.0.1', () => {
@@ -1429,24 +1611,24 @@ export function createAgentServer({
       if (agendaNotifications && process.env.LOCALGRAVITY_DISABLE_AGENDA_NOTIFIER !== '1') {
         agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
       }
-      // Sample network counters periodically so monthly data usage accumulates. Kernel
-      // counters reset on reboot, so each delta is folded into a persistent state file.
-      try {
-        const { recordNetworkSample } = await import('./network-monitor.mjs');
+      // Delay initial nettop sampling slightly so app boot & UI stay instantaneous,
+      // then accumulate interface deltas every 5 minutes in the background.
+      networkWarmTimer = setTimeout(() => {
         recordNetworkSample().catch(() => {});
-        networkSampleTimer = setInterval(() => {
-          recordNetworkSample().catch(() => {});
-        }, 5 * 60 * 1000);
-        networkSampleTimer.unref?.();
-      } catch {
-        // Network sampling is best-effort; the app runs without it.
-      }
+      }, 8000);
+      networkWarmTimer.unref?.();
+      networkSampleTimer = setInterval(() => {
+        recordNetworkSample().catch(() => {});
+      }, 5 * 60 * 1000);
+      networkSampleTimer.unref?.();
       return { port: addr.port, authToken: token };
     },
     async stop() {
       stopSpeaking();
       agendaStop?.();
       agendaStop = null;
+      clearTimeout(networkWarmTimer);
+      networkWarmTimer = null;
       clearInterval(networkSampleTimer);
       networkSampleTimer = null;
       for (const runState of activeRuns.values()) {

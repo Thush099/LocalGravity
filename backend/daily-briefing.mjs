@@ -295,6 +295,19 @@ export function weatherDescription(code) {
   return WMO_CODES[Number(code)] || 'Unknown';
 }
 
+const WMO_ICONS = {
+  0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️', 45: '🌫️', 48: '🌫️',
+  51: '🌦️', 53: '🌧️', 55: '🌧️', 56: '🌧️', 57: '🌧️',
+  61: '🌧️', 63: '🌧️', 65: '🌧️', 66: '🌧️', 67: '🌧️',
+  71: '🌨️', 73: '🌨️', 75: '❄️', 77: '❄️',
+  80: '🌦️', 81: '🌧️', 82: '🌧️', 85: '🌨️', 86: '🌨️',
+  95: '⛈️', 96: '⛈️', 99: '⛈️',
+};
+
+export function weatherIcon(code) {
+  return WMO_ICONS[Number(code)] || '🌡️';
+}
+
 let cachedLocation = null;
 export async function fetchApproxLocation() {
   if (cachedLocation) return cachedLocation;
@@ -338,6 +351,7 @@ export async function weatherSummary({ lat, lon, city } = {}) {
       temp: Number.isFinite(Number(cur.temperature_2m)) ? Math.round(Number(cur.temperature_2m)) : null,
       feelsLike: Number.isFinite(Number(cur.apparent_temperature)) ? Math.round(Number(cur.apparent_temperature)) : null,
       description: weatherDescription(cur.weather_code),
+      icon: weatherIcon(cur.weather_code),
       high: Number.isFinite(Number(daily.temperature_2m_max?.[0])) ? Math.round(Number(daily.temperature_2m_max[0])) : null,
       low: Number.isFinite(Number(daily.temperature_2m_min?.[0])) ? Math.round(Number(daily.temperature_2m_min[0])) : null,
       wind: Number.isFinite(Number(cur.wind_speed_10m)) ? Math.round(Number(cur.wind_speed_10m)) : null,
