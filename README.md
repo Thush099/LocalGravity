@@ -12,7 +12,7 @@
 
 </div>
 
-LocalGravity combines a compiled Swift `WKWebView` macOS shell with a dependency-free Node.js agent runtime. Run privately offline with [Ollama](https://ollama.com) or connect OpenRouter, Groq, Google Gemini, Anthropic Claude, OpenAI, or any OpenAI-compatible API. Beyond multi-turn coding and file work, it gives you a live Apple Silicon telemetry dashboard with SVG graphs, **36 native Mac and web tools** (Spotlight search, screen capture, Apple Notes, live web search, shell, ffmpeg/ImageMagick media inspection, timetable CRUD), **30 starter skills**, persistent memory, and scheduled `launchd` background jobs.
+LocalGravity combines a compiled Swift `WKWebView` macOS shell with a dependency-free Node.js agent runtime. Run privately offline with [Ollama](https://ollama.com) or connect OpenRouter, Groq, Google Gemini, Anthropic Claude, OpenAI, or any OpenAI-compatible API. Beyond multi-turn coding and file work, it gives you a live Apple Silicon telemetry dashboard with SVG graphs, **48 native Mac and web tools** (Spotlight search, screen capture, Apple Notes, live web search, shell, ffmpeg/ImageMagick media inspection, timetable CRUD), **30 starter skills**, persistent memory, and scheduled `launchd` background jobs.
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="LocalGravity Everyday Dashboard with live CPU/Memory/GPU sparklines and one-click capabilities" width="100%" />
@@ -28,7 +28,7 @@ Most AI tools force a compromise: browser chats are siloed from your Mac and cha
 | --- | --- | --- | --- |
 | **Zero-subscription local models** | No | Sometimes | **Yes** (Ollama tuned for 16 GB Apple Silicon + 1-click RAM unload) |
 | **Live split-pane Artifact Canvas** | Cloud-only | None | **Side-by-side HTML/SVG preview in an isolated sandbox + Save/Copy** |
-| **Native Mac control (36 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
+| **Native Mac control (48 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
 | **Full conversation control & modes** | Varies | Rare | **Inline Edit & re-run, Branch, Pin/Rename, Engineer/Researcher/Writer/Mac Ops modes** |
 | **Live hardware & schedule visibility** | None | None | **Real-time SVG CPU/RAM/GPU graphs, Memory donut & Timetable** |
 | **Voice, LaTeX & persistent skills** | Paid / online | Flags only | **Offline macOS Read Aloud, zero-dep LaTeX math, callouts, 30+ `SKILL.md` & `LEARNED_FIXES.md`** |
@@ -124,7 +124,14 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 - **Live Split-Pane Artifact Canvas:** Any HTML or SVG block renders live next to the conversation inside `/preview-sandbox/:id` with an isolated `<iframe sandbox="allow-scripts">` origin and zero parent DOM or API access. Switch between Preview and syntax-highlighted Code views, browse multiple artifacts from a single chat, copy source, or export to disk via macOS Save panel.
 - **Per-Chat Project Folders & Conversation Control:** Pick any local directory from the workspace header (`NSOpenPanel` in the Mac app) to scope tools cleanly to that repository. Inline **Edit & re-run** truncates and replays from that prompt, **Regenerate** reruns clean from the previous turn, **Branch** forks the conversation into a separate session up to any message, and sidebar **Pin / Rename** keeps key threads at the top.
 - **Agent Modes, Scientific Markdown, Dictation & Offline Voice:** Tailor behavior per chat (`Auto`, `Engineer`, `Researcher`, `Writer`, `Mac Ops`); render `$$...$$` display math, inline `$...$` formulas (without misfiring on prices like `$149.00`), and GitHub `[!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]` callouts; dictate prompts from the microphone; or listen to replies offline via macOS `say` (`Read aloud` / `Stop reading`).
-- **36 Built-In Mac & Web Tools:** Files (`list_dir`, `read_file`, `write_file`, `edit_file`, `move_file`, `undo_file_moves`, `search_files`, `spotlight_search`, `run_command` — file moves are journaled and reversible, with a read-only `organize_plan` preview first that sorts loose files by filename and content into folders like Screenshots, Installers, Fonts, and Logs — not just by extension), web & knowledge (`search_web`, `fetch_url`, `open_url`, `MEMORY.md` & Knowledge CRUD), media & screen (`take_screenshot`, `inspect_media`), and macOS automation (`manage_notes`, clipboard, notifications, apps, Shortcuts, AppleScript, reminders, calculator, plan updates, system stats, and timetable CRUD).
+- **48 Built-In Mac & Web Tools:** Files (`list_dir`, `read_file`, `write_file`, `edit_file`, `move_file`, `undo_file_moves`, `search_files`, `spotlight_search`, `run_command` — file moves are journaled and reversible, with a read-only `organize_plan` preview first that sorts loose files by filename and content into folders like Screenshots, Installers, Fonts, and Logs — not just by extension), web & knowledge (`search_web`, `fetch_url`, `open_url`, `briefing`, `MEMORY.md` & Knowledge CRUD), media & screen (`take_screenshot`, `inspect_media`), and macOS automation (`manage_notes`, clipboard, notifications, apps, Shortcuts, AppleScript, reminders, calculator, plan updates, system stats, and timetable CRUD).
+
+### Proactive Assistance, Grounded in Real Observations
+- **Grounded briefing & follow-up suggestions:** `briefing` composes live system metrics with today's schedule entries into a short situational readout (pressure points first). Every flag suggests a concrete next step that names the real tool that would do it — `storage 92% full` → **find large files** (`tool: large_files`) — and suggestions only ever appear alongside an observed flag. Nothing is invented.
+- **Environmental alerts with an attention budget:** a 15-minute background check warns about disk pressure, memory & swap, thermal pressure and battery (never while charging), honoring quiet hours (23:00–07:00), a 3-hour per-topic cooldown and a 6-alert daily cap. High-severity alerts still break through the quiet; ordinary warnings never nag (`LOCALGRAVITY_DISABLE_AMBIENT_ALERTS=1`).
+- **Explicit memory capture:** say "remember that I prefer tabs", "note: the staging box is 10.0.0.5" or "my name is Thushanth" in any message and the fact lands verbatim in `MEMORY.md` — idempotent, single-line facts only (so memory can never smuggle instructions into the system prompt), with a `Noted.` confirmation in the reply.
+- **Plan accountability:** when a reply publishes a numbered plan and later turns skip steps, the agent nudges itself once per step (`[Self-Correction]`) and reports completed steps in later plans — plans do not silently rot.
+- **Voice barge-in:** starting a new message mid-reply stops any in-flight `say` speech immediately — talk over the assistant like a real interlocutor.
 
 ### Security & Runtime Hardening
 - **Authenticated loopback API:** Fresh 32-byte per-launch `X-Auth-Token` bound strictly to `127.0.0.1` on an ephemeral port (also required on `/api/artifacts/stage`, `/api/chat/speak`, and session mutations).
@@ -171,7 +178,7 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 │  ├── backend/agent/              (ReAct loop, tool-selector,     │
 │  │                                prompt builder, compactor)     │
 │  ├── backend/providers/          (Ollama stream, OpenAI, Claude) │
-│  ├── backend/tools/              (36 tools + safety policies)    │
+│  ├── backend/tools/              (48 tools + safety policies)    │
 │  ├── backend/skills-engine.mjs   (30 starter SKILL.md + imports) │
 │  └── backend/knowledge-engine.mjs(MEMORY.md + docs search)       │
 └───────────────────────────────┬──────────────────────────────────┘
