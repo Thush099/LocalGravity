@@ -16,6 +16,7 @@ import { memoryCaptureNotices } from './memory-notices.mjs';
 import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
 import { captureForget, forgetNotices } from './memory-forget.mjs';
 import { priorSessionNote } from './session-digest.mjs';
+import { dueReminderNotices } from './reminder-notices.mjs';
 import { appendAction, isTrailTool } from './action-log.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
@@ -256,6 +257,21 @@ export async function runAgentTurn({
       session.messages.push({
         role: 'user',
         content: continuity,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // A reminder that came due while the user was living their life should not wait
+  // for them to ask. Turn-local, skipped in headless runs (an automation is not a
+  // person to remind), and only the quoted reminders are marked as delivered.
+  if (!isHeadless) {
+    const reminderNotes = await dueReminderNotices(paths).catch(() => []);
+    for (const note of reminderNotes) {
+      session.messages.push({
+        role: 'user',
+        content: note,
         isSelfCorrection: true,
         createdAt: new Date().toISOString(),
       });
