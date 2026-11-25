@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRss, rankNews } from '../backend/daily-briefing.mjs';
+import { parseRss, rankNews, weatherDescription, summarizeEmailDigest } from '../backend/daily-briefing.mjs';
 
 // Real BBC RSS shape: <item> with CDATA-wrapped <title>/<description>, plain <link>/<pubDate>.
 const RSS_FIXTURE = `<rss version="2.0"><channel><title>World</title>
@@ -46,4 +46,40 @@ test('rankNews clusters the same cross-outlet story and surfaces it first', () =
   assert.equal(ranked[0].coverage, 2, 'merged two related headlines');
   assert.equal(ranked.length, 2, 'the distinct Ukraine story stays separate');
   assert.equal(ranked[1].title, 'Ukraine strikes Russian ships in Black Sea');
+});
+
+test('weatherDescription maps WMO codes and falls back safely', () => {
+  assert.equal(weatherDescription(2), 'Partly cloudy');
+  assert.equal(weatherDescription(63), 'Rain');
+  assert.equal(weatherDescription(95), 'Thunderstorm');
+  assert.equal(weatherDescription(999), 'Unknown');
+  assert.equal(weatherDescription(undefined), 'Unknown');
+});
+
+test('summarizeEmailDigest summarises the inbox into threads and counts, not a list', () => {
+  const digest = summarizeEmailDigest([
+    { sender: 'Sarah Chen <sarah@acme.com>', subject: 'Q4 budget review — need your input' },
+    { sender: 'Sarah Chen <sarah@acme.com>', subject: 'Re: Q4 budget review' },
+    { sender: 'Sarah Chen <sarah@acme.com>', subject: 'Q4 budget review — final numbers' },
+    { sender: 'John Park <john@acme.com>', subject: '1:1 tomorrow at 10' },
+    { sender: 'Substack <noreply@substack.com>', subject: 'The Weekly Dispatch' },
+    { sender: 'GitHub <noreply@github.com>', subject: '[security] Dependabot alert' },
+  ]);
+  assert.equal(digest.total, 6);
+  assert.equal(digest.threads[0].name, 'Sarah Chen');
+  assert.equal(digest.threads[0].count, 3, 'groups Sarah\'s three messages into one thread');
+  assert.ok(digest.summary.includes('3 from Sarah Chen'), digest.summary);
+  assert.ok(digest.summary.includes('newsletter'), digest.summary);
+  assert.ok(digest.summary.includes('notification'), digest.summary);
+  assert.ok(!digest.summary.includes('substack.com'), 'bulk senders are folded into counts, not listed');
+  assert.equal(summarizeEmailDigest([]).summary, 'No new emails.');
+});
+
+test('summarizeEmailDigest keeps an all-bulk inbox out of the thread list', () => {
+  const bulkOnly = summarizeEmailDigest([
+    { sender: 'Substack <noreply@substack.com>', subject: 'Newsletter: AI roundup' },
+  ]);
+  assert.equal(bulkOnly.total, 1);
+  assert.equal(bulkOnly.threads.length, 0, 'bulk-only senders are not surfaced as threads');
+  assert.ok(bulkOnly.summary.includes('1 new email'), bulkOnly.summary);
 });

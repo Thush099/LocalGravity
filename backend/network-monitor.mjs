@@ -5,6 +5,9 @@ import { promisify } from 'node:util';
 import { getRuntimePaths } from './state/paths.mjs';
 
 const execFileAsync = promisify(execFile);
+const PER_APP_CACHE_TTL_MS = 25000;
+let perAppCache = null;
+let perAppInFlight = null;
 
 /**
  * Network & data-usage monitoring, entirely on-device and read-only. Per-app byte
@@ -67,28 +70,47 @@ function isPhysicalInterface(name) {
 }
 
 /** Per-process network usage (cumulative since each process started), largest first. */
-export async function perAppUsage({ limit = 12 } = {}) {
-  try {
-    const { stdout } = await execFileAsync('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
-      timeout: EXEC_TIMEOUT_MS,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const byName = new Map();
-    for (const row of parseNettop(stdout)) {
-      const cur = byName.get(row.name) || { name: row.name, bytesIn: 0, bytesOut: 0 };
-      cur.bytesIn += row.bytesIn;
-      cur.bytesOut += row.bytesOut;
-      byName.set(row.name, cur);
-    }
-    const apps = [...byName.values()]
-      .map((a) => ({ ...a, total: a.bytesIn + a.bytesOut }))
-      .filter((a) => a.total > 0)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, limit);
-    return { ok: true, apps };
-  } catch (err) {
-    return { ok: false, apps: [], error: String(err?.message || err) };
+export async function perAppUsage({ limit = 12, execFileFn = execFileAsync, bypassCache = false } = {}) {
+  const isDefaultExec = execFileFn === execFileAsync;
+  if (!bypassCache && isDefaultExec && perAppCache && Date.now() - perAppCache.at < PER_APP_CACHE_TTL_MS) {
+    return { ok: true, apps: perAppCache.apps.slice(0, limit) };
   }
+
+  if (perAppInFlight) {
+    const shared = await perAppInFlight;
+    return { ok: shared.ok, apps: shared.apps.slice(0, limit), ...(shared.error ? { error: shared.error } : {}) };
+  }
+
+  perAppInFlight = (async () => {
+    try {
+      const { stdout } = await execFileFn('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
+        timeout: EXEC_TIMEOUT_MS,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      const byName = new Map();
+      for (const row of parseNettop(stdout)) {
+        const cur = byName.get(row.name) || { name: row.name, bytesIn: 0, bytesOut: 0 };
+        cur.bytesIn += row.bytesIn;
+        cur.bytesOut += row.bytesOut;
+        byName.set(row.name, cur);
+      }
+      const apps = [...byName.values()]
+        .map((a) => ({ ...a, total: a.bytesIn + a.bytesOut }))
+        .filter((a) => a.total > 0)
+        .sort((a, b) => b.total - a.total);
+      if (isDefaultExec) {
+        perAppCache = { at: Date.now(), apps };
+      }
+      return { ok: true, apps };
+    } catch (err) {
+      return { ok: false, apps: [], error: String(err?.message || err) };
+    } finally {
+      perAppInFlight = null;
+    }
+  })();
+
+  const result = await perAppInFlight;
+  return { ok: result.ok, apps: result.apps.slice(0, limit), ...(result.error ? { error: result.error } : {}) };
 }
 
 /** Raw per-interface byte counters (all link rows, including loopback). */
