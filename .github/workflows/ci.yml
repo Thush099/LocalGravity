@@ -30,6 +30,9 @@ jobs:
       - name: Install ffmpeg (used by the media inspection tool)
         run: brew install ffmpeg
 
+      - name: Install ImageMagick (used to generate the app icon)
+        run: brew install imagemagick
+
       - name: Run checks
         run: npm run check
 
