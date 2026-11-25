@@ -2434,6 +2434,12 @@ function renderQueuedBar() {
  * for debugging but shown last.
  */
 const ERROR_HINTS = [
+  // Specific before generic: these messages also contain "Ollama", so they must
+  // not be reported as "the local model is not responding".
+  [/XML syntax error|malformed (tool|function)|closed by <\//i, {
+    title: 'The model produced a malformed tool call.',
+    hint: 'It is retried automatically — send it again if this one failed, or switch to a smaller model.',
+  }],
   [/ECONNREFUSED|connection refused|fetch failed|ENOTFOUND|EAI_AGAIN|network|ollama/i, {
     title: "The local model isn't responding.",
     hint: 'Make sure Ollama is running — use "Start / Check Ollama" in Models & Settings.',
@@ -5083,6 +5089,13 @@ async function init() {
   // number that matters to a desktop app; paint entries can lag when the window
   // launches behind another app.
   state.uiReadyMs = performance.now();
+  // Preload the configured local model while the user reads the dashboard.
+  // Without this the first prompt paid the whole model load (one measured turn
+  // spent ~120 s before its first token); the requester is idempotent, so focus
+  // and this call collapse into one request.
+  if (state.config?.provider === 'ollama' && state.config?.model) {
+    setTimeout(() => requestOllamaWarmup(state.config.model).catch(() => {}), 1500);
+  }
 }
 
 init().catch((err) => showToast(err.message));
