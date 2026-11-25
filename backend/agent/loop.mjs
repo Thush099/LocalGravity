@@ -15,6 +15,12 @@ import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
 import { goalContinuityNote, loadOpenGoals, persistGoalState } from './goal-continuity.mjs';
+import {
+  decompositionNudge,
+  unverifiedCompletionNote,
+  unverifiedCompletions,
+  verificationNudgeMessage,
+} from './goal-verification.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import {
   loadLearnedFixesExcerpt,
@@ -290,6 +296,9 @@ export async function runAgentTurn({
   let emptyOutputRetried = false;
   let latestPlan = null;
   let planNudged = false;
+  let decompNudged = false;
+  let verifyNudged = false;
+  const unverifiedDone = new Set();
 
   const [skills, knowledgeDocs, memoryDoc, learnedFixesExcerpt] = await Promise.all([
     listSkills(paths),
@@ -451,8 +460,26 @@ export async function runAgentTurn({
         });
         continue;
       }
-      if (isFinalAnswer && unfinishedSteps.length > 0) {
-        const note = planCompletionNote(unfinishedSteps);
+      // A claim backed by an action later in this same turn is no longer
+      // unverified at turn end: re-check the flagged set against the full
+      // tool log and correct the persisted goal record to match.
+      let unverifiedSteps = [...unverifiedDone].map((text) => ({ text }));
+      if (isFinalAnswer && unverifiedDone.size > 0) {
+        unverifiedSteps = unverifiedCompletions(
+          [],
+          unverifiedSteps.map((s) => ({ ...s, status: 'done' })),
+          executedToolResults,
+        );
+        if (latestPlan && unverifiedSteps.length !== unverifiedDone.size) {
+          await persistGoalState(latestPlan, {
+            paths,
+            sessionId: session?.id,
+            unverifiedTexts: unverifiedSteps.map((s) => s.text),
+          }).catch(() => {});
+        }
+      }
+      if (isFinalAnswer && (unfinishedSteps.length > 0 || unverifiedSteps.length > 0)) {
+        const note = planCompletionNote(unfinishedSteps) + unverifiedCompletionNote(unverifiedSteps);
         finalContent = `${finalContent || response.content || ''}${note}`;
         onEvent?.({ type: 'text_delta', text: note });
       }
@@ -522,10 +549,46 @@ export async function runAgentTurn({
         return gate.decision === 'allow';
       };
 
-      const recordCompletedToolCall = (tc, effectiveArgs, result) => {
+      const recordCompletedToolCall = async (tc, effectiveArgs, result) => {
         if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
+          // Cross-turn completion verification: a step newly marked done must
+          // have an observable action behind it this turn, or it stays flagged
+          // as unverified in the goal record for later turns to see.
+          for (const step of unverifiedCompletions(latestPlan, result.plan, executedToolResults)) {
+            unverifiedDone.add(step.text);
+          }
+          if (unverifiedDone.size > 0 && !verifyNudged) {
+            verifyNudged = true;
+            session.messages.push({
+              role: 'user',
+              content: verificationNudgeMessage([...unverifiedDone].map((text) => ({ text }))),
+              isSelfCorrection: true,
+              createdAt: new Date().toISOString(),
+            });
+          }
           latestPlan = result.plan;
-          persistGoalState(result.plan, { paths, sessionId: session?.id }).catch(() => {});
+          await persistGoalState(result.plan, {
+            paths,
+            sessionId: session?.id,
+            unverifiedTexts: [...unverifiedDone],
+          }).catch(() => {});
+        }
+        // Goal decomposition: acting on a compound request without a plan gets
+        // one nudge to decompose it before the work goes untracked.
+        if (!decompNudged && !latestPlan && !PARALLEL_SAFE_READ_TOOLS.has(tc.name)) {
+          const nudge = decompositionNudge(fullUserText, {
+            planPublished: false,
+            mutatingAction: true,
+          });
+          if (nudge) {
+            decompNudged = true;
+            session.messages.push({
+              role: 'user',
+              content: nudge,
+              isSelfCorrection: true,
+              createdAt: new Date().toISOString(),
+            });
+          }
         }
         const outcome = tracker.recordToolOutcome({
           name: tc.name,
@@ -629,7 +692,7 @@ export async function runAgentTurn({
                 output: out.message,
               });
             } else {
-              recordCompletedToolCall(batchTc, batchArgs, out.result);
+              await recordCompletedToolCall(batchTc, batchArgs, out.result);
             }
           }
           continue;
@@ -735,7 +798,7 @@ export async function runAgentTurn({
           }
         );
 
-        recordCompletedToolCall(tc, effectiveArgs, result);
+        await recordCompletedToolCall(tc, effectiveArgs, result);
       }
 
       session.updatedAt = new Date().toISOString();
