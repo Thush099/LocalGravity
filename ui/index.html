@@ -68,12 +68,14 @@
               <path d="M12 3l2.2 5.2L19.5 10l-4.2 3.8L16.5 19.5 12 16.6l-4.5 2.9 1.2-5.7L4.5 10l5.3-1.8L12 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
             </svg>
             <span class="nav-label">Skills &amp; Knowledge</span>
+            <span class="nav-kbd">⌘5</span>
           </button>
           <button type="button" class="nav-btn" data-view="automations">
             <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M13 2.5L5 14h6l-1 7.5L19 10h-6l0-7.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
             </svg>
             <span class="nav-label">Automations</span>
+            <span class="nav-kbd">⌘6</span>
           </button>
           <button type="button" class="nav-btn" data-view="settings">
             <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -81,6 +83,7 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" stroke="currentColor" stroke-width="1.6" />
             </svg>
             <span class="nav-label">Models &amp; Settings</span>
+            <span class="nav-kbd">⌘,</span>
           </button>
         </nav>
 
@@ -153,6 +156,11 @@
                   <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2.5h7A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z" stroke="currentColor" stroke-width="1.8" />
                 </svg>
                 <span id="workspace-cwd-label">Home (~)</span>
+              </button>
+              <button id="workspace-reveal-btn" class="chrome-icon-btn chrome-icon-sm hidden" type="button" title="Reveal project folder in Finder" aria-label="Reveal project folder in Finder">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M14 4h6v6M10 14L20 4M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
               </button>
               <div id="model-popover" class="popover hidden" role="dialog" aria-label="Switch model"></div>
             </div>
@@ -346,12 +354,20 @@
             </button>
           </header>
 
+          <div id="dash-smart-assist" class="smart-assist-strip hidden" role="region" aria-label="Smart Assist suggestions"></div>
+
           <div class="dash-hero">
             <div class="dash-card dash-briefing-card">
               <div class="dash-card-head">
-                <div>
-                  <h3>Today's briefing</h3>
-                  <div id="dash-briefing-sub" class="status-sub">Gathering news &amp; email…</div>
+                <div class="dash-card-title">
+                  <span class="dash-card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="12" r="4.1" stroke="currentColor" stroke-width="1.7" />
+                      <path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5l1.5 1.5M17 17l1.5 1.5M18.5 5.5L17 7M7 17l-1.5 1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    </svg></span>
+                  <div>
+                    <h3>Today's briefing</h3>
+                    <div id="dash-briefing-sub" class="status-sub">Gathering news &amp; email…</div>
+                  </div>
                 </div>
                 <div class="toolbar-actions">
                   <button id="dash-briefing-ask" class="secondary-btn" type="button">Ask for a summary</button>
@@ -362,9 +378,15 @@
             </div>
             <div class="dash-card dash-network-card">
               <div class="dash-card-head">
-                <div>
-                  <h3>Network</h3>
-                  <div class="status-sub">Per-app data usage on this Mac</div>
+                <div class="dash-card-title">
+                  <span class="dash-card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M3.2 8.8a13 13 0 0 1 17.6 0M6.4 12.4a8.4 8.4 0 0 1 11.2 0M9.6 16a4 4 0 0 1 4.8 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                      <circle cx="12" cy="19.3" r="1.3" fill="currentColor" />
+                    </svg></span>
+                  <div>
+                    <h3>Network</h3>
+                    <div class="status-sub">Per-app data usage on this Mac</div>
+                  </div>
                 </div>
                 <div class="toolbar-actions">
                   <button id="dash-speed-test" class="secondary-btn" type="button">Test speed</button>
@@ -375,7 +397,7 @@
           </div>
 
           <div id="dash-stats" class="stat-grid" aria-live="polite">
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="cpu">
               <div class="stat-top">
                 <span class="stat-label">CPU</span>
                 <span class="stat-value" id="dash-cpu">—</span>
@@ -383,7 +405,7 @@
               <div class="stat-spark" id="dash-cpu-spark"></div>
               <div class="stat-sub" id="dash-cpu-sub">Sampling…</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="mem">
               <div class="stat-top">
                 <span class="stat-label">Memory</span>
                 <span class="stat-value" id="dash-mem">—</span>
@@ -391,7 +413,7 @@
               <div class="stat-spark" id="dash-mem-spark"></div>
               <div class="stat-sub" id="dash-mem-sub">Unified RAM</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="gpu">
               <div class="stat-top">
                 <span class="stat-label">GPU</span>
                 <span class="stat-value" id="dash-gpu">—</span>
@@ -399,7 +421,7 @@
               <div class="stat-spark" id="dash-gpu-spark"></div>
               <div class="stat-sub" id="dash-gpu-sub">Apple Silicon GPU</div>
             </div>
-            <div class="stat-tile">
+            <div class="stat-tile" data-metric="disk">
               <div class="stat-top">
                 <span class="stat-label">Storage</span>
                 <span class="stat-value" id="dash-disk">—</span>
@@ -562,10 +584,10 @@
           <div id="monitor-updated" class="status-sub monitor-updated" aria-live="polite">Not sampled yet.</div>
           <div id="monitor-memory-alert" class="monitor-alert hidden" role="status"></div>
           <div id="monitor-stats" class="stat-grid">
-            <div class="stat-tile"><div class="stat-top"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span></div><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
-            <div class="stat-tile"><div class="stat-top"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span></div><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
-            <div class="stat-tile"><div class="stat-top"><span class="stat-label">GPU</span><span class="stat-value" id="mon-gpu">—</span></div><div class="usage-bar"><span id="mon-gpu-bar"></span></div></div>
-            <div class="stat-tile"><div class="stat-top"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span></div><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
+            <div class="stat-tile" data-metric="cpu"><div class="stat-top"><span class="stat-label">CPU</span><span class="stat-value" id="mon-cpu">—</span></div><div class="usage-bar"><span id="mon-cpu-bar"></span></div></div>
+            <div class="stat-tile" data-metric="mem"><div class="stat-top"><span class="stat-label">Memory</span><span class="stat-value" id="mon-mem">—</span></div><div class="usage-bar"><span id="mon-mem-bar"></span></div></div>
+            <div class="stat-tile" data-metric="gpu"><div class="stat-top"><span class="stat-label">GPU</span><span class="stat-value" id="mon-gpu">—</span></div><div class="usage-bar"><span id="mon-gpu-bar"></span></div></div>
+            <div class="stat-tile" data-metric="disk"><div class="stat-top"><span class="stat-label">Top volume</span><span class="stat-value" id="mon-disk">—</span></div><div class="usage-bar"><span id="mon-disk-bar"></span></div></div>
           </div>
 
           <div class="dash-card monitor-telemetry-card">
@@ -788,6 +810,7 @@
                 <button id="start-ollama-btn" class="secondary-btn" type="button">Start / Check Ollama</button>
                 <button id="unload-ollama-btn" class="secondary-btn" type="button" title="Unload resident Ollama models to immediately reclaim GPU RAM">Unload Model (Free RAM)</button>
               </div>
+              <div id="ui-perf-telemetry" class="perf-telemetry-strip"></div>
             </div>
 
             <div class="settings-section">
@@ -860,7 +883,7 @@
     </div>
 
     <!-- MODAL DIALOG -->
-    <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-card">
         <div class="modal-header">
           <h3 id="modal-title">Edit</h3>

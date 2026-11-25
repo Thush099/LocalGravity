@@ -89,3 +89,35 @@ test('dashboard resource tiles render live waves and an actionable storage alert
   assert.ok(app.includes('getCleanDownloadsPrompt'), 'the Clean downloads capability must launch from the alert');
   assert.ok(app.includes('renderSparkline'), 'the tiles draw real-time waves from renderSparkline');
 });
+test('emptyState escapes copy and keeps the action hook intact', async () => {
+  const app = await readAppSource();
+  const block = extractBlock(app, 'function emptyState(', '\nconst ZAP_ICON');
+  const escapeHtml = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const emptyState = new Function('escapeHtml', `${block}\nreturn emptyState;`)(escapeHtml);
+
+  const html = emptyState({
+    icon: '<svg></svg>',
+    title: '<b>No</b> skills',
+    detail: 'a & b',
+    action: { label: 'Go', attrs: 'data-empty-action="x"' },
+  });
+  assert.match(html, /role="status"/);
+  assert.match(html, /&lt;b&gt;No&lt;\/b&gt; skills/);
+  assert.match(html, /a &amp; b/);
+  assert.match(html, /data-empty-action="x"/);
+  assert.ok(!html.includes('<b>'), 'user copy must never be interpolated raw');
+
+  const plain = emptyState({ title: 'Nothing' });
+  assert.ok(!plain.includes('empty-state-action'), 'no action button without an action');
+});
+
+test('dialogs hide the page behind them from keyboard and assistive tech', async () => {
+  const app = await readAppSource();
+  assert.match(app, /function setShellInert\(on\)/, 'shell inert helper must exist');
+  assert.match(app, /setShellInert\(true\)/, 'opening a dialog must inert the shell');
+  assert.match(app, /function trapTabKey/, 'Tab must stay inside an open dialog');
+  const html = await fs.readFile(new URL('../ui/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="modal-backdrop"[^>]*aria-labelledby="modal-title"/, 'dialog needs an accessible name');
+});
+
