@@ -302,10 +302,10 @@ async function readWithIdleGuard(reader, idleTimeoutMs) {
       err.code = 'STREAM_STALLED';
       reject(err);
     }, ms);
-    // Deliberately NOT unref'd: the watchdog must keep the event loop alive until
-    // it fires. An unref'd timer drains with the loop when the stalled read is the
-    // only pending work (one-shot CLI runs, node --test children), and the read
-    // then hangs forever. The timer is cleared the moment the read settles.
+    // Deliberately ref'd: while we wait for a chunk, the watchdog is the only thing
+    // guaranteeing this promise settles. An unref'd timer lets the event loop drain
+    // and the read promise is abandoned ("event loop has already resolved"), which
+    // is exactly what CI hit on Node 22.
   });
 
   try {
