@@ -181,6 +181,7 @@ const HUMAN_TOOL_META = {
   open_app: { label: 'Open App', summarize: (a) => a.name || '' },
   manage_notes: { label: 'Apple Notes', summarize: (a) => `${a.action || 'list'}${a.title ? ` · ${a.title}` : ''}` },
   set_reminder: { label: 'Set Reminder', summarize: (a) => `${a.seconds || 0}s` },
+  cancel_reminder: { label: 'Cancel Reminder', summarize: (a) => a.message || a.id || '' },
   system_stats: { label: 'System Stats', summarize: () => 'CPU, RAM, GPU & Swap' },
   briefing: { label: 'Situational Briefing', summarize: (a) => a.focus || 'System & schedule' },
   network_usage: { label: 'Network Usage', summarize: () => 'Data used per app & this month' },

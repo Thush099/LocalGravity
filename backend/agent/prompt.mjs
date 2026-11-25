@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { boundedMemoryContent } from './memory-capture.mjs';
 
 const MODE_DIRECTIVES = {
   engineer:
@@ -19,6 +20,8 @@ export function buildSystemPrompt({
   suggestedSkills = [],
   knowledgeDocs = [],
   memoryContent = '',
+  goalContext = '',
+  memoryQuery = '',
   learnedFixesContent = '',
   repoPath = '',
   safetyMode = 'ask',
@@ -55,7 +58,11 @@ export function buildSystemPrompt({
       ? knowledgeDocs.map((d) => `- ${d.name}: ${d.title}`).join('\n')
       : '- (no knowledge documents yet)';
 
-  const trimmedMemory = String(memoryContent || '').trim().slice(0, compact ? 600 : 1200);
+  const trimmedMemory = boundedMemoryContent(memoryContent, {
+    maxChars: compact ? 600 : 1200,
+    query: memoryQuery,
+  });
+  const trimmedGoals = String(goalContext || '').trim().slice(0, compact ? 400 : 900);
   const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, compact ? 500 : 1000);
   const modeLine = isHeadless
     ? allowAutoRun
@@ -81,6 +88,7 @@ export function buildSystemPrompt({
       '2. Expand only when the user asks for detail, and include every requested point.',
       '3. Finish the requested task, then stop.',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+      trimmedGoals ? `\n## Open Goals\n${trimmedGoals}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
       .join('\n')
@@ -110,6 +118,7 @@ export function buildSystemPrompt({
       `\n## Knowledge Docs\n${knowledgeLines}`,
       trimmedFixes ? `\n## Learned Fixes\n${trimmedFixes}` : '',
       trimmedMemory ? `\n## Memory\n${trimmedMemory}` : '',
+      trimmedGoals ? `\n## Open Goals\n${trimmedGoals}` : '',
     ]
       .filter((line) => line !== '' && line !== undefined)
       .join('\n')
@@ -132,7 +141,7 @@ export function buildSystemPrompt({
     '4. **Autonomous Self-Healing & Mistake Learning:** If a command, edit, or tool call fails, never repeat the identical failing call. Diagnose the root cause from the `[Self-Healing Hint]`, pivot immediately, and call `self_improve` (or `save_skill`) to program the verified fix and helper script so you never repeat that mistake.',
     '5. **Plan & Verify:** For any task with 2+ distinct steps, call `update_plan` first to publish a checklist (mark steps `active`/`done` as you go) so the user can watch progress. Batch independent tool calls (e.g. creating or reading several separate files) into one turn so they run together; keep dependent steps sequential. Read files before editing (`read_file`/`search_files`). After editing code or running scripts, execute real tests/checks (`run_command`) and report only directly observed results. Use `calculate` for exact arithmetic instead of guessing numbers.',
     '6. **Visual Media Inspection:** When editing photos or videos, call `inspect_media` before and after edits to visually verify framing, lighting, and text.',
-    '7. **macOS Automation & Quick Actions:** Use `run_applescript` for deep Finder/Notes/Safari/System Events automation and `run_shortcut` to invoke the Shortcuts the user has built. For everyday actions use `copy_to_clipboard` / `paste_from_clipboard`, `show_notification`, `open_app`, and `set_reminder` (background timer) rather than shelling out. After organizing files with `move_file`, tell the user they can reverse it with `undo_file_moves`.',
+    '7. **macOS Automation & Quick Actions:** Use `run_applescript` for deep Finder/Notes/Safari/System Events automation and `run_shortcut` to invoke the Shortcuts the user has built. For everyday actions use `copy_to_clipboard` / `paste_from_clipboard`, `show_notification`, `open_app`, `set_reminder` (background timer) and `cancel_reminder` (when they change their mind) rather than shelling out. After organizing files with `move_file`, tell the user they can reverse it with `undo_file_moves`.',
     '8. **Everyday Dashboard Tools:** For "how is my Mac" questions call `system_stats` (CPU, memory, GPU, storage, top processes) and quote its numbers. For "what\'s next", "add X at Y", or planning requests use `list_schedule_items` / `add_schedule_item` (recurring days, or `date` for one-offs) / `remove_schedule_item` instead of shelling out.',
     '9. **Always provide a direct final response:** Never end a turn with an empty reply. Skip throat-clearing and state exact actions, file paths, and results.',
     '10. Finish the requested task, then stop. Report only what was actually verified, and do not invent additional work.',
@@ -148,6 +157,7 @@ export function buildSystemPrompt({
     knowledgeLines,
     trimmedFixes ? `\n## Self-Learned Mistake Prevention Rules (LEARNED_FIXES.md)\n${trimmedFixes}` : '',
     trimmedMemory ? `\n## Persistent User Memory (MEMORY.md)\n${trimmedMemory}` : '',
+    trimmedGoals ? `\n## Open Goals (your own published plans)\n${trimmedGoals}` : '',
   ]
     .filter((line) => line !== undefined)
     .join('\n')
