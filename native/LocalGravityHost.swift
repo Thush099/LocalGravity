@@ -33,6 +33,7 @@ final class GravityWebView: WKWebView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow!
+    private var visualEffectView: NSVisualEffectView!
     private var webView: GravityWebView!
     private var serverProcess: Process?
     private var serverStdinPipe: Pipe?
@@ -58,23 +59,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private func setupMainMenu() {
         let mainMenu = NSMenu()
 
+        // App Menu
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About LocalGravity", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(triggerSettings), keyEquivalent: ",")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Hide LocalGravity", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit LocalGravity", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
 
+        // File Menu
         let fileMenuItem = NSMenuItem()
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "New Task", action: #selector(triggerNewTask), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: "Open Project Folder…", action: #selector(triggerOpenFolder), keyEquivalent: "o")
+        fileMenu.addItem(NSMenuItem.separator())
         let exportItem = NSMenuItem(title: "Export Conversation…", action: #selector(triggerExport), keyEquivalent: "e")
         exportItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(exportItem)
         fileMenuItem.submenu = fileMenu
 
+        // Edit Menu
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "Edit")
@@ -87,34 +101,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenuItem.submenu = editMenu
 
+        // View Menu
         let viewMenuItem = NSMenuItem()
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: "View")
-        viewMenu.addItem(withTitle: "Command Palette", action: #selector(triggerPalette), keyEquivalent: "k")
+        viewMenu.addItem(withTitle: "Command Palette…", action: #selector(triggerPalette), keyEquivalent: "k")
+        viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(triggerToggleSidebar), keyEquivalent: "\\")
+        viewMenu.addItem(NSMenuItem.separator())
+
+        let viewSpecs: [(String, String, String)] = [
+            ("Dashboard", "dashboard", "1"),
+            ("Agent", "agent", "2"),
+            ("System Monitor", "monitor", "3"),
+            ("Timetable", "schedule", "4"),
+            ("Skills & Knowledge", "skills", "5"),
+            ("Automations", "automations", "6")
+        ]
+        for (title, viewId, key) in viewSpecs {
+            let item = NSMenuItem(title: title, action: #selector(triggerViewSwitch(_:)), keyEquivalent: key)
+            item.representedObject = viewId
+            viewMenu.addItem(item)
+        }
+
         viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(withTitle: "Reload", action: #selector(reloadWebView), keyEquivalent: "r")
+        let fullScreenItem = NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(fullScreenItem)
         viewMenuItem.submenu = viewMenu
 
+        // Window Menu
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         windowMenuItem.submenu = windowMenu
+        NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
     }
 
+    private func sendMenuAction(_ action: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: action),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction(\(json));")
+    }
+
+    @objc private func triggerSettings() {
+        sendMenuAction("settings")
+    }
+
     @objc private func triggerNewTask() {
-        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('newTask');")
+        sendMenuAction("newTask")
+    }
+
+    @objc private func triggerOpenFolder() {
+        sendMenuAction("pickFolder")
     }
 
     @objc private func triggerExport() {
-        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('export');")
+        sendMenuAction("export")
     }
 
     @objc private func triggerPalette() {
-        webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction('palette');")
+        sendMenuAction("palette")
+    }
+
+    @objc private func triggerToggleSidebar() {
+        sendMenuAction("toggleSidebar")
+    }
+
+    @objc private func triggerViewSwitch(_ sender: NSMenuItem) {
+        if let viewId = sender.representedObject as? String {
+            sendMenuAction("view:\(viewId)")
+        }
     }
 
     @objc private func reloadWebView() {
@@ -124,21 +187,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private func setupWindow() {
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "localgravity")
+        let nativeScript = WKUserScript(
+            source: "document.documentElement.classList.add('is-macos-native');",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(nativeScript)
 
-        let rect = NSRect(x: 0, y: 0, width: 1260, height: 820)
+        let rect = NSRect(x: 0, y: 0, width: 1280, height: 840)
         window = NSWindow(
             contentRect: rect,
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.center()
+        if !window.setFrameUsingName("LocalGravityMainWindow") {
+            window.center()
+        }
+        window.setFrameAutosaveName("LocalGravityMainWindow")
         window.title = "LocalGravity"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = false
+        window.collectionBehavior = [.fullScreenPrimary]
         window.minSize = NSSize(width: 920, height: 600)
-        window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
+        window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.047, blue: 0.059, alpha: 1.0)
         window.isReleasedWhenClosed = false
 
-        webView = GravityWebView(frame: rect, configuration: config)
+        visualEffectView = NSVisualEffectView(frame: rect)
+        visualEffectView.material = .underWindowBackground
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.state = .followsWindowActiveState
+        visualEffectView.autoresizingMask = [.width, .height]
+
+        webView = GravityWebView(frame: visualEffectView.bounds, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
@@ -147,7 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             self?.sendFilesToJS(paths)
         }
 
-        window.contentView = webView
+        visualEffectView.addSubview(webView)
+        window.contentView = visualEffectView
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -277,9 +360,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     private func showStartupError(_ message: String) {
         let html = """
-        <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0b0d11;color:#f1f5f9;padding:40px;">
+        <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0b0c0f;color:#f5f5f7;padding:48px;">
         <h2>LocalGravity could not start</h2>
-        <pre style="white-space:pre-wrap;background:#11151d;padding:16px;border-radius:8px;">\(message)</pre>
+        <pre style="white-space:pre-wrap;background:#15181f;padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);">\(message)</pre>
         </body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)
@@ -316,16 +399,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                     self?.webView.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
                 }
             }
+        } else if type == "revealInFinder", let rawPath = body["path"] as? String, !rawPath.isEmpty {
+            let expanded = (rawPath as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: expanded) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: expanded)])
+            }
         } else if type == "setTheme", let theme = body["theme"] as? String {
-            if theme == "light" {
+            switch theme {
+            case "light":
                 window.appearance = NSAppearance(named: .aqua)
-                window.backgroundColor = NSColor(srgbRed: 0.961, green: 0.969, blue: 0.984, alpha: 1.0)
-            } else if theme == "dark" {
+                window.backgroundColor = NSColor(srgbRed: 0.957, green: 0.961, blue: 0.973, alpha: 1.0)
+            case "nord":
                 window.appearance = NSAppearance(named: .darkAqua)
-                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
-            } else {
+                window.backgroundColor = NSColor(srgbRed: 0.180, green: 0.204, blue: 0.251, alpha: 1.0)
+            case "solarized":
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.backgroundColor = NSColor(srgbRed: 0.000, green: 0.169, blue: 0.212, alpha: 1.0)
+            case "cyberpunk":
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.027, blue: 0.086, alpha: 1.0)
+            case "dark":
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.047, blue: 0.059, alpha: 1.0)
+            default:
                 window.appearance = nil
-                window.backgroundColor = NSColor(srgbRed: 0.043, green: 0.051, blue: 0.067, alpha: 1.0)
+                window.backgroundColor = NSColor.windowBackgroundColor
             }
         } else if type == "openExternal", let urlStr = body["url"] as? String, let url = URL(string: urlStr) {
             NSWorkspace.shared.open(url)

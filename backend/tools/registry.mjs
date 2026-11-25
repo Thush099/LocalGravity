@@ -543,7 +543,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'daily_briefing',
       description:
-        "Gather the material for a morning briefing: top world news, today's email, and WhatsApp status. Read-only. Use when the user asks for a daily briefing, a morning summary, or 'summarize my day'. The model turns the gathered material into a friendly summary.",
+        "Gather the material for a morning briefing: the day's weather, top world news, and today's email. Read-only. Use when the user asks for a daily briefing, a morning summary, or 'summarize my day'. The model turns the gathered material into a friendly summary.",
       parameters: {
         type: 'object',
         properties: {

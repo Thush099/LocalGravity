@@ -23,6 +23,9 @@ const LOCAL_FS_REF_RE =
 /** True when the request is purely to rewrite/summarize text the user pasted, not to act on files. */
 function isPureTextTransform(msg) {
   const s = String(msg || '');
+  // "Summarize this article: https://…" is a fetch, not a paste. The text lives on the
+  // web, so the turn needs fetch_url instead of a tool-free rewrite prompt.
+  if (/https?:\/\//i.test(s)) return false;
   // Only the request phrasing matters; anything pasted after a colon is data to transform.
   const request = s.split(/[:\n]/)[0].slice(0, 200);
   if (LOCAL_FS_REF_RE.test(request)) return false;
@@ -55,6 +58,7 @@ const DISCOVERY_TOOLS = new Set([
   'search_web',
   'fetch_url',
   'open_url',
+  'read_email',
   'list_schedule_items',
   'git_op',
   'sqlite_query',
@@ -106,7 +110,7 @@ const DOMAIN_TOOL_GROUPS = [
   {
     tools: ['system_stats'],
     pattern:
-      /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b|\b(?:battery|power|charge|charging|uptime|storage|free\s+(?:space|memory|ram)|slow|sluggish|overheat\w*|fans?|temperature)\b|\b(?:how(?:'s| is)\s+(?:my|the)|my|the|this)\s+(?:mac|computer|machine|laptop|system|pc)\b/i,
+      /\b(?:system\s+stats|system\s+monitor|cpu|memory\s+usage|ram|gpu|disk\s+space|top\s+processes|slow\s+mac|activity\s+monitor)\b|\b(?:battery|power|charge|charging|uptime|storage|free\s+(?:space|memory|ram)|slow|sluggish|overheat\w*|fans?|(?:cpu|gpu|core|system)\s+temperature)\b|\b(?:how(?:'s| is)\s+(?:my|the)|my|the|this)\s+(?:mac|computer|machine|laptop|system|pc)\b/i,
   },
   {
     tools: ['network_usage', 'speed_test'],
@@ -114,9 +118,33 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:data\s+usage|network\s+usage|internet\s+(?:speed|usage)|speed\s*test|bandwidth|how\s+much\s+data|data\s+consumption|monthly\s+(?:data|usage|bandwidth)|upload\s+(?:speed|usage|rate)|download\s+(?:speed|usage|rate)|which\s+app\w*.{0,24}(?:data|network|bandwidth)|\d+\s*mbps|megabits?|connection\s+speed|(?:wifi|wi-?fi)\s+(?:speed|data|usage)|top\s+talkers?)\b/i,
   },
   {
+    // Inbox questions come in every shape: "my unread emails", "summarize the
+    // inbox", "anything urgent in my mail today". A qualifier between the
+    // possessive and the noun used to defeat the briefing pattern entirely, so
+    // the model was handed file tools and correctly answered that it could not
+    // read mail. Match the mail nouns directly instead.
+    tools: ['read_email'],
+    pattern:
+      /\b(?:unread|new|recent|latest|today'?s?|flagged|important|urgent)\s+(?:e-?mails?|inbox|mail)\b|\b(?:my|the)\s+(?:e-?mails?|inbox|mail)\b|\b(?:e-?mails?|inbox)\b.{0,40}\b(?:unread|urgent|important|summar\w*|digest|triage|flag\w*)\b|\b(?:check|read|open|summarize|triage)\s+(?:my\s+|the\s+)?(?:e-?mails?|inbox|mail)\b|\b(?:draft|compose|reply\s+to|respond\s+to)\b.{0,40}\b(?:e-?mail|mail|message)\b/i,
+  },
+  {
+    // Weather is part of the daily briefing payload, and "weather" matched no group:
+    // a plain "what's the weather like today" reached a model with no tools at all.
+    tools: ['daily_briefing'],
+    pattern:
+      /\b(?:weather|forecast|rain|rainy|umbrella|humidity|sunny|cloudy|snow|storm\w*|temperature\s+(?:outside|today|now)|how\s+(?:hot|cold|warm)\s+(?:is\s+)?it)\b|\b(?:will|is)\s+it\s+(?:rain|snow)\b/i,
+  },
+  {
+    tools: ['run_command', 'run_applescript'],
+    // System switches have no dedicated tool: the agent flips them through a shell or
+    // AppleScript command. Without this group it answered from memory instead.
+    pattern:
+      /\b(?:ip\s+address|public\s+ip|wi-?fi|bluetooth|airdrop|do\s+not\s+disturb|focus\s+mode|low\s+power\s+mode|volume|brightness|dark\s+mode|light\s+mode|night\s+shift|keyboard\s+backlight|empty\s+(?:the\s+|my\s+)?trash|emptying\s+(?:the\s+|my\s+)?trash|screen\s+resolution)\b/i,
+  },
+  {
     tools: ['daily_briefing', 'world_news', 'read_email'],
     pattern:
-      /\b(?:daily\s+briefing|briefing|morning\s+(?:brief|summary|update)|summarize\s+my\s+(?:day|email|inbox|mail|messages)|world\s+news|(?:top|latest|today\w{0,6})\s+(?:\d+\s+)?(?:world\s+)?news|news\s+(?:today|summary|headlines|roundup|update)|what\w{0,10}\s+(?:is\s+)?happening\s+in\s+the\s+world|read\s+my\s+(?:email|inbox|mail|messages)|(?:my|new|today\w{0,6})\s+(?:email|inbox|mail|messages)|emails?\s+(?:today|this\s+morning|unread))\b/i,
+      /\b(?:daily\s+briefing|briefing|morning\s+(?:brief|summary|update)|summarize\s+my\s+(?:day|email|inbox|mail|messages)|world\s+news|(?:top|latest|today\w{0,6})\s+(?:\d+\s+)?(?:world\s+)?news|news\s+(?:today|summary|headlines|roundup|update)|what\w{0,10}\s+(?:is\s+)?happening\s+in\s+the\s+world|read\s+my\s+(?:email|inbox|mail|messages)|emails?\s+(?:today|this\s+morning|unread))\b/i,
   },
   {
     tools: ['large_files'],
@@ -124,8 +152,15 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:large|big|biggest|largest|huge|massive)\s+(?:files?|items?|documents?|videos?|photos?)\b|\b(?:what'?s|what is)\s+(?:taking|eating|using|hogging|filling)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space|drive)\b|\b(?:disk|storage|drive)\s+(?:cleanup|clean\s?up|usage|full|clutter)\b|\bfree\s*up\s+(?:disk|space|storage)\b/i,
   },
   {
-    tools: ['inspect_media', 'take_screenshot', 'run_command'],
-    pattern: /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|screenshot|screen|display|desktop|on my screen|what'?s on|crop|resize|thumbnail|color|grade|audio|png|jpe?g|mp4|mov|webp|heic)\b/i,
+    tools: ['take_screenshot'],
+    // Screenshot capture is its own verb; a bare mention of "desktop" or "screen"
+    // used to add the capture schema to every file-organization turn.
+    pattern: /\b(?:take|grab|capture|snap)\b.{0,24}\b(?:screen\s?shot|screen\s+shot)\b|\bscreen\s?shot\s+(?:of|my|the)\b/i,
+  },
+  {
+    tools: ['inspect_media', 'run_command'],
+    pattern:
+      /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|crop|resize|thumbnail|color\s+grade|audio|png|jpe?g|mp4|mov|webp|heic)\b|\bwhat(?:'s| is)\s+on\s+(?:my\s+|the\s+)?(?:screen|display)\b/i,
   },
   {
     tools: ['spotlight_search'],
@@ -138,7 +173,11 @@ const DOMAIN_TOOL_GROUPS = [
   },
   {
     tools: ['list_schedule_items', 'add_schedule_item', 'remove_schedule_item'],
-    pattern: /\b(?:schedule|timetable|agenda|calendar|meeting|class|workout|block|routine|daily|weekly|tomorrow|today|what'?s next|plan my day|timeblock)\b/i,
+    // "today" and "daily" on their own are far too common to imply a timetable
+    // question; a bare mention used to drag three schedule schemas into every
+    // turn that said "today", slowing local prefill for no reason.
+    pattern:
+      /\b(?:schedule|timetable|agenda|calendar|meeting|class|workout|routine|timeblock|what'?s next|plan my day)\b|\b(?:daily|weekly)\s+(?:plan|schedule|routine|agenda|review|standup)\b|\b(?:add|remove|delete|move|cancel|reschedule)\b.{0,40}\b(?:block|session)\b|\b(?:today|tomorrow)\b.{0,30}\b(?:schedule|plan|agenda|blocks?|timetable)\b|\b(?:schedule|plan|agenda|blocks?|timetable)\b.{0,30}\b(?:today|tomorrow)\b/i,
   },
   {
     tools: ['copy_to_clipboard', 'paste_from_clipboard'],
@@ -150,15 +189,27 @@ const DOMAIN_TOOL_GROUPS = [
   },
   {
     tools: ['open_app', 'run_shortcut', 'run_applescript', 'manage_notes'],
-    pattern: /\b(?:open\s+[a-z]|launch\s+[a-z]|shortcut|shortcuts|applescript|osascript|finder|safari|notes|apple notes|my notes|note titled|save.*note|create.*note|mail|music|calendar|system events|automate)\b/i,
+    // Bare "mail", "music" or "calendar" made every inbox question load app
+    // automation tools; the explicit open/launch verb covers those requests.
+    pattern:
+      /\b(?:open|launch|start)\s+(?:the\s+)?(?:app|application)\b|\b(?:open|launch|start)\s+(?:safari|mail|notes|music|calendar|finder|terminal|slack|whatsapp|discord|chrome|spotify|photos|messages|reminders|maps|preview|xcode|vs\s?code|figma|notion|obsidian|zoom|pages|numbers|keynote|system\s+settings)\b|\bmy\s+notes?\b|\bnotes?\s+app\b|\bapple\s+notes\b|\bnote\s+titled\b|\b(?:check|search|look\s+in|find)\b.{0,24}\bnotes\b|\b(?:shortcut|shortcuts|applescript|osascript|automate)\b|\b(?:save|create)\b.{0,20}\bnote\b/i,
   },
   {
     tools: ['search_knowledge', 'read_knowledge', 'save_knowledge', 'read_skill', 'save_skill', 'self_improve'],
-    pattern: /\b(?:knowledge|memory|remember|preference|preferences|note|guide|learn|mistake|improve|self[- ]?improve|reprogram|install|upgrade|skill|workflow|teach)\b/i,
+    pattern:
+      /\b(?:knowledge|memory|remember|preference|preferences|guide|learn|mistake|self[- ]?improve|reprogram|skill|teach)\b|\b(?:save|add|update|record)\s+(?:a\s+|this\s+)?(?:note|knowledge|memory|preference)\b|\binstall\s+(?:a\s+)?(?:skill|tool|capability|plugin)\b/i,
+  },
+  {
+    tools: ['run_command'],
+    pattern:
+      /\bwhat(?:'s| is)\s+the\s+time\b|\bwhat\s+time\s+is\s+it\b|\b(?:current|local)\s+time\b|\bwhat(?:'s| is)\s+(?:today'?s?\s+)?date\b/i,
   },
   {
     tools: ['calculate'],
-    pattern: /\b(?:calculate|calc|compute|math|sum|percent|percentage|average|mean|convert|equation|sqrt|log)\b|\d+\s*[+\-*/^%]\s*\d+/i,
+    // Bare "percent"/"average" caught "set the volume to 30 percent", which then
+    // handed the model a calculator schema for a system-setting request.
+    pattern:
+      /\b(?:calculate|calc|compute|math|arithmetic|equation|sqrt|log)\b|\b(?:sum|average|mean|percent\w*|convert)\s+of\b|\d+\s*%\s*(?:of|off)\b|\d+\s*[+\-*/^]\s*\d+/i,
   },
   {
     tools: ['search_web', 'fetch_url', 'open_url'],

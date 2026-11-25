@@ -439,3 +439,109 @@ test('tool-call JSON repair never corrupts valid JSON or string contents', () =>
   assert.deepEqual(safeParseArguments(`{'a':'b'}`).arguments, { a: 'b' });
   assert.ok(safeParseArguments(`{"a":"don't"}`).arguments.a === "don't");
 });
+
+test('a dropped local connection retries when nothing has streamed yet', async () => {
+  const origFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async (url) => {
+    const endpoint = new URL(String(url));
+    if (endpoint.pathname === '/api/chat') {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError('fetch failed');
+      return makeStreamResponse([JSON.stringify({ message: { role: 'assistant', content: 'Recovered' }, done: true }) + '\n']);
+    }
+    return new Response('Not found', { status: 404 });
+  };
+  try {
+    const events = [];
+    const result = await streamOllamaChat({
+      baseUrl: 'http://mock-ollama.local',
+      model: 'qwen3.5:4b',
+      messages: [{ role: 'user', content: 'hi' }],
+      onEvent: (e) => events.push(e),
+    });
+    assert.equal(attempts, 2);
+    assert.equal(result.content, 'Recovered');
+    assert.deepEqual(events.filter((e) => e.type === 'text_delta').map((e) => e.text), ['Recovered']);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('a connection that drops mid-stream is not replayed and is explained in plain language', async () => {
+  const origFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async (url) => {
+    const endpoint = new URL(String(url));
+    if (endpoint.pathname === '/api/chat') {
+      attempts += 1;
+      const encoder = new TextEncoder();
+      // Deliver one real chunk first, then drop the socket: `error()` called in the
+      // same tick would discard the queued chunk, which is a different scenario.
+      let pulls = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            pulls += 1;
+            if (pulls === 1) {
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ message: { content: 'Partial' }, done: false }) + '\n')
+              );
+            } else {
+              controller.error(new Error('fetch failed'));
+            }
+          },
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response('Not found', { status: 404 });
+  };
+  try {
+    const deltas = [];
+    await assert.rejects(
+      () =>
+        streamOllamaChat({
+          baseUrl: 'http://mock-ollama.local',
+          model: 'qwen3.5:4b',
+          messages: [{ role: 'user', content: 'hi' }],
+          onEvent: (e) => {
+            if (e.type === 'text_delta') deltas.push(e.text);
+          },
+        }),
+      (err) => {
+        // Never retry once tokens are on screen, or the user sees the answer twice.
+        assert.equal(attempts, 1);
+        assert.match(err.message, /connection dropped/i);
+        assert.match(err.message, /fetch failed/);
+        assert.doesNotMatch(err.message, /^fetch failed$/);
+        return true;
+      }
+    );
+    assert.deepEqual(deltas, ['Partial']);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('a rejected local request keeps the server error instead of blaming the network', async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const endpoint = new URL(String(url));
+    if (endpoint.pathname === '/api/chat') return new Response('model requires more system memory', { status: 500 });
+    return new Response('Not found', { status: 404 });
+  };
+  try {
+    await assert.rejects(
+      () =>
+        streamOllamaChat({
+          baseUrl: 'http://mock-ollama.local',
+          model: 'qwen3.5:4b',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      /Ollama chat error \(500\): model requires more system memory/
+    );
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
