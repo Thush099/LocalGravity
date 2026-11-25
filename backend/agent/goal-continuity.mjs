@@ -48,7 +48,10 @@ export function goalMatchesQuery(steps, query) {
 function goalBlock(goal) {
   const when = String(goal.updatedAt || '').slice(0, 10) || 'earlier';
   const lines = goal.steps
-    .map((s) => `  [${s.status === 'done' ? 'x' : ' '}] ${String(s.text)}`)
+    .map(
+      (s) =>
+        `  [${s.status === 'done' ? 'x' : ' '}] ${String(s.text)}${s.unverified ? ' (unverified)' : ''}`,
+    )
     .join('\n');
   return `Open plan (updated ${when}):\n${lines}`;
 }
@@ -77,14 +80,16 @@ export function goalContinuityNote(goals, query, { maxChars = 900, maxGoals = 2 
  */
 export async function persistGoalState(
   plan,
-  { paths = getRuntimePaths(), sessionId = 'unknown', now = new Date().toISOString() } = {},
+  { paths = getRuntimePaths(), sessionId = 'unknown', now = new Date().toISOString(), unverifiedTexts = [] } = {},
 ) {
   const key = String(sessionId || 'unknown');
+  const unverified = new Set((Array.isArray(unverifiedTexts) ? unverifiedTexts : []).map(String));
   const steps = (Array.isArray(plan) ? plan : [])
     .filter((s) => s && typeof s.text === 'string' && s.text.trim().length > 0)
     .map((s) => ({
       text: s.text.trim(),
       status: s.status === 'done' ? 'done' : s.status === 'active' ? 'active' : 'pending',
+      ...(s.status === 'done' && unverified.has(s.text.trim()) ? { unverified: true } : {}),
     }));
   const rest = (await loadOpenGoals(paths)).filter((goal) => goal.sessionId !== key);
   const goals =

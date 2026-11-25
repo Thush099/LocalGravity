@@ -1,0 +1,119 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  decompositionNudge,
+  unverifiedCompletions,
+  verificationNudgeMessage,
+  unverifiedCompletionNote,
+} from '../backend/agent/goal-verification.mjs';
+import { goalContinuityNote, persistGoalState, loadOpenGoals } from '../backend/agent/goal-continuity.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { getRuntimePaths } from '../backend/state/paths.mjs';
+
+process.env.LOCALGRAVITY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-goal-verify-'));
+
+test('decompositionNudge fires on enumerated multi-step requests while acting without a plan', () => {
+  const message = 'Please:\n1. fix the failing CI\n2. write the release notes\n3. tag the release';
+  const nudge = decompositionNudge(message, { planPublished: false, mutatingAction: true });
+  assert.ok(nudge.includes('update_plan'), 'the nudge points at the plan tool');
+  assert.ok(nudge.includes('verifiable'), 'the nudge asks for verifiable steps');
+});
+
+test('decompositionNudge fires on sequencing phrases', () => {
+  const nudge = decompositionNudge(
+    'Clean the cache and then rebuild the app, and after that run the smoke tests.',
+    { planPublished: false, mutatingAction: true },
+  );
+  assert.ok(nudge.length > 0);
+});
+
+test('decompositionNudge stays silent when inappropriate', () => {
+  // Single, simple request
+  assert.equal(decompositionNudge('what is 2+2?', { planPublished: false, mutatingAction: true }), '');
+  // Plan already published
+  assert.equal(
+    decompositionNudge('1. do a\n2. do b', { planPublished: true, mutatingAction: true }),
+    '',
+  );
+  // Only recon so far — give the model room to publish its own plan first
+  assert.equal(decompositionNudge('1. do a\n2. do b', { planPublished: false, mutatingAction: false }), '');
+  // Empty input
+  assert.equal(decompositionNudge('', { planPublished: false, mutatingAction: true }), '');
+});
+
+test('unverifiedCompletions flags newly-done steps with no observable action', () => {
+  const previous = [{ text: 'Fix the failing test', status: 'active' }];
+  const next = [{ text: 'Fix the failing test', status: 'done' }];
+  const flagged = unverifiedCompletions(previous, next, []);
+  assert.equal(flagged.length, 1);
+  assert.equal(flagged[0].text, 'Fix the failing test');
+});
+
+test('unverifiedCompletions accepts steps backed by the turn tool log', () => {
+  const previous = [{ text: 'Fix the failing test', status: 'active' }];
+  const next = [{ text: 'Fix the failing test', status: 'done' }];
+  const tools = [{ name: 'run_command', args: { command: 'npm test' }, ok: true, output: 'all pass' }];
+  assert.deepEqual(unverifiedCompletions(previous, next, tools), []);
+});
+
+test('unverifiedCompletions ignores steps already done before this update', () => {
+  const previous = [{ text: 'Research the options', status: 'done' }, { text: 'Write the summary', status: 'active' }];
+  const next = [{ text: 'Research the options', status: 'done' }, { text: 'Write the summary', status: 'done' }];
+  const tools = [{ name: 'write_file', args: { path: 'summary.md', content: 'the summary' }, ok: true, output: 'ok' }];
+  assert.deepEqual(unverifiedCompletions(previous, next, tools), []);
+});
+
+test('unverifiedCompletions on a first plan flags done steps with no tool backing', () => {
+  const next = [
+    { text: 'Deploy the staging box', status: 'done' },
+    { text: 'Write the release notes', status: 'pending' },
+  ];
+  const tools = [{ name: 'run_command', args: { command: 'docker build -t app .' }, ok: true, output: 'built' }];
+  const flagged = unverifiedCompletions(null, next, tools);
+  assert.deepEqual(flagged.map((s) => s.text), ['Deploy the staging box']);
+});
+
+test('unverifiedCompletions does not accept a prior plan as evidence — a claim cannot verify itself', () => {
+  const previous = [{ text: 'Deploy the staging box', status: 'active' }];
+  const next = [{ text: 'Deploy the staging box', status: 'done' }];
+  const tools = [
+    {
+      name: 'update_plan',
+      args: { steps: [{ text: 'Deploy the staging box', status: 'active' }] },
+      ok: true,
+      output: 'Plan updated',
+    },
+  ];
+  const flagged = unverifiedCompletions(previous, next, tools);
+  assert.deepEqual(flagged.map((s) => s.text), ['Deploy the staging box']);
+});
+
+test('verificationNudgeMessage names the exact steps and the honest alternative', () => {
+  const msg = verificationNudgeMessage([{ text: 'Deploy the staging box', status: 'done' }]);
+  assert.ok(msg.includes('Deploy the staging box'));
+  assert.ok(msg.includes('without an observable'));
+  assert.ok(msg.includes('honestly'));
+});
+
+test('unverifiedCompletionNote is empty when nothing is unverified', () => {
+  assert.equal(unverifiedCompletionNote([]), '');
+});
+
+test('goal records persist unverified markers so later turns see them', async () => {
+  const paths = getRuntimePaths();
+  await persistGoalState(
+    [
+      { text: 'Deploy the staging box', status: 'done' },
+      { text: 'Write the release notes', status: 'pending' },
+    ],
+    { paths, sessionId: 'verify-1', unverifiedTexts: ['Deploy the staging box'] },
+  );
+  const goals = await loadOpenGoals(paths);
+  const record = goals.find((g) => g.sessionId === 'verify-1');
+  assert.equal(record.steps.find((s) => s.text === 'Deploy the staging box').unverified, true);
+  const note = goalContinuityNote(goals, 'continue the plan');
+  assert.ok(note.includes('(unverified)'), 'the re-surfaced goal shows the marker');
+  assert.ok(note.includes('[x] Deploy the staging box'));
+});

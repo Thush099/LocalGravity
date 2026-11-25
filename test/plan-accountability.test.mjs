@@ -90,12 +90,15 @@ test('a turn with a published plan gets one nudge, then an honest note — never
   assert.ok(seen[2].some((c) => c.includes('[Self-Correction] Your published plan still has unfinished steps')));
   assert.ok(seen[2].some((c) => c.includes('Update its docs')));
 
-  // The final answer carries the honest note; completed steps stay out of it.
+  // The final answer carries both honest notes, pinned exactly: the unfinished
+  // list holds only "Update its docs", and the done-claim with no observable
+  // action behind it (this script refactors nothing) is flagged unverified.
   const final = result.session.messages.at(-1);
   assert.match(final.content, /Wrapping up\./);
-  assert.match(final.content, /\[Plan\] Still unfinished/);
-  assert.match(final.content, /Update its docs/);
-  assert.doesNotMatch(final.content, /Refactor the module/);
+  assert.match(
+    final.content,
+    /\[Plan\] Still unfinished:\n- Update its docs\n\n\[Plan\] Marked done without an observable action this turn \(unverified\):\n- Refactor the module/,
+  );
 });
 
 test('a plan finished before the final answer ends clean — no nudge, no note', async (t) => {
@@ -132,6 +135,21 @@ test('a plan finished before the final answer ends clean — no nudge, no note',
           content: '',
           toolCalls: [
             {
+              id: 't1',
+              name: 'run_command',
+              arguments: { command: 'echo refactored module' },
+            },
+            {
+              id: 't2',
+              name: 'run_command',
+              arguments: { command: 'echo docs updated' },
+            },
+          ],
+        },
+        {
+          content: '',
+          toolCalls: [
+            {
               id: 'p2',
               name: 'update_plan',
               arguments: {
@@ -150,7 +168,7 @@ test('a plan finished before the final answer ends clean — no nudge, no note',
   });
 
   assert.equal(result.status, 'completed');
-  assert.equal(seen.length, 3, 'no nudge round-trip was needed');
+  assert.equal(seen.length, 4, 'no nudge round-trip was needed');
   assert.ok(seen.every((msgs) => !msgs.some((c) => c.includes('[Self-Correction] Your published plan'))));
   const final = result.session.messages.at(-1);
   assert.equal(final.content, 'Everything is complete.');
