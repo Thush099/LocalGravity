@@ -4899,3 +4899,11 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
   color: transparent;
 }
 
+
+.net-legend-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+

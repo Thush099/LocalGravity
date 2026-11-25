@@ -438,6 +438,10 @@ export function createAgentServer({
         : { ok: false, error: weather.error || 'Weather unavailable.' },
       network: {
         topApps: initialApps.map((a) => ({ name: a.name, total: a.total })),
+        // Month-to-date per-app totals, accumulated from counter deltas while the app
+        // runs. Unlike topApps (cumulative since each process started) these are safe
+        // to label "this month".
+        monthApps: (usage.apps || []).slice(0, 12).map((a) => ({ name: a.name, total: a.total })),
         sinceBootBytes: sinceBoot,
         monthBytes: usage.monthTotal || 0,
         todayBytes: usage.dayTotal || 0,
@@ -508,6 +512,7 @@ export function createAgentServer({
         cachedBriefing?.network?.monthBytes != null
           ? Number(cachedBriefing.network.monthBytes) / 1024 ** 3
           : null,
+      topApp: (cachedBriefing?.network?.monthApps || []).find((a) => Number(a?.total) > 0) || null,
     };
     return buildSuggestions(snap, dismissed, { limit: 4 });
   };

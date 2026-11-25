@@ -77,3 +77,19 @@ test('dismissals persist and buildSuggestions caps + filters', async () => {
   assert.ok(!built.some((s) => s.id === 'organize-downloads'), 'dismissed stays hidden');
   await fs.rm(paths.root, { recursive: true, force: true });
 });
+
+test('a single data-hungry app is called out by name', () => {
+  const GB = 1024 ** 3;
+  const heavy = suggestActions({ topApp: { name: 'Arc', total: 12.4 * GB } });
+  const hog = heavy.find((s) => s.id === 'data-hog');
+  assert.ok(hog, 'heavy per-app usage produces a data-hog suggestion');
+  assert.equal(hog.tone, 'warn');
+  assert.match(hog.title, /Arc/);
+  assert.match(hog.title, /12 GB/);
+  assert.ok(hog.action);
+
+  // Below the threshold the generic monthly insight can stand alone.
+  assert.ok(!suggestActions({ topApp: { name: 'Arc', total: 2 * GB } }).some((s) => s.id === 'data-hog'));
+  assert.ok(!suggestActions({}).some((s) => s.id === 'data-hog'));
+});
+

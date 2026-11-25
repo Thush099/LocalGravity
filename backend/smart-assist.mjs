@@ -29,7 +29,7 @@ function suggestion(entry) {
  * whatever they have without inventing numbers.
  *
  * @param {object} state hourOfDay, storageFreePercent, storageTotalGB,
- *   downloadsCount, emailCount, scheduledToday, monthNetworkGB, isMorning etc.
+ *   downloadsCount, emailCount, scheduledToday, monthNetworkGB, topApp etc.
  * @returns {Array<{id,kind,title,detail,action?,actionLabel?,priority,tone}>}
  */
 export function suggestActions(state = {}) {
@@ -40,7 +40,7 @@ export function suggestActions(state = {}) {
     emailCount = null,
     scheduledToday = null,
     monthNetworkGB = null,
-    modelWarm = null,
+    topApp = null,
   } = state;
   const out = [];
 
@@ -118,6 +118,19 @@ export function suggestActions(state = {}) {
       detail: 'A quick recap and a nudge at tomorrow.',
       action: 'Summarise what I did today and suggest what to tackle tomorrow.',
       actionLabel: 'Wrap up',
+    }));
+  }
+
+  // One app running away with the data allowance beats a generic monthly total.
+  const topAppBytes = Number(topApp?.total) || 0;
+  if (topApp?.name && topAppBytes >= 5 * 1024 ** 3) {
+    const gb = topAppBytes / 1024 ** 3;
+    out.push(suggestion({
+      id: 'data-hog', tone: 'warn', priority: 64,
+      title: `${topApp.name} used ${gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)} GB this month`,
+      detail: 'The busiest app on your network — worth a look if data matters to you.',
+      action: 'Show me which apps are using the most network data this month and how I could limit them.',
+      actionLabel: 'Review data',
     }));
   }
 

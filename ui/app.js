@@ -803,9 +803,19 @@ function renderNetwork() {
     el.textContent = 'Loading network usage…';
     return;
   }
-  const donut = renderNetworkDonut(net.topApps || [], { size: 188, centerLabel: 'this month' });
+  // Month-to-date per-app totals are the honest source for a "this month" ring;
+  // the since-launch counters are only a fallback before the first sample lands.
+  const monthApps = (net.monthApps || []).filter((a) => Number(a?.total) > 0);
+  const usingMonth = monthApps.length > 0;
+  const donut = renderNetworkDonut(usingMonth ? monthApps : net.topApps || [], {
+    size: 188,
+    centerLabel: usingMonth ? 'this month' : 'since launch',
+  });
   const bars = renderNetworkHistoryChart(net.history || {}, { month: net.month || '' });
   const hasTraffic = Object.values(net.history || {}).some((v) => Number(v) > 0);
+  const legendNote = usingMonth
+    ? ''
+    : '<div class="net-legend-note">Per-app totals build up while LocalGravity runs.</div>';
   const emptyHint =
     !hasTraffic && !Number(net.monthBytes || 0)
       ? '<div class="net-empty-hint">No traffic sampled yet — this fills in after the first five-minute sample.</div>'
@@ -814,7 +824,7 @@ function renderNetwork() {
   el.innerHTML = `
     <div class="net-flex">
       ${donut.svg}
-      <div class="donut-legend">${donut.legendHtml}</div>
+      <div class="donut-legend">${donut.legendHtml}${legendNote}</div>
     </div>
     ${bars ? `<div class="net-bars-wrap"><div class="brief-label">Daily usage this month</div>${bars}${emptyHint}</div>` : ''}
     <div class="net-stats">
