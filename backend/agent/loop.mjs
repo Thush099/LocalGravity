@@ -311,6 +311,7 @@ export async function runAgentTurn({
     suggestedSkills,
     knowledgeDocs,
     memoryContent: memoryDoc?.content || '',
+    memoryQuery: fullUserText,
     learnedFixesContent: learnedFixesExcerpt,
     repoPath: getRepoPath(),
     safetyMode,
