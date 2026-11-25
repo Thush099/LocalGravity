@@ -64,3 +64,16 @@ test('describeRuntimeState reports cloud source with provider label and thinking
   assert.equal(cloud.mode, 'Deep Think');
   assert.equal(cloud.model, 'qwen/qwen3-235b');
 });
+
+test('a running tool names the work instead of saying "Running tools"', () => {
+  const phase = (tools) => getLivePhase({ thinking: [], tools, content: '' }, 'model');
+  assert.equal(phase([{ status: 'running', name: 'read_email' }]), 'Reading your email');
+  assert.equal(phase([{ status: 'running', name: 'move_file' }]), 'Moving files');
+  assert.equal(phase([{ status: 'running', name: 'some_new_tool' }]), 'Running some new tool');
+  assert.equal(
+    phase([{ status: 'running', name: 'read_email' }, { status: 'running', name: 'move_file' }]),
+    'Running 2 tools'
+  );
+  // A finished tool must not keep claiming the phase.
+  assert.equal(phase([{ status: 'ok', name: 'read_email' }]), 'Running model');
+});

@@ -101,3 +101,11 @@ test('listSessions caps its response at MAX_LISTED_SESSIONS', async () => {
   assert.equal(list[0].id, 'cap-304');
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
+
+test('schedule notifications stay off unless the user opts in', async () => {
+  const paths = getRuntimePaths();
+  const cfg = await loadConfig(paths);
+  assert.equal(typeof cfg.agendaNotifications, 'boolean');
+  const { DEFAULT_CONFIG } = await import('../backend/state/storage.mjs');
+  assert.equal(DEFAULT_CONFIG.agendaNotifications, false, 'default config must not notify unasked');
+});

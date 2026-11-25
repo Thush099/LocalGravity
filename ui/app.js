@@ -4,9 +4,12 @@ import { shouldRenderStreamingMarkdown } from './lib/streaming.js';
 import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
 import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
+import { debounce } from './lib/utils.js';
+import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage } from './lib/performance.js';
 import {
   renderMemoryDonut,
   renderNetworkDonut,
+  renderNetworkHistoryChart,
   renderMultiSeriesChart,
   renderSparkline,
   renderWeeklyScheduleChart,
@@ -231,6 +234,7 @@ const state = {
   skills: [],
   knowledge: [],
   automations: [],
+  suggestions: [],
   attachments: [],
   isRunning: false,
   runningSessionId: null,
@@ -306,7 +310,7 @@ function formatRelativeTime(value) {
 }
 
 function applyTheme(mode = 'auto', persist = true) {
-  const themes = ['dark', 'light', 'nord', 'cyberpunk', 'auto'];
+  const themes = ['dark', 'light', 'nord', 'solarized', 'cyberpunk', 'auto'];
   const valid = themes.includes(mode) ? mode : 'auto';
   state.themeMode = valid;
   if (valid === 'auto') delete document.documentElement.dataset.theme;
@@ -330,16 +334,17 @@ function applyTheme(mode = 'auto', persist = true) {
 }
 
 function cycleTheme() {
-  const themes = ['auto', 'dark', 'light', 'nord', 'cyberpunk'];
+  const themes = ['auto', 'dark', 'light', 'nord', 'solarized', 'cyberpunk'];
   const idx = themes.indexOf(state.themeMode);
   const next = themes[(idx + 1) % themes.length];
   applyTheme(next, true);
   const labels = {
     auto: 'Auto (System)',
-    dark: 'Obsidian Dark',
-    light: 'Porcelain Light',
+    dark: 'Graphite Dark',
+    light: 'Paper Light',
     nord: 'Nordic Frost',
-    cyberpunk: 'Cyberpunk Neon'
+    solarized: 'Solarized Dark',
+    cyberpunk: 'Synthwave Night',
   };
   showToast(`Theme: ${labels[next] || next}`);
 }
@@ -466,20 +471,21 @@ function updateContextMeter(tokens, numCtx) {
   }
 }
 
-function renderThinkingTree(thinkingText) {
-  if (!thinkingText) return '';
-  const lines = thinkingText.split('\n').filter(Boolean);
-  return `
-    <details class="thinking-tree">
-      <summary class="thinking-tree-summary">Chain of Thought (${lines.length} steps)</summary>
-      <div class="thinking-tree-content">
-        <ul>
-          ${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
-        </ul>
-      </div>
-    </details>
-  `;
+function formatThinkingHtml(thinkingText, isOpen = false) {
+  const clean = String(thinkingText || '').trim();
+  if (!clean) return '';
+  const steps = clean
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const innerHtml =
+    steps.length > 1
+      ? `<ol class="thinking-steps">${steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ol>`
+      : escapeHtml(clean);
+  const label = steps.length > 1 ? `Thinking · ${steps.length} steps` : 'Thinking';
+  return `<details class="thinking-box" ${isOpen ? 'open' : ''}><summary>${label}</summary><div class="thinking-content">${innerHtml}</div></details>`;
 }
+
 window.__lgSetToken = (token) => setAuthToken(token);
 window.__lgFileSaved = (savedPath) => {
   const base = String(savedPath || '').split('/').pop() || 'file';
@@ -491,9 +497,14 @@ window.__lgFolderPicked = async (folderPath) => {
   }
 };
 window.__lgMenuAction = (action) => {
+  if (!action) return;
   if (action === 'newTask') createNewTask();
   else if (action === 'export') exportActiveConversation();
   else if (action === 'palette') openCommandPalette();
+  else if (action === 'settings') switchView('settings');
+  else if (action === 'pickFolder') pickWorkspaceFolder();
+  else if (action === 'toggleSidebar') toggleSidebar();
+  else if (typeof action === 'string' && action.startsWith('view:')) switchView(action.slice(5));
 };
 window.__lgReceiveFiles = async (filePaths) => {
   if (!Array.isArray(filePaths)) return;
@@ -524,6 +535,7 @@ function switchView(viewName) {
   if (viewName === 'dashboard') {
     renderDashboard();
     refreshSystemMetrics();
+    refreshSuggestions();
     loadSchedule();
   } else if (viewName === 'monitor') {
     renderMonitor();
@@ -657,14 +669,83 @@ function describeModelRuntime() {
   return describeRuntimeState(state.config || {}, state.presets || {}, state.health || {});
 }
 
-async function refreshBriefing() {
+async function refreshSuggestions() {
   try {
-    const data = await apiRequest('/api/briefing');
+    const data = await apiRequest('/api/suggestions');
+    state.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    renderSmartAssist();
+  } catch {
+    // Keep existing suggestions silently if unavailable
+  }
+}
+
+const TONES_FOR_UI = ['urgent', 'warn', 'info', 'calm'];
+
+// A distinct glyph per suggestion keeps the strip scannable at a glance; the
+// tone class supplies the matching colour so icon, edge and action agree.
+const SUGGESTION_ICONS = {
+  'free-space': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="6.2" rx="2" /><rect x="3" y="13.3" width="18" height="6.2" rx="2" /><path d="M7 7.6h.01M7 16.4h.01" stroke-width="2.6" /></svg>`,
+  'tidy-storage': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="6.2" rx="2" /><rect x="3" y="13.3" width="18" height="6.2" rx="2" /><path d="M7 7.6h.01M7 16.4h.01" stroke-width="2.6" /></svg>`,
+  'organize-downloads': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6v10.2M7.6 9.8L12 14.2l4.4-4.4" /><path d="M4.6 16.4v2.1a2 2 0 0 0 2 2h10.8a2 2 0 0 0 2-2v-2.1" /></svg>`,
+  'summarize-inbox': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.6" /><path d="M3.8 6.8L12 12.9l8.2-6.1" /></svg>`,
+  'inbox-glance': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.6" /><path d="M3.8 6.8L12 12.9l8.2-6.1" /></svg>`,
+  'review-schedule': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="5" width="17.2" height="15.4" rx="2.6" /><path d="M8 3v4M16 3v4M3.4 10h17.2" /></svg>`,
+  'daily-brief': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.2v3.2M7.8 6.3l2 2.2M16.2 6.3l-2 2.2" /><path d="M5 16.2a7 7 0 0 0 14 0" /><path d="M3 20h18" /></svg>`,
+  'wrap-up': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.4A8.2 8.2 0 0 1 9.6 4 8.6 8.6 0 1 0 20 14.4Z" /></svg>`,
+  'network-insight': `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 8.8a13 13 0 0 1 17.2 0M6.6 12.4a8.4 8.4 0 0 1 10.8 0M9.8 16a3.9 3.9 0 0 1 4.4 0" /><circle cx="12" cy="19.4" r="1.2" fill="currentColor" stroke="none" /></svg>`,
+};
+
+function renderSmartAssist() {
+  const host = $('#dash-smart-assist');
+  if (!host) return;
+  const items = state.suggestions || [];
+  if (items.length === 0) {
+    host.classList.add('hidden');
+    host.innerHTML = '';
+    return;
+  }
+  host.classList.remove('hidden');
+  host.innerHTML = items
+    .map((s) => {
+      const tone = TONES_FOR_UI.includes(s.tone) ? s.tone : 'info';
+      const icon = SUGGESTION_ICONS[s.id] || '✨';
+      return `
+      <div class="smart-assist-card" data-tone="${tone}" data-sug-id="${escapeHtml(s.id)}">
+        <div class="smart-assist-top">
+          <span class="smart-assist-icon" aria-hidden="true">${icon}</span>
+          <span class="smart-assist-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
+          <button type="button" class="smart-assist-dismiss" data-dismiss-sug="${escapeHtml(s.id)}" title="Dismiss suggestion" aria-label="Dismiss ${escapeHtml(s.title)}">×</button>
+        </div>
+        <div class="smart-assist-detail">${escapeHtml(s.detail || '')}</div>
+        ${
+          s.action
+            ? `<div class="smart-assist-foot"><button type="button" class="smart-assist-action" data-run-sug="${escapeHtml(s.id)}">${escapeHtml(s.actionLabel || 'Run')}</button></div>`
+            : ''
+        }
+      </div>`;
+    })
+    .join('');
+}
+
+async function refreshBriefing(force = false) {
+  const btn = $('#dash-briefing-refresh');
+  if (force && btn) {
+    btn.disabled = true;
+    btn.textContent = 'Refreshing…';
+  }
+  try {
+    const data = await apiRequest(force ? '/api/briefing?refresh=1' : '/api/briefing');
     state.briefing = data.briefing || null;
     state.briefingAt = Date.now();
     renderBriefing();
+    renderNetwork();
   } catch {
     // Keep the last briefing; the next refresh retries.
+  } finally {
+    if (force && btn) {
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+    }
   }
 }
 
@@ -677,34 +758,40 @@ function renderBriefing() {
     el.textContent = 'Loading today’s briefing…';
     return;
   }
-  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · news, email & WhatsApp`;
+  if (sub) sub.textContent = `Updated ${new Date(b.updatedAt).toLocaleTimeString()} · weather, news & email`;
 
   const newsItems = (b.news || []).slice(0, 3);
   const newsHtml = newsItems.length
     ? `<ol class="brief-list">${newsItems
-        .map((n) => `<li><span class="brief-title">${escapeHtml(n.title)}</span><span class="brief-meta">${escapeHtml(n.source)}</span></li>`)
+        .map((n) => {
+          const href = String(n.link || '').trim();
+          const titleHtml = /^https?:\/\//i.test(href)
+            ? `<a class="brief-title brief-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(n.title)}</a>`
+            : `<span class="brief-title">${escapeHtml(n.title)}</span>`;
+          return `<li>${titleHtml}<span class="brief-meta">${escapeHtml(n.source)}</span></li>`;
+        })
         .join('')}</ol>`
     : '<div class="brief-body quiet">News unavailable right now.</div>';
 
   let emailHtml;
   if (b.email?.ok && b.email.count) {
-    const shown = (b.email.messages || [])
-      .slice(0, 4)
-      .map((m) => `<li><span class="brief-title">${escapeHtml(m.subject)}</span><span class="brief-meta">${escapeHtml(m.sender)}</span></li>`)
-      .join('');
-    emailHtml = `<div class="brief-body"><strong>${b.email.count}</strong> new today</div><ol class="brief-list">${shown}</ol>`;
+    // A summary of the inbox, not a list of every message.
+    emailHtml = `<div class="brief-body">${escapeHtml(b.email.summary || `${b.email.count} new emails today.`)}</div>`;
   } else if (b.email?.ok) {
     emailHtml = '<div class="brief-body quiet">No new messages today.</div>';
   } else {
     emailHtml = `<div class="brief-body quiet">${escapeHtml(b.email?.error || 'Email unavailable.')}</div>`;
   }
 
-  const waHtml = `<div class="brief-body quiet">${escapeHtml(b.whatsapp?.note || 'WhatsApp cannot be read on macOS.')}</div>`;
+  const w = b.weather;
+  const weatherHtml = w?.ok
+    ? `<div class="brief-body"><span class="weather-icon" aria-hidden="true">${w.icon || ''}</span><strong>${w.temp != null ? `${w.temp}°C` : '—'}</strong> ${escapeHtml(String(w.description || ''))}${w.feelsLike != null ? ` · feels like ${w.feelsLike}°` : ''} · high ${w.high ?? '—'}° · low ${w.low ?? '—'}°${w.city ? ` · ${escapeHtml(String(w.city))}` : ''}</div>`
+    : `<div class="brief-body quiet">${escapeHtml(String(w?.error || 'Weather unavailable.'))}</div>`;
 
   el.innerHTML = `
     <div class="brief-cols">
       <div class="brief-col"><div class="brief-label">World news</div>${newsHtml}</div>
-      <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">WhatsApp</div>${waHtml}</div>
+      <div class="brief-col"><div class="brief-label">Email today</div>${emailHtml}<div class="brief-label">Weather</div>${weatherHtml}</div>
     </div>`;
 }
 
@@ -716,17 +803,35 @@ function renderNetwork() {
     el.textContent = 'Loading network usage…';
     return;
   }
-  const donut = renderNetworkDonut(net.topApps || [], { size: 188, centerLabel: 'this month' });
+  // Month-to-date per-app totals are the honest source for a "this month" ring;
+  // the since-launch counters are only a fallback before the first sample lands.
+  const monthApps = (net.monthApps || []).filter((a) => Number(a?.total) > 0);
+  const usingMonth = monthApps.length > 0;
+  const donut = renderNetworkDonut(usingMonth ? monthApps : net.topApps || [], {
+    size: 188,
+    centerLabel: usingMonth ? 'this month' : 'since launch',
+  });
+  const bars = renderNetworkHistoryChart(net.history || {}, { month: net.month || '' });
+  const hasTraffic = Object.values(net.history || {}).some((v) => Number(v) > 0);
+  const legendNote = usingMonth
+    ? ''
+    : '<div class="net-legend-note">Per-app totals build up while LocalGravity runs.</div>';
+  const emptyHint =
+    !hasTraffic && !Number(net.monthBytes || 0)
+      ? '<div class="net-empty-hint">No traffic sampled yet — this fills in after the first five-minute sample.</div>'
+      : '';
+  const speedMbps = state.lastSpeedMbps ?? net.lastSpeedMbps ?? null;
   el.innerHTML = `
     <div class="net-flex">
       ${donut.svg}
-      <div class="donut-legend">${donut.legendHtml}</div>
+      <div class="donut-legend">${donut.legendHtml}${legendNote}</div>
     </div>
+    ${bars ? `<div class="net-bars-wrap"><div class="brief-label">Daily usage this month</div>${bars}${emptyHint}</div>` : ''}
     <div class="net-stats">
       <div class="net-stat"><span class="k">This month</span><span class="v">${escapeHtml(formatBytes(net.monthBytes || 0))}</span></div>
       <div class="net-stat"><span class="k">Today</span><span class="v">${escapeHtml(formatBytes(net.todayBytes || 0))}</span></div>
       <div class="net-stat"><span class="k">Since restart</span><span class="v">${escapeHtml(formatBytes(net.sinceBootBytes || 0))}</span></div>
-      <div class="net-stat"><span class="k">Live speed</span><span class="v" id="dash-live-speed">—</span></div>
+      <div class="net-stat"><span class="k">Live speed</span><span class="v" id="dash-live-speed">${speedMbps ? `${Math.round(speedMbps)} Mbps` : '—'}</span></div>
     </div>`;
 }
 
@@ -740,6 +845,7 @@ async function runSpeedTest() {
   if (speedEl) speedEl.textContent = '…';
   try {
     const data = await apiRequest('/api/network/speed', { method: 'POST' });
+    if (data.mbps) state.lastSpeedMbps = data.mbps;
     if (speedEl) speedEl.textContent = data.mbps ? `${Math.round(data.mbps)} Mbps` : '—';
   } catch {
     if (speedEl) speedEl.textContent = 'failed';
@@ -758,10 +864,15 @@ function renderDashboard() {
   const disk = topDisk(metrics);
   const hist = state.metricsHistory || [];
   const series = (key) => hist.map((h) => h[key]);
-  setStatSpark('#dash-cpu-spark', '#dash-cpu', metrics?.cpu?.percent, null, series('cpu'));
-  setStatSpark('#dash-mem-spark', '#dash-mem', mem.usedPercent, mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—', series('mem'));
-  setStatSpark('#dash-gpu-spark', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—', series('gpu'));
-  setStatSpark('#dash-disk-spark', '#dash-disk', disk?.usedPercent, disk ? `${formatBytes(disk.availableBytes)} free` : '—', series('disk'));
+  setStatSpark('#dash-cpu-spark', '#dash-cpu', metrics?.cpu?.percent, null, series('cpu'), 'var(--app-1)');
+  setStatSpark('#dash-mem-spark', '#dash-mem', mem.usedPercent, mem.totalBytes ? formatBytes(mem.usedBytes || 0) : '—', series('mem'), 'var(--app-2)');
+  setStatSpark('#dash-gpu-spark', '#dash-gpu', gpu?.utilizationPercent, gpu ? (gpu.utilizationPercent === null ? 'n/a' : `${gpu.utilizationPercent}%`) : '—', series('gpu'), 'var(--app-3)');
+  const diskLow = Boolean(disk) && isStorageLow(disk);
+  setStatSpark('#dash-disk-spark', '#dash-disk', disk?.usedPercent, disk ? `${formatBytes(disk.availableBytes)} free` : '—', series('disk'), diskLow ? 'var(--signal-red)' : 'var(--app-5)');
+  // A healthy disk should look healthy: flip the storage tile to the alert hue
+  // only while it actually needs attention, so the grid reads at a glance.
+  const diskTile = document.querySelector('.stat-tile[data-metric="disk"]');
+  if (diskTile) diskTile.classList.toggle('is-critical', diskLow);
   renderStorageAlert(disk);
 
   const cpuSub = $('#dash-cpu-sub');
@@ -1069,7 +1180,11 @@ function renderScheduleWeek() {
   const kpiHost = $('#schedule-chart-kpis');
   if (chartHost) {
     const chart = renderWeeklyScheduleChart(entries, today);
-    chartHost.innerHTML = chart.svg;
+    chartHost.innerHTML =
+      chart.svg +
+      (chart.totalHours === 0
+        ? '<div class="chart-empty-note">No blocks this week yet — add one on the left and these bars fill in.</div>'
+        : '');
     if (kpiHost) {
       kpiHost.innerHTML = [
         `<span class="telemetry-stat-pill"><strong>${chart.totalHours}h</strong> planned this week</span>`,
@@ -1223,6 +1338,10 @@ function syncSessionToolbar() {
     cwdBtn.title = cwd
       ? `Working folder: ${cwd} (click to change)`
       : 'Select project working folder for this chat';
+  }
+  const revealBtn = $('#workspace-reveal-btn');
+  if (revealBtn) {
+    revealBtn.classList.toggle('hidden', !hasSwiftBridge() || !cwd);
   }
   const modeSelect = $('#composer-mode-select');
   if (modeSelect) {
@@ -1565,52 +1684,6 @@ function renderSessionsList() {
   } else {
     listEl.innerHTML = filtered.map(renderSessionItemHtml).join('');
   }
-
-  listEl.querySelectorAll('.session-item').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.session-del-btn, .session-pin-btn, .session-rename-btn')) return;
-      openSession(el.dataset.id);
-    });
-  });
-  listEl.querySelectorAll('.session-pin-btn').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.pin;
-      const target = state.sessions.find((s) => s.id === id);
-      if (!target) return;
-      try {
-        const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ pinned: !target.pinned }),
-        });
-        if (state.activeSession?.id === id) state.activeSession = res.session;
-        await loadSessions();
-        showToast(res.session.pinned ? 'Conversation pinned' : 'Conversation unpinned');
-      } catch (err) {
-        showToast(err.message);
-      }
-    });
-  });
-  listEl.querySelectorAll('.session-rename-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const target = state.sessions.find((s) => s.id === btn.dataset.rename);
-      if (target) openRenameSessionModal(target);
-    });
-  });
-  listEl.querySelectorAll('.session-del-btn').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.del;
-      await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      if (state.activeSession?.id === id) {
-        state.activeSession = null;
-        syncSessionToolbar();
-        renderMessages();
-      }
-      await loadSessions();
-    });
-  });
 }
 
 function renderAttachments() {
@@ -1620,24 +1693,18 @@ function renderAttachments() {
     bar.innerHTML = '';
     return;
   }
+  const canReveal = hasSwiftBridge();
   bar.classList.remove('hidden');
   bar.innerHTML = state.attachments
     .map(
       (a, idx) => `
-      <div class="attach-chip">
+      <div class="attach-chip${canReveal ? ' clickable' : ''}" data-path="${escapeHtml(a.path)}" title="${escapeHtml(canReveal ? `${a.path} (click to reveal in Finder)` : a.path)}">
         ${a.previewUrl ? `<img src="${a.previewUrl}" alt="" />` : ''}
-        <span title="${escapeHtml(a.path)}">${escapeHtml(a.name)}</span>
+        <span>${escapeHtml(a.name)}</span>
         <button type="button" data-idx="${idx}" aria-label="Remove attachment">×</button>
       </div>`
     )
     .join('');
-
-  bar.querySelectorAll('button').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.attachments.splice(Number(btn.dataset.idx), 1);
-      renderAttachments();
-    });
-  });
 }
 
 function groupMessagesForDisplay(messages = []) {
@@ -1907,9 +1974,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
   }
 
   const thinkingCombined = (item.thinking || []).join('').trim();
-  const thinkingHtml = thinkingCombined
-    ? `<details class="thinking-box" ${item.isStreaming && !item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
-    : '';
+  const thinkingHtml = formatThinkingHtml(thinkingCombined, item.isStreaming && !item.content);
 
   const tools = item.tools || [];
   const canFoldTools = !item.isStreaming && tools.length >= 2 && !tools.some((t) => t.status === 'wait' || t.status === 'running');
@@ -2068,15 +2133,7 @@ function scheduleLiveUpdate() {
       item._lastThinkingRendered = thinkingCombined;
       const thinkSlot = liveRow.querySelector('.live-thinking-slot');
       if (thinkSlot) {
-        const existingDetails = thinkSlot.querySelector('details.thinking-box');
-        if (existingDetails && thinkingCombined) {
-          const contentDiv = existingDetails.querySelector('.thinking-content');
-          if (contentDiv) contentDiv.textContent = thinkingCombined;
-        } else {
-          thinkSlot.innerHTML = thinkingCombined
-            ? `<details class="thinking-box" ${!item.content ? 'open' : ''}><summary>Thinking</summary><div class="thinking-content">${escapeHtml(thinkingCombined)}</div></details>`
-            : '';
-        }
+        thinkSlot.innerHTML = formatThinkingHtml(thinkingCombined, !item.content);
       }
     }
 
@@ -2562,6 +2619,13 @@ async function sendPrompt(overridePayload = null) {
             updateContextMeter(state.contextTokens, state.config?.numCtx);
           }
           showToast('Context compacted automatically');
+        } else if (evt.type === 'done') {
+          if (evt.usage) {
+            if (Number.isFinite(evt.usage.durationMs)) recordLatency(evt.usage.durationMs);
+            const totalTok = (Number(evt.usage.promptTokens) || 0) + (Number(evt.usage.completionTokens) || 0);
+            if (totalTok > 0) recordTokenUsage(totalTok);
+          }
+          return;
         } else if (evt.type === 'error') {
           const friendly = friendlyError(evt.message);
           showToast(friendly.title);
@@ -2687,6 +2751,21 @@ function renderSkillsGrid() {
   const filtered = state.skills.filter(
     (s) => !q || s.slug.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
   );
+  if (filtered.length === 0) {
+    const rawQuery = ($('#skills-search').value || '').trim();
+    $('#skills-grid').innerHTML = emptyState({
+      icon: SPARK_ICON,
+      tone: 'var(--app-5)',
+      stacked: state.skills.length === 0,
+      title: state.skills.length === 0 ? 'No skills yet' : 'No matching skills',
+      detail:
+        state.skills.length === 0
+          ? 'A skill is a SKILL.md the agent loads when a task matches, so it stops relearning the same workflow. Write one by hand, import from GitHub, or save a good reply as a skill.'
+          : `Nothing matches "${rawQuery}". Try a shorter word, or clear the search.`,
+      action: state.skills.length === 0 ? { label: 'Create your first skill', attrs: 'data-empty-action="new-skill"' } : null,
+    });
+    return;
+  }
   $('#skills-grid').innerHTML =
     filtered
       .map(
@@ -2704,36 +2783,7 @@ function renderSkillsGrid() {
         </div>
       </div>`
       )
-      .join('') || '<div class="status-sub">No matching skills.</div>';
-
-  $('#skills-grid').querySelectorAll('.edit-skill-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      const res = await apiRequest(`/api/skills/${encodeURIComponent(b.dataset.slug)}`);
-      openSkillModal(res.skill);
-    });
-  });
-  $('#skills-grid').querySelectorAll('.refresh-skill-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      b.disabled = true;
-      b.textContent = 'Refreshing...';
-      try {
-        await apiRequest(`/api/skills/${encodeURIComponent(b.dataset.slug)}/refresh`, { method: 'POST' });
-        await loadSkills();
-        showToast(`Refreshed skill ${b.dataset.slug}`);
-      } catch (err) {
-        showToast(err.message);
-        b.disabled = false;
-        b.textContent = 'Refresh';
-      }
-    });
-  });
-  $('#skills-grid').querySelectorAll('.del-skill-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      await apiRequest(`/api/skills/${encodeURIComponent(b.dataset.slug)}`, { method: 'DELETE' });
-      await loadSkills();
-      showToast(`Deleted skill ${b.dataset.slug}`);
-    });
-  });
+      .join('');
 }
 
 async function loadKnowledge() {
@@ -2797,6 +2847,24 @@ function renderKnowledgeGrid() {
       d.title.toLowerCase().includes(q) ||
       (d.tags || []).join(' ').toLowerCase().includes(q)
   );
+  if (filtered.length === 0) {
+    const rawQuery = ($('#knowledge-search').value || '').trim();
+    $('#knowledge-grid').innerHTML = emptyState({
+      icon: NOTE_ICON,
+      tone: 'var(--app-6)',
+      stacked: state.knowledge.length === 0,
+      title: state.knowledge.length === 0 ? 'No knowledge docs yet' : 'No matching docs',
+      detail:
+        state.knowledge.length === 0
+          ? 'Knowledge is the context the agent keeps about you: preferences, projects, people, house rules. Everything lives in plain markdown you can edit.'
+          : `Nothing matches "${rawQuery}". Try a different tag or word.`,
+      action:
+        state.knowledge.length === 0
+          ? { label: 'Write your first doc', attrs: 'data-empty-action="new-knowledge"' }
+          : null,
+    });
+    return;
+  }
   $('#knowledge-grid').innerHTML =
     filtered
       .map(
@@ -2813,21 +2881,7 @@ function renderKnowledgeGrid() {
         </div>
       </div>`
       )
-      .join('') || '<div class="status-sub">No knowledge docs yet.</div>';
-
-  $('#knowledge-grid').querySelectorAll('.edit-know-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      const res = await apiRequest(`/api/knowledge/${encodeURIComponent(b.dataset.name)}`);
-      openKnowledgeModal(res.doc);
-    });
-  });
-  $('#knowledge-grid').querySelectorAll('.del-know-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      await apiRequest(`/api/knowledge/${encodeURIComponent(b.dataset.name)}`, { method: 'DELETE' });
-      await loadKnowledge();
-      showToast(`Deleted knowledge doc ${b.dataset.name}`);
-    });
-  });
+      .join('');
 }
 
 // Automations View
@@ -2837,10 +2891,37 @@ async function loadAutomations() {
   renderAutomationsGrid();
 }
 
+/**
+ * Shared "nothing here yet" block. The glyph is trusted inline SVG supplied by
+ * the call site; every text field is escaped here so user-derived copy (skill
+ * slugs, folder paths) can never inject markup.
+ */
+function emptyState({ icon = '', tone = 'var(--accent)', title, detail = '', action = null, compact = false, stacked = false }) {
+  return `<div class="empty-state${compact ? ' compact' : ''}${stacked ? ' stacked' : ''}" role="status" style="--empty-tone:${tone}">
+    ${icon ? `<div class="empty-state-icon" aria-hidden="true">${icon}</div>` : ''}
+    <div class="empty-state-copy">
+      <div class="empty-state-title">${escapeHtml(title)}</div>
+      ${detail ? `<div class="empty-state-detail">${escapeHtml(detail)}</div>` : ''}
+      ${action ? `<button type="button" class="primary-btn empty-state-action" ${action.attrs || ''}>${escapeHtml(action.label)}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+const ZAP_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>';
+const NOTE_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9.5L20 8v12.5H6z"/><path d="M15 3.5V8h4.5M9 12.5h7M9 16h5"/></svg>';
+const SPARK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.4"/></svg>';
+
 function renderAutomationsGrid() {
   const grid = $('#automations-grid');
   if (state.automations.length === 0) {
-    grid.innerHTML = `<div class="status-sub">No saved automations yet. Click "+ Create automation" or save one from any agent reply.</div>`;
+    grid.innerHTML = emptyState({
+      icon: ZAP_ICON,
+      tone: 'var(--app-4)',
+      title: 'No automations yet',
+      detail: 'Save any agent reply as a one-click workflow, then schedule it to run quietly in the background. Nothing runs until you turn it on.',
+      action: { label: 'Create your first automation', attrs: 'data-empty-action="new-automation"' },
+      stacked: true,
+    });
     return;
   }
   grid.innerHTML = state.automations
@@ -2861,31 +2942,6 @@ function renderAutomationsGrid() {
       </div>`
     )
     .join('');
-
-  grid.querySelectorAll('.run-auto-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      const auto = state.automations.find((x) => x.id === b.dataset.id);
-      if (!auto) return;
-      await createNewTask();
-      $('#prompt-input').value = auto.prompt;
-      await sendPrompt();
-    });
-  });
-
-  grid.querySelectorAll('.sched-auto-btn').forEach((b) => {
-    b.addEventListener('click', () => {
-      const auto = state.automations.find((x) => x.id === b.dataset.id);
-      if (auto) openScheduleModal(auto);
-    });
-  });
-
-  grid.querySelectorAll('.del-auto-btn').forEach((b) => {
-    b.addEventListener('click', async () => {
-      await apiRequest(`/api/automations/${encodeURIComponent(b.dataset.id)}`, { method: 'DELETE' });
-      await loadAutomations();
-      showToast('Automation deleted');
-    });
-  });
 }
 
 // Settings & Models View
@@ -2899,6 +2955,28 @@ function renderSettingsView() {
     <div class="stat-box"><span>ffmpeg / ImageMagick</span><strong>${system.tools.ffmpeg ? 'Ready' : 'Missing'} / ${system.tools.magick ? 'Ready' : 'Missing'}</strong></div>
     <div class="stat-box"><span>Ollama</span><strong>${ollama.running ? 'Running' : 'Stopped'}</strong></div>
   `;
+
+  const perfEl = $('#ui-perf-telemetry');
+  if (perfEl) {
+    let metrics = { latency: 0, tokens: 0 };
+    try {
+      metrics = getPerformanceMetrics();
+    } catch {
+      // storage optional
+    }
+    // Read paint timing from this page load instead of localStorage, so a value
+    // captured by an earlier (possibly occluded) launch can never resurface.
+    const paint = (performance.getEntriesByType?.('paint') || []).find((e) => e.name === 'first-contentful-paint');
+    const items = perfSummary({
+      readyMs: state.uiReadyMs,
+      fcpMs: paint ? paint.startTime : null,
+      latencyMs: metrics.latency,
+      tokens: metrics.tokens,
+    });
+    perfEl.innerHTML = items.length
+      ? items.map((t) => `<span class="telemetry-stat-pill">${escapeHtml(t)}</span>`).join('')
+      : '<span class="telemetry-stat-pill">Telemetry collects after your first prompt</span>';
+  }
 
   const activeOllamaModel = state.config?.model || '';
   $('#ollama-models-list').innerHTML =
@@ -3017,18 +3095,54 @@ function renderSettingsView() {
 
 // Modals
 let modalReturnFocusEl = null;
+let paletteReturnFocusEl = null;
+
+// While a dialog is open nothing behind it should be reachable by Tab, a screen
+// reader, or a stray click. inert does that in one attribute; the Tab handler
+// below keeps focus inside for browsers that only partly implement it.
+function setShellInert(on) {
+  const shell = $('#app-shell') || $('#app');
+  if (shell) shell.inert = Boolean(on);
+}
+
+function focusableIn(container) {
+  if (!container) return [];
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((el) => el.offsetParent !== null);
+}
+
+function trapTabKey(container, e) {
+  if (e.key !== 'Tab') return;
+  const items = focusableIn(container);
+  if (items.length === 0) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || !container.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !container.contains(active))) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 function openModal(title, htmlContent) {
   modalReturnFocusEl = document.activeElement;
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = htmlContent;
   $('#modal-backdrop').classList.remove('hidden');
+  setShellInert(true);
   $('#modal-close-btn')?.focus();
 }
 
 function closeModal() {
   $('#modal-backdrop').classList.add('hidden');
   $('#modal-body').innerHTML = '';
+  if ($('#palette-backdrop').classList.contains('hidden')) setShellInert(false);
   if (modalReturnFocusEl && typeof modalReturnFocusEl.focus === 'function') {
     modalReturnFocusEl.focus();
   }
@@ -3435,11 +3549,23 @@ async function openSkillLibraryModal() {
     metaEl.textContent = `${source.skills.length} skill${source.skills.length === 1 ? '' : 's'} in ${source.dir}${matches.length > shown.length ? ` (showing first ${shown.length})` : ''}`;
 
     if (source.skills.length === 0) {
-      listEl.innerHTML = `<div class="status-sub">No skills found in <code>${escapeHtml(source.dir)}</code>.</div>`;
+      listEl.innerHTML = emptyState({
+        icon: SPARK_ICON,
+        tone: 'var(--app-5)',
+        compact: true,
+        title: 'No skills in this source',
+        detail: `Nothing yet in ${source.dir}. Import a skill from GitHub or add a SKILL.md by hand.`,
+      });
       return;
     }
     if (shown.length === 0) {
-      listEl.innerHTML = '<div class="status-sub">No skills match that filter.</div>';
+      listEl.innerHTML = emptyState({
+        icon: SPARK_ICON,
+        tone: 'var(--app-2)',
+        compact: true,
+        title: 'No matches',
+        detail: `Nothing in ${source.dir} matches "${query}". Try a shorter word.`,
+      });
       return;
     }
 
@@ -3552,7 +3678,12 @@ const PALETTE_ACTION_ITEMS = [
   { label: 'Go to Automations', hint: 'Saved workflows and schedules', keywords: 'view jobs launchd', run: () => switchView('automations') },
   { label: 'Go to Models & Settings', hint: 'Providers, models, runtime', keywords: 'view settings config', run: () => switchView('settings') },
   { label: 'Toggle sidebar', hint: 'Hide or show task history for a focused chat', keywords: 'sidebar collapse expand focus layout', run: () => toggleSidebar() },
-  { label: 'Switch color theme (Auto / Dark / Light)', hint: 'Cycle Obsidian Dark, Porcelain Light, or system Auto', keywords: 'theme dark light appearance mode', run: () => cycleTheme() },
+  { label: 'Switch color theme (Auto / Dark / Light)', hint: 'Cycle Graphite, Paper, Nordic, Solarized, or System Auto', keywords: 'theme dark light appearance mode', run: () => cycleTheme() },
+  { label: 'Theme: Graphite Dark', hint: 'Native macOS dark appearance', keywords: 'theme dark graphite appearance', run: () => applyTheme('dark', true) },
+  { label: 'Theme: Paper Light', hint: 'Native macOS light appearance', keywords: 'theme light paper appearance', run: () => applyTheme('light', true) },
+  { label: 'Theme: Nordic Frost', hint: 'Cool Arctic dark palette', keywords: 'theme nord dark frost appearance', run: () => applyTheme('nord', true) },
+  { label: 'Theme: Solarized Dark', hint: 'Balanced low-glare teal slate palette', keywords: 'theme solarized dark appearance', run: () => applyTheme('solarized', true) },
+  { label: 'Theme: Auto (System)', hint: 'Match macOS Dark/Light appearance automatically', keywords: 'theme auto system appearance', run: () => applyTheme('auto', true) },
   { label: 'Import skill from GitHub', hint: 'Paste a SKILL.md or GitHub link', keywords: 'skill install github url', run: () => openImportUrlModal() },
   { label: 'Open Skill Library', hint: 'Copy skills installed on this Mac', keywords: 'skills import library', run: () => openSkillLibraryModal() },
   { label: 'Create new skill', hint: 'Write a reusable SKILL.md', keywords: 'skills teach new', run: () => openSkillModal(null) },
@@ -3675,9 +3806,11 @@ function movePalette(delta) {
 
 async function openCommandPalette() {
   if (!$('#modal-backdrop').classList.contains('hidden')) closeModal();
+  paletteReturnFocusEl = document.activeElement;
   state.paletteOpen = true;
   state.paletteIndex = 0;
   $('#palette-backdrop').classList.remove('hidden');
+  setShellInert(true);
   const input = $('#palette-input');
   input.value = '';
   input.setAttribute('aria-expanded', 'true');
@@ -3716,6 +3849,11 @@ function closeCommandPalette() {
     input.setAttribute('aria-expanded', 'false');
     input.removeAttribute('aria-activedescendant');
   }
+  if ($('#modal-backdrop').classList.contains('hidden')) setShellInert(false);
+  if (paletteReturnFocusEl && typeof paletteReturnFocusEl.focus === 'function') {
+    paletteReturnFocusEl.focus();
+  }
+  paletteReturnFocusEl = null;
 }
 
 function toggleCommandPalette() {
@@ -3726,9 +3864,11 @@ function toggleCommandPalette() {
 function openShortcutsModal() {
   const rows = [
     ['Command palette', ['⌘', 'K']],
-    ['Dashboard / Agent / Monitor / Timetable', ['⌘', '1-4']],
+    ['Switch views (Dashboard .. Automations)', ['⌘', '1–6']],
+    ['Models & Settings', ['⌘', ',']],
+    ['Open project folder', ['⌘', 'O']],
     ['Toggle sidebar', ['⌘', '\\']],
-    ['Send message', ['⌘', '↵']],
+    ['Send message / paste image', ['⌘', '↵']],
     ['Export conversation', ['⌘', '⇧', 'E']],
     ['Keyboard shortcuts', ['⌘', '/']],
     ['Navigate palette', ['↑', '↓']],
@@ -3804,7 +3944,29 @@ function wireEvents() {
     }
   });
   $('#dash-new-task')?.addEventListener('click', () => $('#new-task-btn')?.click());
-  $('#dash-briefing-refresh')?.addEventListener('click', () => refreshBriefing());
+  $('#dash-briefing-refresh')?.addEventListener('click', () => refreshBriefing(true));
+  $('#dash-smart-assist')?.addEventListener('click', async (e) => {
+    const dismissBtn = e.target.closest('[data-dismiss-sug]');
+    if (dismissBtn) {
+      const id = dismissBtn.dataset.dismissSug;
+      state.suggestions = (state.suggestions || []).filter((s) => s.id !== id);
+      renderSmartAssist();
+      apiRequest('/api/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ id }) })
+        .then((res) => {
+          if (Array.isArray(res.suggestions)) {
+            state.suggestions = res.suggestions;
+            renderSmartAssist();
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    const runBtn = e.target.closest('[data-run-sug]');
+    if (runBtn) {
+      const item = (state.suggestions || []).find((s) => s.id === runBtn.dataset.runSug);
+      if (item?.action) await runCapability(item.action, true);
+    }
+  });
   $('#dash-speed-test')?.addEventListener('click', runSpeedTest);
   $('#dash-briefing-ask')?.addEventListener('click', () =>
     runCapability("Give me my daily briefing: summarize today's top world news, my email, and anything I should know.", true)
@@ -4158,8 +4320,134 @@ function wireEvents() {
       }
     }, 220);
   });
-  $('#skills-search').addEventListener('input', renderSkillsGrid);
-  $('#knowledge-search').addEventListener('input', renderKnowledgeGrid);
+  $('#skills-search').addEventListener('input', debounce(renderSkillsGrid, 90));
+  $('#knowledge-search').addEventListener('input', debounce(renderKnowledgeGrid, 90));
+
+  $('#sessions-list')?.addEventListener('click', async (e) => {
+    const pinBtn = e.target.closest('.session-pin-btn');
+    if (pinBtn) {
+      e.stopPropagation();
+      const id = pinBtn.dataset.pin;
+      const target = state.sessions.find((s) => s.id === id);
+      if (!target) return;
+      try {
+        const res = await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ pinned: !target.pinned }),
+        });
+        if (state.activeSession?.id === id) state.activeSession = res.session;
+        await loadSessions();
+        showToast(res.session.pinned ? 'Conversation pinned' : 'Conversation unpinned');
+      } catch (err) {
+        showToast(err.message);
+      }
+      return;
+    }
+    const renameBtn = e.target.closest('.session-rename-btn');
+    if (renameBtn) {
+      e.stopPropagation();
+      const target = state.sessions.find((s) => s.id === renameBtn.dataset.rename);
+      if (target) openRenameSessionModal(target);
+      return;
+    }
+    const delBtn = e.target.closest('.session-del-btn');
+    if (delBtn) {
+      e.stopPropagation();
+      const id = delBtn.dataset.del;
+      await apiRequest(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (state.activeSession?.id === id) {
+        state.activeSession = null;
+        syncSessionToolbar();
+        renderMessages();
+      }
+      await loadSessions();
+      return;
+    }
+    const item = e.target.closest('.session-item');
+    if (item?.dataset.id) openSession(item.dataset.id);
+  });
+
+  $('#attachments-bar')?.addEventListener('click', (e) => {
+    const rmBtn = e.target.closest('button[data-idx]');
+    if (rmBtn) {
+      state.attachments.splice(Number(rmBtn.dataset.idx), 1);
+      renderAttachments();
+      return;
+    }
+    const chip = e.target.closest('.attach-chip[data-path]');
+    if (chip && hasSwiftBridge() && chip.dataset.path) {
+      postSwiftAction('revealInFinder', { path: chip.dataset.path });
+    }
+  });
+
+  $('#skills-grid')?.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.edit-skill-btn');
+    if (editBtn) {
+      const res = await apiRequest(`/api/skills/${encodeURIComponent(editBtn.dataset.slug)}`);
+      openSkillModal(res.skill);
+      return;
+    }
+    const refreshBtn = e.target.closest('.refresh-skill-btn');
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = 'Refreshing...';
+      try {
+        await apiRequest(`/api/skills/${encodeURIComponent(refreshBtn.dataset.slug)}/refresh`, { method: 'POST' });
+        await loadSkills();
+        showToast(`Refreshed skill ${refreshBtn.dataset.slug}`);
+      } catch (err) {
+        showToast(err.message);
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = 'Refresh';
+      }
+      return;
+    }
+    const delBtn = e.target.closest('.del-skill-btn');
+    if (delBtn) {
+      await apiRequest(`/api/skills/${encodeURIComponent(delBtn.dataset.slug)}`, { method: 'DELETE' });
+      await loadSkills();
+      showToast(`Deleted skill ${delBtn.dataset.slug}`);
+    }
+  });
+
+  $('#knowledge-grid')?.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.edit-know-btn');
+    if (editBtn) {
+      const res = await apiRequest(`/api/knowledge/${encodeURIComponent(editBtn.dataset.name)}`);
+      openKnowledgeModal(res.doc);
+      return;
+    }
+    const delBtn = e.target.closest('.del-know-btn');
+    if (delBtn) {
+      await apiRequest(`/api/knowledge/${encodeURIComponent(delBtn.dataset.name)}`, { method: 'DELETE' });
+      await loadKnowledge();
+      showToast(`Deleted knowledge doc ${delBtn.dataset.name}`);
+    }
+  });
+
+  $('#automations-grid')?.addEventListener('click', async (e) => {
+    const runBtn = e.target.closest('.run-auto-btn');
+    if (runBtn) {
+      const auto = state.automations.find((x) => x.id === runBtn.dataset.id);
+      if (!auto) return;
+      await createNewTask();
+      $('#prompt-input').value = auto.prompt;
+      await sendPrompt();
+      return;
+    }
+    const schedBtn = e.target.closest('.sched-auto-btn');
+    if (schedBtn) {
+      const auto = state.automations.find((x) => x.id === schedBtn.dataset.id);
+      if (auto) openScheduleModal(auto);
+      return;
+    }
+    const delBtn = e.target.closest('.del-auto-btn');
+    if (delBtn) {
+      await apiRequest(`/api/automations/${encodeURIComponent(delBtn.dataset.id)}`, { method: 'DELETE' });
+      await loadAutomations();
+      showToast('Automation deleted');
+    }
+  });
 
   $('#model-picker-btn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4313,6 +4601,10 @@ function wireEvents() {
 
   $('#send-btn').addEventListener('click', () => sendPrompt());
   $('#workspace-cwd-btn')?.addEventListener('click', pickWorkspaceFolder);
+  $('#workspace-reveal-btn')?.addEventListener('click', () => {
+    const cwd = state.activeSession?.cwd;
+    if (cwd && hasSwiftBridge()) postSwiftAction('revealInFinder', { path: cwd });
+  });
   $('#composer-mode-select')?.addEventListener('change', async (e) => {
     const mode = e.target.value || 'auto';
     if (state.activeSession?.id) {
@@ -4420,9 +4712,58 @@ function wireEvents() {
     }
   });
 
-  $('#browser-file-input').addEventListener('change', (e) => {
-    const files = Array.from(e.target.files || []);
-    window.__lgReceiveFiles(files.map((f) => f.path || f.name));
+  const uploadClientFile = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const res = await apiRequest('/api/chat/attachment', {
+            method: 'POST',
+            body: JSON.stringify({
+              filename: file.name || 'pasted-image.png',
+              dataBase64: String(reader.result || ''),
+            }),
+          });
+          resolve(res);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('Could not read selected file.'));
+      reader.readAsDataURL(file);
+    });
+
+  const handleSelectedClientFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    const directPaths = [];
+    for (const file of files) {
+      if (typeof file.path === 'string' && /^(\/|[A-Za-z]:\\)/.test(file.path)) {
+        directPaths.push(file.path);
+      } else {
+        try {
+          const uploaded = await uploadClientFile(file);
+          if (uploaded?.path) directPaths.push(uploaded.path);
+        } catch (err) {
+          showToast(err.message || 'Could not attach file');
+        }
+      }
+    }
+    if (directPaths.length > 0) await window.__lgReceiveFiles(directPaths);
+  };
+
+  promptInput.addEventListener('paste', async (e) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItems = items.filter((item) => item.kind === 'file' && /^image\//i.test(item.type));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    const files = imageItems.map((item) => item.getAsFile()).filter(Boolean);
+    await handleSelectedClientFiles(files);
+    if (files.length > 0) showToast('Pasted image attached');
+  });
+
+  $('#browser-file-input').addEventListener('change', async (e) => {
+    await handleSelectedClientFiles(e.target.files);
+    e.target.value = '';
   });
 
   const dropzone = $('#composer-dropzone');
@@ -4434,12 +4775,10 @@ function wireEvents() {
   dropzone.addEventListener('dragleave', (e) => {
     if (!dropzone.contains(e.relatedTarget)) overlay.classList.add('hidden');
   });
-  dropzone.addEventListener('drop', (e) => {
+  dropzone.addEventListener('drop', async (e) => {
     e.preventDefault();
     overlay.classList.add('hidden');
-    const files = Array.from(e.dataTransfer?.files || []);
-    const paths = files.map((f) => f.path || f.name).filter(Boolean);
-    if (paths.length > 0) window.__lgReceiveFiles(paths);
+    await handleSelectedClientFiles(e.dataTransfer?.files);
   });
 
   $('#new-skill-btn').addEventListener('click', () => openSkillModal(null));
@@ -4466,10 +4805,21 @@ function wireEvents() {
   });
 
   $('#new-automation-btn').addEventListener('click', () => openAutomationModal());
+  $('#automations-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-automation"]')) openAutomationModal();
+  });
+  $('#skills-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-skill"]')) $('#new-skill-btn').click();
+  });
+  $('#knowledge-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-knowledge"]')) $('#new-knowledge-btn').click();
+  });
   $('#modal-close-btn').addEventListener('click', closeModal);
   $('#modal-backdrop').addEventListener('click', (e) => {
     if (e.target === $('#modal-backdrop')) closeModal();
   });
+  $('#modal-backdrop').addEventListener('keydown', (e) => trapTabKey($('.modal-card'), e));
+  $('#palette-backdrop').addEventListener('keydown', (e) => trapTabKey($('.palette-card'), e));
 
   $('#num-ctx-select').addEventListener('change', async (e) => {
     const res = await apiRequest('/api/models/config', {
@@ -4581,7 +4931,15 @@ function wireEvents() {
       toggleSidebar();
       return;
     }
-    const viewShortcut = { '1': 'dashboard', '2': 'agent', '3': 'monitor', '4': 'schedule' }[e.key];
+    const viewShortcut = {
+      '1': 'dashboard',
+      '2': 'agent',
+      '3': 'monitor',
+      '4': 'schedule',
+      '5': 'skills',
+      '6': 'automations',
+      ',': 'settings',
+    }[e.key];
     if (mod && viewShortcut) {
       e.preventDefault();
       switchView(viewShortcut);
@@ -4637,6 +4995,19 @@ function wireEvents() {
   });
 }
 
+// Report window focus so the backend suppresses notification banners while the user is
+// actively looking at the app — a banner then would be redundant and annoying.
+function wireAppFocusReporting() {
+  const report = () => {
+    const focused = !document.hidden && document.hasFocus?.() !== false;
+    apiRequest('/api/app-focus', { method: 'POST', body: JSON.stringify({ focused }) }).catch(() => {});
+  };
+  window.addEventListener('focus', report);
+  window.addEventListener('blur', report);
+  document.addEventListener('visibilitychange', report);
+  report();
+}
+
 async function init() {
   try {
     setSidebarCollapsed(localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1', false);
@@ -4649,12 +5020,17 @@ async function init() {
   renderInstantActions();
   wireEvents();
   wireStatTiles();
+  wireAppFocusReporting();
   tickClock();
   setInterval(tickClock, 30000);
   await Promise.all([refreshHealth(), loadSessions(), loadSkills().catch(() => {})]);
   syncSessionToolbar();
   renderMessages(true);
   switchView('dashboard');
+  // Time from navigation start to the first fully-populated screen. This is the
+  // number that matters to a desktop app; paint entries can lag when the window
+  // launches behind another app.
+  state.uiReadyMs = performance.now();
 }
 
 init().catch((err) => showToast(err.message));

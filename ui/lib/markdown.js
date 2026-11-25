@@ -223,12 +223,23 @@ function renderQuoteOrCallout(bqLines) {
   return `<blockquote class="md-quote">${bqLines.map((l) => renderInline(l)).join('<br />')}</blockquote>`;
 }
 
+const MD_CACHE_MAX = 250;
+const mdCache = new Map();
+
 /**
  * Render Markdown safely to HTML with syntax-highlighted code blocks, artifacts, math, callouts, GFM tables, and task lists.
  */
 export function renderMarkdown(markdown) {
   const src = String(markdown || '');
   if (!src.trim()) return '';
+
+  const cacheable = src.length <= 65536;
+  if (cacheable && mdCache.has(src)) {
+    const cachedHtml = mdCache.get(src);
+    mdCache.delete(src);
+    mdCache.set(src, cachedHtml);
+    return cachedHtml;
+  }
 
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   const html = [];
@@ -407,5 +418,13 @@ export function renderMarkdown(markdown) {
   if (inCode && codeLines.length > 0) {
     html.push(renderCodeBlock(codeLines.join('\n'), codeLang));
   }
-  return html.join('');
+  const rendered = html.join('');
+  if (cacheable) {
+    if (mdCache.size >= MD_CACHE_MAX) {
+      const oldestKey = mdCache.keys().next().value;
+      if (oldestKey !== undefined) mdCache.delete(oldestKey);
+    }
+    mdCache.set(src, rendered);
+  }
+  return rendered;
 }
