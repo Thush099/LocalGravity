@@ -7,6 +7,7 @@ import path from 'node:path';
 import { digestFromSession, priorSessionNote } from '../backend/agent/session-digest.mjs';
 import { runAgentTurn } from '../backend/agent/loop.mjs';
 import { saveSession } from '../backend/state/storage.mjs';
+import { persistGoalState } from '../backend/agent/goal-continuity.mjs';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
 
 process.env.LOCALGRAVITY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'lg-digest-'));
@@ -75,6 +76,32 @@ async function tmpPaths() {
   return { root, paths: getRuntimePaths(root) };
 }
 
+test('the still-open plan travels with the quote, so both tell one story', () => {
+  const goals = [
+    {
+      sessionId: 'prior-1',
+      updatedAt: '2026-01-01T18:29:00.000Z',
+      steps: [
+        { text: 'Stop the build from failing', status: 'done' },
+        { text: 'Teach CI to install ImageMagick', status: 'pending' },
+        { text: 'Add AppIcon.icns to the bundle', status: 'done', unverified: true },
+      ],
+    },
+  ];
+  const note = digestFromSession(prior(), { now: NOW, goals });
+  assert.match(note, /Your published plan still owes 1 step/);
+  assert.match(note, /1 unverified/);
+  assert.match(note, /next: "Teach CI to install ImageMagick"/);
+  assert.match(note, /Added AppIcon\.icns/, 'the quote is still there');
+});
+
+test('a finished plan adds no line, and another session plan never leaks in', () => {
+  const finished = [{ sessionId: 'prior-1', steps: [{ text: 'Ship it', status: 'done' }] }];
+  assert.ok(!digestFromSession(prior(), { now: NOW, goals: finished }).includes('published plan'));
+  const someoneElse = [{ sessionId: 'other', steps: [{ text: 'Ship it', status: 'pending' }] }];
+  assert.ok(!digestFromSession(prior(), { now: NOW, goals: someoneElse }).includes('published plan'));
+});
+
 test('the newest usable session wins', async (t) => {
   const { root, paths } = await tmpPaths();
   t.after(() => fsPromises.rm(root, { recursive: true, force: true }));
@@ -122,6 +149,14 @@ test('a brand-new session is told where the last one stopped, once', async (t) =
     paths,
   );
 
+  // The plan the previous session published, still owing a step.
+  await persistGoalState(
+    [
+      { text: 'Rename the CLI flag to --headless', status: 'done' },
+      { text: 'Update the docs for the new flag', status: 'pending' },
+    ],
+    { paths, sessionId: 'prior-live', now: new Date(Date.now() - 3600 * 1000).toISOString() },
+  );
   const session = { id: 'fresh-live', title: 'New', messages: [] };
   const seen = [];
   await runAgentTurn({
@@ -136,6 +171,8 @@ test('a brand-new session is told where the last one stopped, once', async (t) =
   const firstPrompt = JSON.stringify(seen[0]);
   assert.match(firstPrompt, /Where We Left Off/);
   assert.match(firstPrompt, /Renamed it to --headless and updated the docs\./);
+  assert.match(firstPrompt, /published plan still owes 1 step/);
+  assert.match(firstPrompt, /Update the docs for the new flag/);
 
   const secondSeen = [];
   await runAgentTurn({
