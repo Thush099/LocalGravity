@@ -1127,7 +1127,7 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'run_shortcut':
         return await runShortcutTool(args);
       case 'set_reminder':
-        return await setReminderTool(args);
+        return await setReminderTool({ ...args, paths });
       case 'spotlight_search':
         return await spotlightSearchTool(args);
       case 'take_screenshot':
