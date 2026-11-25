@@ -7,10 +7,10 @@ echo "Node $(node --version)"
 npm test
 
 echo "Checking JavaScript syntax..."
-for file in ui/app.js ui/lib/*.js scripts/generate-icon.mjs; do
+while IFS= read -r file; do
   node --check "$file"
   echo "  ok $file"
-done
+done < <(find backend ui scripts -type f \( -name "*.mjs" -o -name "*.js" \) | sort)
 
 echo "Checking shell syntax..."
 for file in scripts/*.sh; do
