@@ -5,7 +5,7 @@ import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
 import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import { debounce } from './lib/utils.js';
-import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage } from './lib/performance.js';
+import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage, getModelSpeeds, recordModelSpeed } from './lib/performance.js';
 import {
   renderMemoryDonut,
   renderNetworkDonut,
@@ -2648,6 +2648,12 @@ async function sendPrompt(overridePayload = null) {
             if (Number.isFinite(evt.usage.durationMs)) recordLatency(evt.usage.durationMs);
             const totalTok = (Number(evt.usage.promptTokens) || 0) + (Number(evt.usage.completionTokens) || 0);
             if (totalTok > 0) recordTokenUsage(totalTok);
+            if (evt.usage.model && Number(evt.usage.completionTokens) > 0) {
+              recordModelSpeed(evt.usage.model, {
+                durationMs: Number(evt.usage.durationMs),
+                completionTokens: Number(evt.usage.completionTokens),
+              });
+            }
           }
           return;
         } else if (evt.type === 'error') {
@@ -2708,16 +2714,25 @@ function renderModelPopover() {
   const currentProv = state.config?.provider || 'ollama';
   const currentModel = state.config?.model || 'qwen3.5:4b';
 
+  const speeds = getModelSpeeds();
+  const fastestModel = Object.entries(speeds)
+    .filter(([, entry]) => Number(entry?.tps) > 0)
+    .sort((a, b) => Number(b[1].tps) - Number(a[1].tps))[0]?.[0];
   const localItems =
     ollamaModels.length > 0
       ? ollamaModels
-          .map(
-            (m) => `
+          .map((m) => {
+            // Show the speed this Mac actually measured, not a spec sheet number.
+            // It is the only honest way to answer "is 9B worth the wait?".
+            const tps = Number(speeds[m.name]?.tps) || 0;
+            const speedText = tps > 0 ? ` · ~${tps.toFixed(1)} tok/s` : '';
+            const fastestTag = fastestModel === m.name && tps > 0 ? ' · fastest' : '';
+            return `
           <button type="button" class="popover-item ${currentProv === 'ollama' && currentModel === m.name ? 'selected' : ''}" data-provider="ollama" data-model="${escapeHtml(m.name)}">
             <span>${escapeHtml(m.name)}</span>
-            <small>${formatBytes(m.size)}</small>
-          </button>`
-          )
+            <small>${formatBytes(m.size)}${speedText}${fastestTag}</small>
+          </button>`;
+          })
           .join('')
       : `<div class="status-sub" style="padding:6px 10px;">No local models pulled yet (pull qwen3.5:9b in Settings)</div>`;
 
