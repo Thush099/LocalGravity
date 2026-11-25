@@ -7,7 +7,9 @@ import {
   unverifiedCompletionNote,
 } from '../backend/agent/goal-verification.mjs';
 import { goalContinuityNote, persistGoalState, loadOpenGoals } from '../backend/agent/goal-continuity.mjs';
+import { runAgentTurn } from '../backend/agent/loop.mjs';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getRuntimePaths } from '../backend/state/paths.mjs';
@@ -190,4 +192,113 @@ test('goalContinuityNote surfaces unverified-only goals for continuation questio
   const note = goalContinuityNote(goals, 'where were we?');
   assert.ok(note.includes('Enable full-disk backups'));
   assert.ok(note.includes('(unverified)'), 'the marker is visible in the note');
+});
+
+function scriptedChat(script, seenMessages) {
+  let call = 0;
+  return async ({ messages }) => {
+    seenMessages.push(messages.map((m) => String(m.content ?? '')));
+    const next = script[Math.min(call, script.length - 1)];
+    call += 1;
+    return next;
+  };
+}
+
+test('the loop nudges decomposition once when acting on a compound request without a plan', async (t) => {
+  const tmpRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'lg-decomp-'));
+  t.after(() => fsPromises.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const seen = [];
+  const session = { id: 'decomp-loop', title: 'Decomp', messages: [] };
+
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'Please:\n1. clean the cache\n2. rebuild the app',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
+    persistSession: false,
+    chatFn: scriptedChat(
+      [
+        {
+          content: '',
+          toolCalls: [
+            { id: 'w1', name: 'write_file', arguments: { path: 'cache.txt', content: 'cleaned' } },
+          ],
+        },
+        {
+          content: '',
+          toolCalls: [
+            {
+              id: 'p1',
+              name: 'update_plan',
+              arguments: {
+                steps: [
+                  { text: 'Clean the cache', status: 'done' },
+                  { text: 'Rebuild the app', status: 'active' },
+                ],
+              },
+            },
+          ],
+        },
+        { content: 'Done for now.', toolCalls: [] },
+      ],
+      seen
+    ),
+  });
+
+  assert.equal(result.status, 'completed');
+  const nudgeHits = seen.filter((msgs) =>
+    msgs.some((c) => c.includes('Decompose it into concrete')),
+  );
+  assert.equal(nudgeHits.length, 1, 'the decomposition nudge fires exactly once');
+  assert.ok(
+    nudgeHits[0].some((c) => c.includes('1. clean the cache')),
+    'the nudge reaches the model in the next round, naming the request context',
+  );
+});
+
+test('the loop nudges verification for unbacked completions and keeps the marker in the note', async (t) => {
+  const tmpRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'lg-verify-loop-'));
+  t.after(() => fsPromises.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+  const seen = [];
+  const session = { id: 'verify-loop', title: 'Verify', messages: [] };
+
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'Rotate the API token and update the deployment secrets.',
+    paths,
+    providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
+    persistSession: false,
+    chatFn: scriptedChat(
+      [
+        {
+          content: '',
+          toolCalls: [
+            {
+              id: 'p1',
+              name: 'update_plan',
+              arguments: {
+                steps: [
+                  { text: 'Rotate the API token', status: 'done' },
+                  { text: 'Update the deployment secrets', status: 'done' },
+                ],
+              },
+            },
+          ],
+        },
+        { content: 'All done.', toolCalls: [] },
+      ],
+      seen
+    ),
+  });
+
+  assert.equal(result.status, 'completed');
+  const nudgeHits = seen.filter((msgs) =>
+    msgs.some((c) => c.includes('without an observable tool action')),
+  );
+  assert.equal(nudgeHits.length, 1, 'the verification nudge fires exactly once');
+  const final = result.session.messages.at(-1);
+  assert.match(final.content, /unverified/);
+  assert.match(final.content, /Rotate the API token/);
 });
