@@ -906,7 +906,7 @@ button, input, textarea, select {
 }
 
 .msg-user {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--app-1) 0%, var(--app-2) 100%);
   color: #ffffff;
   padding: 11px 16px;
   border-radius: 16px 16px 4px 16px;
@@ -1084,10 +1084,10 @@ button, input, textarea, select {
 }
 
 .msg-assistant {
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-surface));
   border: none;
-  border-radius: 0;
-  padding: 4px 2px 6px;
+  border-radius: 14px;
+  padding: 11px 15px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3251,6 +3251,13 @@ button, input, textarea, select {
 .brief-link:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.weather-icon {
+  font-size: 20px;
+  line-height: 1;
+  margin-right: 4px;
+  vertical-align: -3px;
 }
 
 .brief-meta {
