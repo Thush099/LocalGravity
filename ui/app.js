@@ -2750,6 +2750,21 @@ function renderSkillsGrid() {
   const filtered = state.skills.filter(
     (s) => !q || s.slug.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
   );
+  if (filtered.length === 0) {
+    const rawQuery = ($('#skills-search').value || '').trim();
+    $('#skills-grid').innerHTML = emptyState({
+      icon: SPARK_ICON,
+      tone: 'var(--app-5)',
+      stacked: state.skills.length === 0,
+      title: state.skills.length === 0 ? 'No skills yet' : 'No matching skills',
+      detail:
+        state.skills.length === 0
+          ? 'A skill is a SKILL.md the agent loads when a task matches, so it stops relearning the same workflow. Write one by hand, import from GitHub, or save a good reply as a skill.'
+          : `Nothing matches "${rawQuery}". Try a shorter word, or clear the search.`,
+      action: state.skills.length === 0 ? { label: 'Create your first skill', attrs: 'data-empty-action="new-skill"' } : null,
+    });
+    return;
+  }
   $('#skills-grid').innerHTML =
     filtered
       .map(
@@ -2767,7 +2782,7 @@ function renderSkillsGrid() {
         </div>
       </div>`
       )
-      .join('') || '<div class="status-sub">No matching skills.</div>';
+      .join('');
 }
 
 async function loadKnowledge() {
@@ -2831,6 +2846,24 @@ function renderKnowledgeGrid() {
       d.title.toLowerCase().includes(q) ||
       (d.tags || []).join(' ').toLowerCase().includes(q)
   );
+  if (filtered.length === 0) {
+    const rawQuery = ($('#knowledge-search').value || '').trim();
+    $('#knowledge-grid').innerHTML = emptyState({
+      icon: NOTE_ICON,
+      tone: 'var(--app-6)',
+      stacked: state.knowledge.length === 0,
+      title: state.knowledge.length === 0 ? 'No knowledge docs yet' : 'No matching docs',
+      detail:
+        state.knowledge.length === 0
+          ? 'Knowledge is the context the agent keeps about you: preferences, projects, people, house rules. Everything lives in plain markdown you can edit.'
+          : `Nothing matches "${rawQuery}". Try a different tag or word.`,
+      action:
+        state.knowledge.length === 0
+          ? { label: 'Write your first doc', attrs: 'data-empty-action="new-knowledge"' }
+          : null,
+    });
+    return;
+  }
   $('#knowledge-grid').innerHTML =
     filtered
       .map(
@@ -2847,7 +2880,7 @@ function renderKnowledgeGrid() {
         </div>
       </div>`
       )
-      .join('') || '<div class="status-sub">No knowledge docs yet.</div>';
+      .join('');
 }
 
 // Automations View
@@ -2874,6 +2907,7 @@ function emptyState({ icon = '', tone = 'var(--accent)', title, detail = '', act
 }
 
 const ZAP_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>';
+const NOTE_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h9.5L20 8v12.5H6z"/><path d="M15 3.5V8h4.5M9 12.5h7M9 16h5"/></svg>';
 const SPARK_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.4"/></svg>';
 
 function renderAutomationsGrid() {
@@ -4772,6 +4806,12 @@ function wireEvents() {
   $('#new-automation-btn').addEventListener('click', () => openAutomationModal());
   $('#automations-grid').addEventListener('click', (e) => {
     if (e.target.closest('[data-empty-action="new-automation"]')) openAutomationModal();
+  });
+  $('#skills-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-skill"]')) $('#new-skill-btn').click();
+  });
+  $('#knowledge-grid').addEventListener('click', (e) => {
+    if (e.target.closest('[data-empty-action="new-knowledge"]')) $('#new-knowledge-btn').click();
   });
   $('#modal-close-btn').addEventListener('click', closeModal);
   $('#modal-backdrop').addEventListener('click', (e) => {

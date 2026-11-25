@@ -4980,3 +4980,20 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
 .empty-state.stacked .empty-state-title { font-size: 16px; }
 .empty-state.stacked .empty-state-detail { margin-inline: auto; max-width: 52ch; font-size: 13px; }
 .empty-state.stacked .empty-state-action { margin-top: 4px; }
+
+/* A column of cards each carrying a loud red Delete is visual noise. Inside a
+   card row the destructive action stays quiet until hover or keyboard focus. */
+.card-grid > .empty-state { grid-column: 1 / -1; }
+
+.card-actions .danger-btn {
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.card-actions .danger-btn:hover,
+.card-actions .danger-btn:focus-visible {
+  color: var(--signal-red);
+  border-color: color-mix(in srgb, var(--signal-red) 42%, transparent);
+  background: color-mix(in srgb, var(--signal-red) 12%, transparent);
+}
