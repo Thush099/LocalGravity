@@ -13,6 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { captureExplicitMemory } from './memory-capture.mjs';
 import { captureStandingPreference } from './standing-preferences.mjs';
 import { memoryCaptureNotices } from './memory-notices.mjs';
+import { captureForget, forgetNotices } from './memory-forget.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
@@ -224,6 +225,9 @@ export async function runAgentTurn({
   // it outlives the session and is injected into every later system prompt, so it
   // is stored before the memory doc is loaded for this turn.
   const capturedRule = await captureStandingPreference(userMessage, paths);
+  // The other end of capture: "forget that …" removes exactly one matching
+  // MEMORY.md bullet, and only when it is unambiguous.
+  const forgotten = await captureForget(userMessage, paths);
 
   if (!Array.isArray(session.messages)) session.messages = [];
   if (fullUserText || attached.images.length > 0) {
@@ -241,7 +245,8 @@ export async function runAgentTurn({
   // A capture the user cannot see is a capture they will not trust: tell the
   // model what was just written so the reply confirms it instead of guessing.
   // These notes are turn-local (stripped with the other self-correction turns).
-  for (const notice of memoryCaptureNotices({ fact: capturedFact, rule: capturedRule })) {
+  const memoryNotices = [...memoryCaptureNotices({ fact: capturedFact, rule: capturedRule }), ...forgetNotices(forgotten)];
+  for (const notice of memoryNotices) {
     session.messages.push({
       role: 'user',
       content: notice,
