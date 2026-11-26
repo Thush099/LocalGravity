@@ -482,6 +482,19 @@ export function createAgentServer({
 
   const computeSuggestions = async () => {
     await ensureBriefingDiskCacheLoaded();
+    // The memory-pressure rule needs memory/swap figures, which otherwise only arrive via
+    // /api/system/metrics. Collect once if that cache is still empty so a fresh launch
+    // surfaces RAM pressure instead of silently skipping the suggestion.
+    if (!cachedMetrics) {
+      await collectSystemMetrics()
+        .then((m) => {
+          if (m) {
+            cachedMetrics = m;
+            cachedMetricsAt = Date.now();
+          }
+        })
+        .catch(() => {});
+    }
     // Do not read ~/Downloads just to count files for a suggestion: on macOS that
     // raises the folder-permission dialog at launch, before the user asked for
     // anything. The agent reads the folder only when a turn actually needs it.
