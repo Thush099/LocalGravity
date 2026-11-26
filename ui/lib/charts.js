@@ -311,6 +311,35 @@ const APP_COLORS = [
 ];
 
 /**
+ * Turn a raw process/executable name into a short, readable app label for the
+ * legend, while the full name stays in the row's tooltip. "Google Chrome Helper
+ * (Aperitif)" -> "Google Chrome", "com.apple.WebKit.Networking" -> "WebKit",
+ * "language_server" -> "Language Server". Conservative: anything without a clear
+ * shortening passes through unchanged.
+ */
+export function friendlyAppName(name) {
+  const raw = String(name || 'Unknown');
+  let n = raw;
+  if (/^com\.[a-z0-9]+\./i.test(n)) {
+    const generic = new Set(['helper', 'helpers', 'networking', 'renderer', 'gpu', 'webview', 'launcher', 'service', 'app', 'agent', 'client']);
+    const parts = n.split('.').slice(2).filter((p) => p && !generic.has(p.toLowerCase()));
+    n = parts[0] || n.split('.').slice(2)[0] || n;
+  } else {
+    n = n.replace(/\s+Helper\b.*$/i, '');
+    n = n.replace(/\s*\([^)]*\)\s*$/, '');
+    const snake = /[_-]/.test(n) && !/\s/.test(n);
+    if (snake) {
+      n = n.replace(/[_-]+/g, ' ').trim();
+      if (n === n.toLowerCase() && /\s/.test(n)) {
+        n = n.replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+  }
+  n = n.trim();
+  return n || raw;
+}
+
+/**
  * Per-app network usage as a colored donut ring + legend. Each app takes its own color
  * from the categorical palette so the mix reads at a glance; the longest tail is folded
  * into a muted "Other" arc. Returns the same shape as renderMemoryDonut.
@@ -342,6 +371,7 @@ export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this 
   const denom = Math.max(1, total);
   const segments = shown.map((a, i) => ({
     label: a.name,
+    short: friendlyAppName(a.name),
     bytes: a.bytes,
     color: a.muted ? 'var(--app-10)' : APP_COLORS[i % APP_COLORS.length],
     pct: (a.bytes / denom) * 100,
@@ -369,7 +399,7 @@ export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this 
     .map(
       (seg) => `<div class="donut-legend-row" title="${escapeHtml(seg.label)}">
         <span class="donut-swatch" style="background:${seg.color}"></span>
-        <span class="donut-legend-label">${escapeHtml(seg.label)}</span>
+        <span class="donut-legend-label">${escapeHtml(seg.short)}</span>
         <span class="donut-legend-val">${escapeHtml(formatBytes(seg.bytes))} · ${Math.round(seg.pct)}%</span>
       </div>`
     )

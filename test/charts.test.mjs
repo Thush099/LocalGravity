@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  friendlyAppName,
   renderMemoryDonut,
   renderMultiSeriesChart,
+  renderNetworkDonut,
   renderSparkline,
   renderWeeklyScheduleChart,
   summarizeTelemetrySeries,
@@ -89,4 +91,34 @@ test('renderWeeklyScheduleChart calculates weekday focus totals and highlights b
   const emptyChart = renderWeeklyScheduleChart([], 1);
   assert.equal(emptyChart.totalHours, 0);
   assert.equal(emptyChart.busiestDayLabel, 'None');
+});
+
+test('friendlyAppName shortens raw process names to readable app labels', () => {
+  assert.equal(friendlyAppName('Google Chrome Helper (Aperitif)'), 'Google Chrome');
+  assert.equal(friendlyAppName('DeepAI Code Helper'), 'DeepAI Code');
+  assert.equal(friendlyAppName('Antigravity Helper'), 'Antigravity');
+  assert.equal(friendlyAppName('com.apple.WebKit.Networking'), 'WebKit');
+  assert.equal(friendlyAppName('com.apple.Safari'), 'Safari');
+  assert.equal(friendlyAppName('language_server'), 'Language Server');
+  // conservative: no clear shortening -> unchanged
+  assert.equal(friendlyAppName('mDNSResponder'), 'mDNSResponder');
+  assert.equal(friendlyAppName('Other'), 'Other');
+  assert.equal(friendlyAppName(''), 'Unknown');
+});
+
+test('network legend shows the short name but keeps the full name in the tooltip', () => {
+  const { legendHtml } = renderNetworkDonut(
+    [
+      { name: 'Google Chrome Helper (Aperitif)', total: 500 },
+      { name: 'com.apple.WebKit.Networking', total: 300 },
+    ],
+    { size: 132 }
+  );
+  assert.match(legendHtml, /Google Chrome<\/span>/); // short label rendered
+  assert.match(legendHtml, /WebKit<\/span>/);
+  assert.match(legendHtml, /title="Google Chrome Helper \(Aperitif\)"/); // full name kept as tooltip
+  assert.match(legendHtml, /title="com\.apple\.WebKit\.Networking"/);
+  // the visible label span is exactly the short form (raw name only lives in the tooltip)
+  assert.match(legendHtml, /<span class="donut-legend-label">Google Chrome<\/span>/);
+  assert.match(legendHtml, /<span class="donut-legend-label">WebKit<\/span>/);
 });
