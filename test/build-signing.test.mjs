@@ -56,11 +56,13 @@ async function buildWithSigningMode(t, { adhoc = false } = {}) {
 test('CI ad-hoc signing skips local signing-identity setup', async (t) => {
   const { securityCalls, codesignCalls } = await buildWithSigningMode(t, { adhoc: true });
   assert.equal(securityCalls, '', 'CI build must not query or mutate the login keychain');
-  assert.match(codesignCalls, /--force --deep --sign - /, 'CI output is still ad-hoc signed for verification');
+  assert.match(codesignCalls, /--sign - /, 'CI output is still ad-hoc signed for verification');
+  assert.match(codesignCalls, /--options runtime/, 'hardened runtime flags apply in CI mode too');
 });
 
 test('normal local builds keep the stable signing-identity path', async (t) => {
   const { securityCalls, codesignCalls } = await buildWithSigningMode(t);
   assert.match(securityCalls, /find-certificate/, 'local build checks for its stable certificate');
-  assert.match(codesignCalls, /--force --deep --sign FAKE-CI-IDENTITY /);
+  assert.match(codesignCalls, /--sign FAKE-CI-IDENTITY /);
+  assert.match(codesignCalls, /--options runtime/, 'hardened runtime flags apply to identity signing');
 });
