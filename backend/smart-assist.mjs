@@ -23,6 +23,14 @@ function suggestion(entry) {
   };
 }
 
+/** Use the same preferred volume as the dashboard's storage tile. */
+export function storageFreePercentFromMetrics(metrics) {
+  const disks = metrics?.disks || [];
+  const disk = disks.find((d) => d.mount === '/System/Volumes/Data') || disks.find((d) => d.mount === '/') || disks[0];
+  const usedPercent = Number(disk?.usedPercent);
+  return Number.isFinite(usedPercent) ? Math.max(0, 100 - usedPercent) : null;
+}
+
 /**
  * Derive prioritised suggestions from a system-state snapshot. Every field is
  * optional; a rule only fires when its inputs are present, so callers can pass
@@ -162,11 +170,24 @@ export async function loadDismissed(paths) {
   }
 }
 
+const dismissalWrites = new Map();
+
 export async function dismissSuggestion(paths, id) {
-  const dismissed = await loadDismissed(paths);
-  dismissed[id] = Date.now();
-  await fs.writeFile(dismissedFile(paths), JSON.stringify(dismissed), 'utf8');
-  return dismissed;
+  const file = dismissedFile(paths);
+  const previous = dismissalWrites.get(file) || Promise.resolve();
+  const write = previous.catch(() => {}).then(async () => {
+    const dismissed = await loadDismissed(paths);
+    dismissed[id] = Date.now();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(dismissed), 'utf8');
+    return dismissed;
+  });
+  dismissalWrites.set(file, write);
+  try {
+    return await write;
+  } finally {
+    if (dismissalWrites.get(file) === write) dismissalWrites.delete(file);
+  }
 }
 
 /** Drop suggestions the user has dismissed within the last {@link windowMs}. */
@@ -174,7 +195,8 @@ export function filterDismissed(suggestions, dismissed = {}, { windowMs = 7 * 24
   const now = Date.now();
   return suggestions.filter((s) => {
     const at = dismissed[s.id];
-    return at == null || now - at > windowMs;
+    const timestamp = typeof at === 'number' ? at : Number.NaN;
+    return !Number.isFinite(timestamp) || timestamp > now || now - timestamp > windowMs;
   });
 }
 
