@@ -120,4 +120,3 @@ test('dialogs hide the page behind them from keyboard and assistive tech', async
   const html = await fs.readFile(new URL('../ui/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="modal-backdrop"[^>]*aria-labelledby="modal-title"/, 'dialog needs an accessible name');
 });
-
