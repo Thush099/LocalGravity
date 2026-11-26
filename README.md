@@ -14,7 +14,6 @@
 
 LocalGravity combines a compiled Swift `WKWebView` macOS shell with a dependency-free Node.js agent runtime. Run privately offline with [Ollama](https://ollama.com) or connect OpenRouter, Groq, Google Gemini, Anthropic Claude, OpenAI, or any OpenAI-compatible API. Beyond multi-turn coding and file work, it gives you a live Apple Silicon telemetry dashboard with SVG graphs, **49 native Mac and web tools** (Spotlight search, screen capture, Apple Notes, live web search, shell, ffmpeg/ImageMagick media inspection, timetable CRUD), **30 starter skills**, persistent memory, and scheduled `launchd` background jobs.
 
-
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="LocalGravity Everyday Dashboard with live CPU/Memory/GPU sparklines and one-click capabilities" width="100%" />
 </p>
@@ -30,7 +29,6 @@ Most AI tools force a compromise: browser chats are siloed from your Mac and cha
 | **Zero-subscription local models** | No | Sometimes | **Yes** (Ollama tuned for 16 GB Apple Silicon + 1-click RAM unload) |
 | **Live split-pane Artifact Canvas** | Cloud-only | None | **Side-by-side HTML/SVG preview in an isolated sandbox + Save/Copy** |
 | **Native Mac control (49 tools)** | None | Shell only | **Per-chat project folders, Spotlight, Notes, Clipboard, Screenshots, Shortcuts, Web** |
-
 | **Full conversation control & modes** | Varies | Rare | **Inline Edit & re-run, Branch, Pin/Rename, Engineer/Researcher/Writer/Mac Ops modes** |
 | **Live hardware & schedule visibility** | None | None | **Real-time SVG CPU/RAM/GPU graphs, Memory donut & Timetable** |
 | **Voice, LaTeX & persistent skills** | Paid / online | Flags only | **Offline macOS Read Aloud, zero-dep LaTeX math, callouts, 30+ `SKILL.md` & `LEARNED_FIXES.md`** |
@@ -144,7 +142,6 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 - **Outstanding work:** the briefing reports what your assistant still owes you — the open plans from earlier sessions (step counts, any `(unverified)` completions, and the next real step) plus a single nudge when a plan has sat untouched for a day. The steps are your assistant's own published ones, never a summary, so it can remind you what is unfinished but cannot invent work.
 - **Voice barge-in:** starting a new message mid-reply stops any in-flight `say` speech immediately — talk over the assistant like a real interlocutor.
 
-
 ### Security & Runtime Hardening
 - **Authenticated loopback API:** Fresh 32-byte per-launch `X-Auth-Token` bound strictly to `127.0.0.1` on an ephemeral port (also required on `/api/artifacts/stage`, `/api/chat/speak`, and session mutations).
 - **Isolated Artifact Sandbox & CSRF defenses:** Mutating routes reject foreign `Origin` headers. The main UI enforces strict `script-src 'self'; frame-src 'self'` CSP, while `/preview-sandbox/:id` enforces `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'` so previewed widgets cannot read parent state or local endpoints.
@@ -191,7 +188,6 @@ Cloud provider keys can be added in **Models & Settings** (`⌘K` -> Settings) a
 │  │                                prompt builder, compactor)     │
 │  ├── backend/providers/          (Ollama stream, OpenAI, Claude) │
 │  ├── backend/tools/              (49 tools + safety policies)    │
-
 │  ├── backend/skills-engine.mjs   (30 starter SKILL.md + imports) │
 │  └── backend/knowledge-engine.mjs(MEMORY.md + docs search)       │
 └───────────────────────────────┬──────────────────────────────────┘

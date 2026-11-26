@@ -142,8 +142,7 @@ test('briefing endpoint coalesces requests, serves disk/stale cache immediately,
     // parked gather below it would deadlock, never merely run slowly. So this
     // bound is only a machine-speed SLO (it can stretch past a tight floor under
     // parallel test-file CPU load), not the behaviour being verified.
-    assert.ok(dt < 2000, `stale briefing returned in ${dt.toFixed(1)}ms instead of returning from cache`);    const staleData = await staleRes.json();
-    assert.equal(staleData.briefing.news[0].title, 'Disk Cached Lead');
+    assert.ok(dt < 2000, `stale briefing returned in ${dt.toFixed(1)}ms instead of returning from cache`);    const staleData = await staleRes.json();    assert.equal(staleData.briefing.news[0].title, 'Disk Cached Lead');
     assert.equal(staleData.stale, true);
 
     // Wait briefly so background refresh started, then unblock it and verify coalescing
