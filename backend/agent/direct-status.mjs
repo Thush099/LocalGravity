@@ -10,6 +10,7 @@
  * is what should reason about it.
  */
 import { collectSystemMetrics } from '../system-monitor.mjs';
+import { weatherSummary } from '../daily-briefing.mjs';
 
 const DIAGNOSTIC_RE =
   /\b(why|how come|slow|sluggish|fix|speed|clean|free up|close|quit|kill|increase|reduce|optimize|draining|drain|improve|better|should|best|make|cause|reason)\b/i;
@@ -89,5 +90,53 @@ export async function answerDirectSystemStatus(message) {
   const snapshot = await collectSystemMetrics({ sampleMs: 0 }).catch(() => null);
   if (!snapshot) return null;
   const answer = formatSystemStatus(metric, snapshot);
+  return answer ? { answer } : null;
+}
+
+// Weather is another common single lookup that shouldn't wait on the slow local
+// model. Detection stays conservative: local weather only — a named place
+// ("in London") needs geocoding, so that falls to the model.
+const WEATHER_RE = /\b(weather|forecast|temperature outside|how (?:hot|cold|warm)|rain|raining|sunny|umbrella|jacket)\b/i;
+const SYSTEM_WORD_RE = /\b(cpu|gpu|ram|memory|disk|storage|battery|server|hardware|component)\b/i;
+const PLACE_RE =
+  /\b(?:in|for|at|near|around|over)\s+(?!my\b|the\b|this\b|our\b|today\b|tomorrow\b|tonight\b|morning\b|afternoon\b|evening\b|night\b|weekend\b)[a-z][a-z-]{1,}/i;
+
+/**
+ * @param {string} message
+ * @returns {'weather'|null}
+ */
+export function detectWeatherQuery(message) {
+  const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  if (!t || t.length > 80) return null;
+  if (DIAGNOSTIC_RE.test(t)) return null;
+  if (SYSTEM_WORD_RE.test(t)) return null;
+  if (!WEATHER_RE.test(t)) return null;
+  if (PLACE_RE.test(t)) return null;
+  return 'weather';
+}
+
+/**
+ * @param {object} w a weatherSummary() result
+ * @returns {string|null}
+ */
+export function formatWeather(w) {
+  if (!w || !w.ok || w.temp == null) return null;
+  const where = w.city ? ` in ${w.city}` : '';
+  const feels = w.feelsLike != null ? `, feels like ${w.feelsLike}°` : '';
+  const hiLo = w.high != null ? `, high ${w.high}°${w.low != null ? ` / low ${w.low}°` : ''}` : '';
+  const wind = w.wind != null ? `, wind ${w.wind} km/h` : '';
+  return `${w.icon || ''} **${w.temp}°C**${where} — ${w.description}${feels}${hiLo}${wind}.`;
+}
+
+/**
+ * Answer a direct local-weather question on device, or return null to let the
+ * model handle it (including named-place lookups, which need geocoding).
+ * @param {string} message
+ * @returns {Promise<{ answer: string } | null>}
+ */
+export async function answerDirectWeather(message) {
+  if (detectWeatherQuery(message) !== 'weather') return null;
+  const w = await weatherSummary().catch(() => null);
+  const answer = w && w.ok ? formatWeather(w) : null;
   return answer ? { answer } : null;
 }

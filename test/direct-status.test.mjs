@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSystemStatusMetric, formatSystemStatus } from '../backend/agent/direct-status.mjs';
+import { detectSystemStatusMetric, formatSystemStatus, detectWeatherQuery, formatWeather } from '../backend/agent/direct-status.mjs';
 
 test('detects direct system-status questions', () => {
   assert.equal(detectSystemStatusMetric('how much RAM is free'), 'memory');
@@ -66,4 +66,30 @@ test('formats each metric from a snapshot', () => {
 test('handles a desktop Mac with no battery', () => {
   assert.match(formatSystemStatus('battery', { battery: null }), /No battery/);
   assert.match(formatSystemStatus('disk', { disks: [] }), /No storage/);
+});
+
+test('detects direct local-weather questions', () => {
+  assert.equal(detectWeatherQuery("what's the weather"), 'weather');
+  assert.equal(detectWeatherQuery('how is the weather today'), 'weather');
+  assert.equal(detectWeatherQuery('is it going to rain'), 'weather');
+  assert.equal(detectWeatherQuery('temperature outside'), 'weather');
+  assert.equal(detectWeatherQuery('weather in my area'), 'weather');
+});
+
+test('leaves named places, system temps, and diagnosis to the model', () => {
+  assert.equal(detectWeatherQuery("what's the weather in London"), null); // needs geocoding
+  assert.equal(detectWeatherQuery('weather in Paris tomorrow'), null);
+  assert.equal(detectWeatherQuery('cpu temperature'), null); // system word
+  assert.equal(detectWeatherQuery('why is the weather app slow'), null); // diagnostic
+  assert.equal(detectWeatherQuery('how do I fix my AC'), null);
+});
+
+test('formats a local-weather answer with the real conditions', () => {
+  const out = formatWeather({ ok: true, city: 'Colombo', temp: 25, feelsLike: 30, description: 'Light drizzle', high: 31, low: 24, wind: 11, icon: '🌦️' });
+  assert.match(out, /25°C/);
+  assert.match(out, /Colombo/);
+  assert.match(out, /Light drizzle/);
+  assert.match(out, /high 31° \/ low 24°/);
+  assert.equal(formatWeather({ ok: false, error: 'offline' }), null);
+  assert.equal(formatWeather({ ok: true, temp: null }), null);
 });
