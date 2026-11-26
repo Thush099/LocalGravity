@@ -137,6 +137,7 @@ const INSTANT_ACTIONS = [
   { id: 'schedule_today', label: 'Today’s schedule', desc: 'Timetable entries for today' },
   { id: 'organize_plan', label: 'Organize preview', desc: 'Preview how loose files would sort, without moving anything' },
   { id: 'docker_ps', label: 'Docker status', desc: 'List running containers' },
+  { id: 'top_processes', label: 'Memory & CPU hogs', desc: 'What is eating your RAM and CPU right now — close a big one to speed up the local AI' },
 ];
 
 const SLASH_COMMANDS = [
