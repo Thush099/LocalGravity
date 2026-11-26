@@ -82,17 +82,21 @@ export function suggestActions(state = {}) {
     const swapGB = Number(swapUsedGB) || 0;
     const swapping = swapGB > 1;
     const critical = memoryUsedPercent >= 90;
-    // Swap this deep means the machine is already thrashing — that alone is pressure,
-    // even when the used% reads just under 80.
-    if (critical || (memoryUsedPercent >= 80 && swapping) || swapGB >= 3) {
+    const usedTight = memoryUsedPercent >= 80 && swapping;
+    // Swap this deep means the machine has been thrashing — worth surfacing even after
+    // used% recovers below 80. Frame the message around whichever signal actually fired.
+    if (critical || usedTight || swapGB >= 3) {
+      const current = critical || usedTight;
       out.push(suggestion({
         id: 'free-ram',
         tone: critical ? 'urgent' : 'warn',
         priority: 92,
-        title: `Memory is tight (${memoryUsedPercent.toFixed(0)}% used)`,
-        detail: swapping
-          ? `About ${swapGB.toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
-          : 'Closing a big app will make everything snappier, including the local AI.',
+        title: current ? `Memory is tight (${memoryUsedPercent.toFixed(0)}% used)` : `Recent memory crunch (${swapGB.toFixed(1)} GB in swap)`,
+        detail: current
+          ? swapping
+            ? `About ${swapGB.toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
+            : 'Closing a big app will make everything snappier, including the local AI.'
+          : `The Mac recently ran short on memory and pushed ${swapGB.toFixed(1)} GB to disk, so apps crawled. Closing a big app keeps the local AI at full speed.`,
         action: 'Show me what is using my memory right now.',
         actionLabel: 'See memory hogs',
       }));

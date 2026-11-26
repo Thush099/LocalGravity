@@ -128,6 +128,7 @@ test('suggests freeing RAM under memory pressure', () => {
   const swapOnly = suggestActions({ memoryUsedPercent: 79, swapUsedGB: 8 }).find((s) => s.id === 'free-ram');
   assert.ok(swapOnly, 'heavy swap surfaces pressure even below 80% used');
   assert.equal(swapOnly.tone, 'warn');
+  assert.match(swapOnly.title, /Recent memory crunch/, 'framed around the swap, not the recovered used%');
 
   // Quiet when there is no pressure, or high usage without real swapping.
   assert.ok(!suggestActions({ memoryUsedPercent: 50, swapUsedGB: 0 }).some((s) => s.id === 'free-ram'));
