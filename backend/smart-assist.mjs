@@ -79,15 +79,19 @@ export function suggestActions(state = {}) {
   // needs gigabytes of free RAM to run instead of swapping to disk. Surfacing it
   // is the single biggest lever on why answers feel slow.
   if (memoryUsedPercent != null) {
-    const swapping = Number(swapUsedGB) > 1;
-    if (memoryUsedPercent >= 90 || (memoryUsedPercent >= 80 && swapping)) {
+    const swapGB = Number(swapUsedGB) || 0;
+    const swapping = swapGB > 1;
+    const critical = memoryUsedPercent >= 90;
+    // Swap this deep means the machine is already thrashing — that alone is pressure,
+    // even when the used% reads just under 80.
+    if (critical || (memoryUsedPercent >= 80 && swapping) || swapGB >= 3) {
       out.push(suggestion({
         id: 'free-ram',
-        tone: memoryUsedPercent >= 90 ? 'urgent' : 'warn',
+        tone: critical ? 'urgent' : 'warn',
         priority: 92,
         title: `Memory is tight (${memoryUsedPercent.toFixed(0)}% used)`,
         detail: swapping
-          ? `About ${Number(swapUsedGB).toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
+          ? `About ${swapGB.toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
           : 'Closing a big app will make everything snappier, including the local AI.',
         action: 'Show me what is using my memory right now.',
         actionLabel: 'See memory hogs',
