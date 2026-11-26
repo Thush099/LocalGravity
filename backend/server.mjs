@@ -510,6 +510,11 @@ export function createAgentServer({
           ? Number(cachedBriefing.network.monthBytes) / 1024 ** 3
           : null,
       topApp: (cachedBriefing?.network?.monthApps || []).find((a) => Number(a?.total) > 0) || null,
+      memoryUsedPercent: cachedMetrics?.memory?.usedPercent ?? null,
+      swapUsedGB:
+        cachedMetrics?.memory?.swap?.usedBytes != null
+          ? Number(cachedMetrics.memory.swap.usedBytes) / 1024 ** 3
+          : null,
     };
     return buildSuggestions(snap, dismissed, { limit: 4 });
   };

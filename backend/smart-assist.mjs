@@ -49,6 +49,8 @@ export function suggestActions(state = {}) {
     scheduledToday = null,
     monthNetworkGB = null,
     topApp = null,
+    memoryUsedPercent = null,
+    swapUsedGB = null,
   } = state;
   const out = [];
 
@@ -69,6 +71,26 @@ export function suggestActions(state = {}) {
         detail: 'A quick clean-up keeps things running smoothly.',
         action: 'Show me the biggest files and folders I could archive or delete.',
         actionLabel: 'Review storage',
+      }));
+    }
+  }
+
+  // Memory pressure slows everything down — especially the local AI model, which
+  // needs gigabytes of free RAM to run instead of swapping to disk. Surfacing it
+  // is the single biggest lever on why answers feel slow.
+  if (memoryUsedPercent != null) {
+    const swapping = Number(swapUsedGB) > 1;
+    if (memoryUsedPercent >= 90 || (memoryUsedPercent >= 80 && swapping)) {
+      out.push(suggestion({
+        id: 'free-ram',
+        tone: memoryUsedPercent >= 90 ? 'urgent' : 'warn',
+        priority: 92,
+        title: `Memory is tight (${memoryUsedPercent.toFixed(0)}% used)`,
+        detail: swapping
+          ? `About ${Number(swapUsedGB).toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
+          : 'Closing a big app will make everything snappier, including the local AI.',
+        action: 'Show me what is using my memory right now.',
+        actionLabel: 'See memory hogs',
       }));
     }
   }

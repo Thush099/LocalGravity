@@ -114,3 +114,19 @@ test('a single data-hungry app is called out by name', () => {
   assert.ok(!suggestActions({}).some((s) => s.id === 'data-hog'));
 });
 
+test('suggests freeing RAM under memory pressure', () => {
+  const urgent = suggestActions({ memoryUsedPercent: 92, swapUsedGB: 3 }).find((s) => s.id === 'free-ram');
+  assert.ok(urgent);
+  assert.equal(urgent.tone, 'urgent');
+  assert.match(urgent.detail, /3\.0 GB is spilling/);
+  assert.ok(urgent.action);
+
+  const warn = suggestActions({ memoryUsedPercent: 84, swapUsedGB: 2 }).find((s) => s.id === 'free-ram');
+  assert.equal(warn?.tone, 'warn');
+
+  // Quiet when there is no pressure, or high usage without real swapping.
+  assert.ok(!suggestActions({ memoryUsedPercent: 50, swapUsedGB: 0 }).some((s) => s.id === 'free-ram'));
+  assert.ok(!suggestActions({ memoryUsedPercent: 84, swapUsedGB: 0.2 }).some((s) => s.id === 'free-ram'));
+  assert.ok(!suggestActions({}).some((s) => s.id === 'free-ram'));
+});
+
