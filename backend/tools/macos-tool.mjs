@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expandUserPath } from './safety.mjs';
+import { addReminder } from './reminders.mjs';
 
 const MAX_CLIPBOARD_CHARS = 200000;
 const MAX_PROCESS_OUTPUT_CHARS = 64 * 1024;
@@ -192,7 +193,7 @@ export function _resetReminderRegistry() {
   pendingReminders = new Map();
 }
 
-export async function setReminderTool({ seconds, message }) {
+export async function setReminderTool({ seconds, message, paths, spawnFn = spawn }) {
   const raw = Number(seconds);
   if (!Number.isFinite(raw) || raw <= 0) {
     return { ok: false, output: 'Reminder delay must be a positive number of seconds.' };
@@ -215,16 +216,22 @@ export async function setReminderTool({ seconds, message }) {
   }
   const script = `display notification "${escapeAppleScriptString(msg)}" with title "LocalGravity Reminder"`;
   const invocation = buildReminderInvocation(delay, script);
-  const child = spawn('nohup', [invocation.bin, ...invocation.args], {
+  const fireAt = new Date(Date.now() + delay * 1000).toISOString();
+  const child = spawnFn('nohup', [invocation.bin, ...invocation.args], {
     detached: true,
     stdio: 'ignore',
   });
   child.unref();
   pendingReminders.set(key, now);
+  // Written down before this call returns: the notification only fires while the machine
+  // stays awake, the record survives a reboot and the briefing can hand it back. The pid
+  // is kept so a changed mind can actually stop the pending notification.
+  const record = await addReminder(paths, { message: msg, fireAt, pid: child.pid }).catch(() => null);
   return {
     ok: true,
     output: `Reminder set for ${delay} seconds from now: "${msg.slice(0, 120)}"`,
-    fireAt: new Date(Date.now() + delay * 1000).toISOString(),
+    fireAt,
+    reminderId: record?.id ?? null,
   };
 }
 
