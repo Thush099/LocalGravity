@@ -49,7 +49,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         startBackendServer()
     }
 
+    // A persistent agent should keep running when its window closes; macOS
+    // gestures (Mission Control, Show Desktop, App Exposé) can close the window
+    // and must not silently take the whole app down. The Dock icon reopens it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            window?.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 
