@@ -148,6 +148,35 @@ class Parser {
   }
 }
 
+/**
+ * Detect a message that is purely a deterministic arithmetic request (e.g.
+ * "calculate 25*4+7", "what is 12*12", "25*4+7") and return just the
+ * expression, so the caller can compute it instantly without a model turn.
+ * Deliberately conservative: anything that is not provably pure arithmetic
+ * returns null and falls through to the model (e.g. "2024-01-05" is a date,
+ * not a subtraction).
+ */
+export function extractPureCalculation(message) {
+  const src = String(message || '').trim();
+  if (!src) return null;
+  const PREFIX = /^(?:please\s+)?(?:calculate|compute|eval(?:uate)?|solve|what(?:'s| is)|whats|how much is)\s+(.+)$/i;
+  const m = PREFIX.exec(src);
+  let expr;
+  if (m) {
+    expr = m[1];
+  } else {
+    // Bare expression: require a non-minus operator so date-like strings and
+    // phone/id numbers do not get misread as subtraction.
+    if (!/^[\d\s+\-*/().^%]+$/.test(src)) return null;
+    if (!/[*/+()^%]/.test(src)) return null;
+    expr = src;
+  }
+  expr = expr.replace(/[?=]+\s*$/, '').trim();
+  if (!/^[\d\s+\-*/().^%]+$/.test(expr)) return null;
+  if (!/[+\-*/^%]/.test(expr)) return null;
+  return expr;
+}
+
 export function evaluateExpression(expression) {
   const src = String(expression || '');
   if (!src.trim()) {

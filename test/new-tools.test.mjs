@@ -1,10 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateExpression, calculateTool } from '../backend/tools/calc-tool.mjs';
+import { evaluateExpression, calculateTool, extractPureCalculation } from '../backend/tools/calc-tool.mjs';
 import { normalizePlanSteps, updatePlanTool } from '../backend/tools/plan-tool.mjs';
 import { runAppleScriptTool } from '../backend/tools/applescript-tool.mjs';
 import { buildModelMessages } from '../backend/agent/loop.mjs';
 import { evaluateToolSafety } from '../backend/tools/registry.mjs';
+
+test('extractPureCalculation routes only provable arithmetic to the deterministic fast-path', () => {
+  // Pure arithmetic (with a command word or bare) is extracted.
+  assert.equal(extractPureCalculation('calculate 25*4+7'), '25*4+7');
+  assert.equal(extractPureCalculation('what is 12*12'), '12*12');
+  assert.equal(extractPureCalculation('25*4+7'), '25*4+7');
+  assert.equal(extractPureCalculation('how much is (2+3)*4?'), '(2+3)*4');
+  // Ambiguous or non-arithmetic text falls through to the model.
+  assert.equal(extractPureCalculation('2024-01-05'), null, 'a date is not subtraction');
+  assert.equal(extractPureCalculation('organize my downloads'), null);
+  assert.equal(extractPureCalculation('calculate the total budget'), null);
+  assert.equal(extractPureCalculation(''), null);
+});
 
 test('calculate evaluates arithmetic, functions, and constants without eval', () => {
   assert.equal(evaluateExpression('2 + 3 * 4').value, 14);

@@ -30,6 +30,7 @@ fi
 CONTENTS="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
+ENTITLEMENTS="${REPO_ROOT}/native/LocalGravity.entitlements"
 
 echo "Building ${APP_NAME}.app from ${REPO_ROOT} -> ${APP_BUNDLE}..."
 mkdir -p "${REPO_ROOT}/build"
@@ -40,11 +41,12 @@ fi
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-swiftc -O \
+swiftc -O -strict-concurrency=complete \
   -target arm64-apple-macosx14.0 \
   -framework Cocoa \
   -framework WebKit \
   -framework Security \
+  -framework ServiceManagement \
   "${REPO_ROOT}/native/LocalGravityHost.swift" \
   -o "${MACOS_DIR}/${APP_NAME}"
 
@@ -85,11 +87,24 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>LocalGravity uses AppleScript to read your Mail and Calendar for the daily briefing.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.localgravity.app</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>localgravity</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
@@ -103,13 +118,32 @@ if [ "${LOCALGRAVITY_ADHOC_SIGNING:-0}" = "1" ]; then
 else
   SIGN_IDENTITY="$("${REPO_ROOT}/scripts/ensure-signing-identity.sh" 2>/dev/null || true)"
 fi
+# Hardened Runtime (--options runtime) is required for notarization. The entitlements
+# grant WKWebView JIT, AppleScript automation, and unsigned Node-module loading.
+CODESIGN_FLAGS=(--force --deep --options runtime --entitlements "${ENTITLEMENTS}")
 if [ -n "${SIGN_IDENTITY}" ]; then
-  codesign --force --deep --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+  codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
 else
   if [ "${LOCALGRAVITY_ADHOC_SIGNING:-0}" != "1" ]; then
     echo "warning: no signing identity; folder permissions will need granting again after a rebuild" >&2
   fi
-  codesign --force --deep --sign - "${APP_BUNDLE}" || true
+  codesign "${CODESIGN_FLAGS[@]}" --sign - "${APP_BUNDLE}" || true
+fi
+
+# Notarization needs a Developer ID Application certificate plus stored notary
+# credentials (xcrun notarytool store-credentials <profile>). It runs only when
+# APPLE_NOTARY_PROFILE names that keychain profile, so local builds stay
+# credential-free and no secret is ever stored in the repo.
+if [ -n "${APPLE_NOTARY_PROFILE:-}" ]; then
+  echo "Notarizing with keychain profile '${APPLE_NOTARY_PROFILE}'..."
+  NOTARY_ZIP="${APP_BUNDLE}.zip"
+  ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARY_ZIP}"
+  xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${APPLE_NOTARY_PROFILE}" --wait
+  xcrun stapler staple "${APP_BUNDLE}"
+  rm -f "${NOTARY_ZIP}"
+  echo "Notarization complete and stapled."
+else
+  echo "Skipping notarization (set APPLE_NOTARY_PROFILE to enable). Build is Hardened-Runtime signed."
 fi
 
 if [ -x "${LSREGISTER}" ]; then
