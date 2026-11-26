@@ -41,7 +41,7 @@ fi
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-swiftc -O \
+swiftc -O -strict-concurrency=complete \
   -target arm64-apple-macosx14.0 \
   -framework Cocoa \
   -framework WebKit \

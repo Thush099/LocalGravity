@@ -305,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.handleBackendStdout(chunk)
             }
         }
@@ -313,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.stderrBuffer += chunk
                 if self.stderrBuffer.count > 8192 {
@@ -325,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         proc.terminationHandler = { [weak self] process in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 if self.isQuitting { return }
                 let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
@@ -468,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url,
            let host = url.host,
            host != "127.0.0.1" && host != "localhost" && (url.scheme == "http" || url.scheme == "https") {
