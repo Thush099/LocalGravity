@@ -14,7 +14,7 @@ import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
 import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
 import { networkUsageSummary, perAppUsage, recordNetworkSample, totalInterfaceBytes } from './network-monitor.mjs';
-import { buildSuggestions, dismissSuggestion, loadDismissed } from './smart-assist.mjs';
+import { buildSuggestions, dismissSuggestion, loadDismissed, storageFreePercentFromMetrics } from './smart-assist.mjs';
 import {
   deleteKnowledge,
   ensureKnowledgeSeeded,
@@ -74,6 +74,7 @@ import {
   takeScreenshotTool,
 } from './tools/macos-tool.mjs';
 import { startAgendaNotifier } from './agenda-notifier.mjs';
+import { startAmbientAlerter } from './ambient-alerts.mjs';
 import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
@@ -348,6 +349,11 @@ function maskConfigForClient(cfg) {
   return { config: rest, configuredKeys };
 }
 
+/** Speak text aloud with macOS `say`. Injectable so tests never make noise. */
+function defaultSpeakFn(text) {
+  return spawn('/usr/bin/say', [text], { stdio: 'ignore' });
+}
+
 export function createAgentServer({
   authToken,
   paths = getRuntimePaths(),
@@ -358,6 +364,7 @@ export function createAgentServer({
   warmModelFn = warmOllamaModel,
   unloadModelsFn = unloadOllamaModels,
   runAgentTurnFn = runAgentTurn,
+  speakFn = defaultSpeakFn,
   gatherBriefingFn = null,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
@@ -387,6 +394,7 @@ export function createAgentServer({
     activeSpeakProc = null;
   };
   let agendaStop = null;
+  let ambientStop = null;
   let networkWarmTimer = null;
   let networkSampleTimer = null;
   const resolveRunApprovals = (runState, reason) => {
@@ -484,24 +492,22 @@ export function createAgentServer({
     // Do not read ~/Downloads just to count files for a suggestion: on macOS that
     // raises the folder-permission dialog at launch, before the user asked for
     // anything. The agent reads the folder only when a turn actually needs it.
+    const storageFreePercent = storageFreePercentFromMetrics(cachedMetrics);
     const [diskStat, scheduleEntries, dismissed] = await Promise.all([
-      cachedMetrics?.disks?.[0]
+      storageFreePercent !== null
         ? Promise.resolve(null)
         : fs.statfs(os.homedir()).catch(() => null),
       loadSchedule(paths).catch(() => []),
       loadDismissed(paths).catch(() => ({})),
     ]);
 
-    let storageFreePercent = null;
-    if (cachedMetrics?.disks?.[0]?.usedPercent !== undefined) {
-      storageFreePercent = Math.max(0, 100 - Number(cachedMetrics.disks[0].usedPercent));
-    } else if (diskStat && diskStat.blocks > 0) {
-      storageFreePercent = (diskStat.bavail / diskStat.blocks) * 100;
-    }
+    const resolvedStorageFreePercent =
+      storageFreePercent ??
+      (diskStat && diskStat.blocks > 0 ? (diskStat.bavail / diskStat.blocks) * 100 : null);
 
     const snap = {
       hourOfDay: new Date().getHours(),
-      storageFreePercent,
+      storageFreePercent: resolvedStorageFreePercent,
       // Left null on purpose: see the note above the statfs call.
       downloadsCount: null,
       emailCount: cachedBriefing?.email?.ok ? Number(cachedBriefing.email.count ?? 0) : null,
@@ -799,7 +805,7 @@ export function createAgentServer({
         const speech = stripMarkdownForSpeech(body.text);
         if (!speech) return sendJson(res, 400, { ok: false, error: 'Nothing to read aloud.' });
         stopSpeaking();
-        const child = spawn('/usr/bin/say', [speech], { stdio: 'ignore' });
+        const child = speakFn(speech);
         activeSpeakProc = child;
         child.on('exit', () => {
           if (activeSpeakProc === child) activeSpeakProc = null;
@@ -834,6 +840,25 @@ export function createAgentServer({
           if (oldest) previewArtifacts.delete(oldest);
         }
         return sendJson(res, 200, { ok: true, id, previewUrl: `/preview-sandbox/${id}` });
+      }
+
+      // Deep link into the right Privacy & Security pane. macOS folder access can
+      // only be granted by a human, so the UI offers this instead of repeating a
+      // dialog the app cannot dismiss.
+      if (req.method === 'POST' && pathname === '/api/system/privacy-pane') {
+        const body = await readJsonBody(req);
+        const panes = {
+          allfiles: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+          filesandfolders: 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
+          automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation',
+          accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        };
+        const target = panes[String(body.pane || '')];
+        if (!target) {
+          return sendJson(res, 400, { ok: false, error: 'Unknown privacy pane.' });
+        }
+        spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+        return sendJson(res, 200, { ok: true, opened: String(body.pane) });
       }
 
       // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)
@@ -1063,6 +1088,9 @@ export function createAgentServer({
 
         if (action === 'run' && req.method === 'POST') {
           const body = await readJsonBody(req);
+          // Barge-in: the user sends a new message while LocalGravity is reading
+          // aloud, so in-flight speech stops immediately — the user speaks first.
+          stopSpeaking();
           const existingRun = activeRuns.get(sessionId);
           if (existingRun) {
             existingRun.abortController.abort();
@@ -1624,8 +1652,13 @@ export function createAgentServer({
       if (agendaNotifications && process.env.LOCALGRAVITY_DISABLE_AGENDA_NOTIFIER !== '1') {
         agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
       }
+      if (process.env.LOCALGRAVITY_DISABLE_AMBIENT_ALERTS !== '1') {
+        ambientStop = startAmbientAlerter({ paths, notify: showNotificationTool });
+      }
       // Delay initial nettop sampling slightly so app boot & UI stay instantaneous,
-      // then accumulate interface deltas every 5 minutes in the background.
+      // then accumulate interface deltas every 5 minutes in the background. Kernel
+      // counters reset on reboot, so each delta is folded into a persistent state file.
+      const { recordNetworkSample } = await import('./network-monitor.mjs');
       networkWarmTimer = setTimeout(() => {
         recordNetworkSample().catch(() => {});
       }, 8000);
@@ -1640,6 +1673,8 @@ export function createAgentServer({
       stopSpeaking();
       agendaStop?.();
       agendaStop = null;
+      ambientStop?.();
+      ambientStop = null;
       clearTimeout(networkWarmTimer);
       networkWarmTimer = null;
       clearInterval(networkSampleTimer);
@@ -1651,6 +1686,32 @@ export function createAgentServer({
       activeRuns.clear();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/**
+ * Keep the agent backend alive through stray async errors. A fire-and-forget
+ * promise or a bug in one background task must not take down the whole app the
+ * user is relying on. Log the failure to stderr (captured by the host for
+ * diagnosis) and keep serving. Returns the handlers plus an uninstall hook so
+ * the behaviour is testable without tripping the test runner's own listeners.
+ */
+export function installProcessSafetyNets(log = console.error) {
+  const onRejection = (reason) => {
+    log('LocalGravity: unhandled promise rejection (kept alive):', reason?.stack || reason);
+  };
+  const onException = (err) => {
+    log('LocalGravity: uncaught exception (kept alive):', err?.stack || err);
+  };
+  process.on('unhandledRejection', onRejection);
+  process.on('uncaughtException', onException);
+  return {
+    onRejection,
+    onException,
+    uninstall() {
+      process.removeListener('unhandledRejection', onRejection);
+      process.removeListener('uncaughtException', onException);
     },
   };
 }
@@ -1706,4 +1767,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Last line of defence: never let a stray async error silently kill the app.
+  installProcessSafetyNets();
 }

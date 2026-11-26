@@ -89,6 +89,14 @@ test('system metrics and schedule APIs work over authenticated HTTP', async () =
     assert.equal(data.ok, true);
     assert.match(data.output, /Notifications are disabled/);
 
+    // Privacy deep links accept only the known panes (never an arbitrary URL).
+    res = await fetch(`${base}/api/system/privacy-pane`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ pane: 'file:///etc/passwd' }),
+    });
+    assert.equal(res.status, 400);
+
     // Cross-origin mutation stays blocked.
     res = await fetch(`${base}/api/schedule`, {
       method: 'POST',
