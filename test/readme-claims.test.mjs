@@ -5,6 +5,7 @@ import { TOOL_DEFINITIONS } from '../backend/tools/registry.mjs';
 import { getStarterSkillsDir } from '../backend/state/paths.mjs';
 
 const readmeUrl = new URL('../README.md', import.meta.url);
+const packageUrl = new URL('../package.json', import.meta.url);
 
 function numbersFor(readme, patterns) {
   return patterns.flatMap((pattern) => [...readme.matchAll(pattern)].map((m) => Number(m[1])));
@@ -24,6 +25,19 @@ test('README tool-count claims match backend/tools/registry.mjs', async () => {
       claim,
       TOOL_DEFINITIONS.length,
       'README tool-count claim drifted from the registered catalog; update README.md alongside the tool change',
+    );
+  }
+});
+
+test('package.json tool-count claim matches backend/tools/registry.mjs', async () => {
+  const pkg = await fs.readFile(packageUrl, 'utf8');
+  const claims = numbersFor(pkg, [/(\d+) Mac\/web tools/g]);
+  assert.ok(claims.length >= 1, `expected the package.json tool-count claim to be present, matched ${claims.length}`);
+  for (const claim of claims) {
+    assert.equal(
+      claim,
+      TOOL_DEFINITIONS.length,
+      'package.json tool-count claim drifted from the registered catalog; update package.json alongside the tool change',
     );
   }
 });
