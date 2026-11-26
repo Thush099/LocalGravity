@@ -24,6 +24,7 @@ const DURABLE_ACTION_TOOLS = new Set([
   'save_knowledge',
   'save_skill',
   'set_reminder',
+  'cancel_reminder',
   'add_schedule_item',
   'remove_schedule_item',
 ]);

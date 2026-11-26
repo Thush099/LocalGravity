@@ -14,6 +14,10 @@ import { captureExplicitMemory } from './memory-capture.mjs';
 import { captureStandingPreference } from './standing-preferences.mjs';
 import { memoryCaptureNotices } from './memory-notices.mjs';
 import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
+import { captureForget, forgetNotices } from './memory-forget.mjs';
+import { priorSessionNote } from './session-digest.mjs';
+import { dueReminderNotices } from './reminder-notices.mjs';
+import { appendAction, isTrailTool } from './action-log.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
@@ -225,8 +229,13 @@ export async function runAgentTurn({
   // it outlives the session and is injected into every later system prompt, so it
   // is stored before the memory doc is loaded for this turn.
   const capturedRule = await captureStandingPreference(userMessage, paths);
+  // The other end of capture: "forget that …" removes exactly one matching
+  // MEMORY.md bullet, and only when it is unambiguous.
+  const forgotten = await captureForget(userMessage, paths);
 
   if (!Array.isArray(session.messages)) session.messages = [];
+  // A brand-new session is not a blank slate: the last conversation is on disk.
+  const isFirstTurn = session.messages.length === 0;
   if (fullUserText || attached.images.length > 0) {
     session.messages.push({
       role: 'user',
@@ -239,10 +248,41 @@ export async function runAgentTurn({
     if (persistSession) await saveSession(session, paths);
   }
 
+  // Continuity: on the first turn only, hand the model where the last session
+  // actually stopped — quoted, bounded, and explicitly ignorable. Turn-local,
+  // like the memory notices below, so it never becomes a standing preamble.
+  if (isFirstTurn && !isHeadless) {
+    const continuity = await priorSessionNote({ paths, excludeSessionId: session?.id }).catch(() => '');
+    if (continuity) {
+      session.messages.push({
+        role: 'user',
+        content: continuity,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // A reminder that came due while the user was living their life should not wait
+  // for them to ask. Turn-local, skipped in headless runs (an automation is not a
+  // person to remind), and only the quoted reminders are marked as delivered.
+  if (!isHeadless) {
+    const reminderNotes = await dueReminderNotices(paths).catch(() => []);
+    for (const note of reminderNotes) {
+      session.messages.push({
+        role: 'user',
+        content: note,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
   // A capture the user cannot see is a capture they will not trust: tell the
   // model what was just written so the reply confirms it instead of guessing.
   // These notes are turn-local (stripped with the other self-correction turns).
-  for (const notice of memoryCaptureNotices({ fact: capturedFact, rule: capturedRule })) {
+  const memoryNotices = [...memoryCaptureNotices({ fact: capturedFact, rule: capturedRule }), ...forgetNotices(forgotten)];
+  for (const notice of memoryNotices) {
     session.messages.push({
       role: 'user',
       content: notice,
@@ -599,6 +639,16 @@ export async function runAgentTurn({
       };
 
       const recordCompletedToolCall = async (tc, effectiveArgs, result) => {
+        // Durable trail: what actually changed on this machine, kept across
+        // sessions so "did that land?" has an answer later.
+        if (isTrailTool(tc.name)) {
+          await appendAction(paths, {
+            sessionId: session?.id,
+            tool: tc.name,
+            kind: result?.ok ? 'ok' : 'failed',
+            detail: result?.output,
+          });
+        }
         if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
           // Cross-turn completion verification: a step newly marked done must
           // have an observable action behind it this turn, or it stays flagged
@@ -800,6 +850,7 @@ export async function runAgentTurn({
         if (gate.decision === 'block') {
           const blockedMsg = `Blocked by safety policy: ${gate.reason}`;
           recordActionFailure(failedActions, { name: tc.name, reason: blockedMsg, kind: 'blocked' });
+          await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'blocked', detail: blockedMsg });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
           continue;
@@ -823,6 +874,7 @@ export async function runAgentTurn({
           if (!decision?.approved) {
             const deniedMsg = `User denied ${tc.name}: ${decision?.reason || 'Cancelled by user.'}`;
             recordActionFailure(failedActions, { name: tc.name, reason: deniedMsg, kind: 'blocked' });
+            await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'denied', detail: deniedMsg });
             session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: deniedMsg });
             onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: deniedMsg });
             continue;
