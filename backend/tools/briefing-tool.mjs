@@ -14,6 +14,7 @@ import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.
 import { entriesForDate, loadSchedule } from '../schedule.mjs';
 import { readActions } from '../agent/action-log.mjs';
 import { loadOpenGoals } from '../agent/goal-continuity.mjs';
+import { dueReminders, upcomingReminders, acknowledgeReminders } from './reminders.mjs';
 
 export const CPU_HIGH_PERCENT = 80;
 export const MEMORY_HIGH_PERCENT = 85;
@@ -99,10 +100,6 @@ export function openWorkSummary(goals = [], { maxGoals = MAX_OPEN_WORK_ITEMS } =
   return { count: open.length, items };
 }
 
-function hhmm(date) {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
 /**
  * Pure briefing composer. Accepts injected metrics + schedule entries so it is
  * deterministic and testable; the async tool wrapper fills these from the live
@@ -115,21 +112,21 @@ export function summarizeBriefing({
   focus = '',
   recentActions = [],
   openGoals = [],
+  dueReminderEntries = [],
+  upcomingReminderEntries = [],
 } = {}) {
   const attention = deriveAttention(metrics, now);
 
-  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now)
-    .slice()
-    .sort((a, b) => String(a.time).localeCompare(String(b.time)));
-  const nowStr = hhmm(now);
-  const upcoming = todays.filter((e) => String(e.time) >= nowStr);
+  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  // entriesForDate already sorts by real start time and carries startMinutes;
+  // string comparisons would misread unpadded times like '9:00'.
+  const upcoming = todays.filter((e) => e.startMinutes >= nowMinutes);
 
   let next = null;
   if (upcoming.length > 0) {
     next = { title: upcoming[0].title, time: upcoming[0].time };
-    const [h, m] = String(upcoming[0].time).split(':').map(Number);
-    const [nh, nm] = nowStr.split(':').map(Number);
-    const inMinutes = (h * 60 + m) - (nh * 60 + nm);
+    const inMinutes = upcoming[0].startMinutes - nowMinutes;
     if (inMinutes >= 0 && inMinutes <= UPCOMING_WINDOW_MINUTES) {
       attention.push({
         area: 'schedule',
@@ -158,6 +155,38 @@ export function summarizeBriefing({
     });
   }
 
+  // Reminders the user asked for and the machine owes them: the user's own words,
+  // with the real overdue time. Said once — the tool acknowledges what it delivers.
+  const dueRemindersOut = (Array.isArray(dueReminderEntries) ? dueReminderEntries : [])
+    .slice(0, 3)
+    .map((entry) => ({
+      message: String(entry?.message ?? ''),
+      fire_at: String(entry?.fireAt ?? ''),
+      overdue_minutes: Number.isFinite(entry?.overdue_minutes) ? entry.overdue_minutes : 0,
+    }));
+  if (dueRemindersOut.length > 0) {
+    const first = dueRemindersOut[0];
+    const late = first.overdue_minutes;
+    const lateText = late >= 60 ? `${Math.floor(late / 60)}h` : `${late} min`;
+    const more = dueRemindersOut.length > 1 ? ` (${dueRemindersOut.length - 1} more)` : '';
+    attention.push({
+      area: 'reminder',
+      level: 'info',
+      detail: `You asked to be reminded: "${first.message.slice(0, 120)}" — ${lateText} ago${more}.`,
+      suggest: suggestFor('reminder'),
+    });
+  }
+
+  // What is still ahead: the answer to "did it stick?", shown as a fact rather than an
+  // alarm — a reminder that has not come due yet is not a problem to solve.
+  const upcomingRemindersOut = (Array.isArray(upcomingReminderEntries) ? upcomingReminderEntries : [])
+    .slice(0, 3)
+    .map((entry) => ({
+      message: String(entry?.message ?? ''),
+      fire_at: String(entry?.fireAt ?? ''),
+      minutes_until: Number.isFinite(entry?.minutes_until) ? entry.minutes_until : 0,
+    }));
+
   return {
     generated_at: now.toISOString(),
     system_summary: metrics ? summarizeSystemMetrics(metrics) : 'System metrics unavailable.',
@@ -179,6 +208,8 @@ export function summarizeBriefing({
       })),
     // Outstanding promises from earlier sessions: the agent's own published steps.
     open_work: openWork,
+    due_reminders: { count: dueRemindersOut.length, items: dueRemindersOut },
+    upcoming_reminders: { count: upcomingRemindersOut.length, items: upcomingRemindersOut },
     focus: focus ? String(focus) : null,
   };
 }
@@ -188,18 +219,29 @@ export function summarizeBriefing({
  * Collection failures degrade to a neutral report rather than throwing.
  */
 export async function briefingTool({ focus = '', include_system = true, include_schedule = true, paths } = {}) {
-  const [metrics, scheduleEntries, recentActions, openGoals] = await Promise.all([
+  const now = new Date();
+  const [metrics, scheduleEntries, recentActions, openGoals, due, upcoming] = await Promise.all([
     include_system ? collectSystemMetrics().catch(() => null) : null,
     include_schedule ? loadSchedule().catch(() => []) : [],
     readActions(paths, { limit: 5 }).catch(() => []),
     loadOpenGoals(paths).catch(() => []),
+    dueReminders(paths, { now }).catch(() => []),
+    upcomingReminders(paths, { now }).catch(() => []),
   ]);
-  return summarizeBriefing({
+  const report = summarizeBriefing({
     metrics,
     scheduleEntries: Array.isArray(scheduleEntries) ? scheduleEntries : [],
-    now: new Date(),
+    now,
     focus: typeof focus === 'string' ? focus : '',
     recentActions,
     openGoals,
+    dueReminderEntries: due,
+    upcomingReminderEntries: upcoming,
   });
+  // Delivered once, then acknowledged: the briefing is the user asking what is going
+  // on, so this is the moment the reminder is actually said.
+  if (Array.isArray(due) && due.length > 0) {
+    await acknowledgeReminders(paths, due.map((entry) => entry.id)).catch(() => {});
+  }
+  return report;
 }
