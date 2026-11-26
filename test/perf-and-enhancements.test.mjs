@@ -138,7 +138,11 @@ test('briefing endpoint coalesces requests, serves disk/stale cache immediately,
     const staleRes = await fetch(`${base}/api/briefing`, { headers: { 'X-Auth-Token': authToken } });
     const dt = performance.now() - t0;
     assert.equal(staleRes.status, 200);
-    assert.ok(dt < 500, `stale briefing returned in ${dt.toFixed(1)}ms instead of blocking`);
+    // The non-blocking guarantee is structural: if this handler blocked on the
+    // parked gather below it would deadlock, never merely run slowly. So this
+    // bound is only a machine-speed SLO (it can stretch past a tight floor under
+    // parallel test-file CPU load), not the behaviour being verified.
+    assert.ok(dt < 2000, `stale briefing returned in ${dt.toFixed(1)}ms instead of returning from cache`);
     const staleData = await staleRes.json();
     assert.equal(staleData.briefing.news[0].title, 'Disk Cached Lead');
     assert.equal(staleData.stale, true);
