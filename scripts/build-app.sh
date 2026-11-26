@@ -113,14 +113,20 @@ echo -n "APPL????" > "${CONTENTS}/PkgInfo"
 # Sign with a stable identity when available: an ad-hoc signature changes on every
 # build, so macOS treats each rebuild as a new app and forgets the folder access
 # the user already granted (Downloads, Desktop, Documents).
-SIGN_IDENTITY="$("${REPO_ROOT}/scripts/ensure-signing-identity.sh" 2>/dev/null || true)"
+if [ "${LOCALGRAVITY_ADHOC_SIGNING:-0}" = "1" ]; then
+  SIGN_IDENTITY=""
+else
+  SIGN_IDENTITY="$("${REPO_ROOT}/scripts/ensure-signing-identity.sh" 2>/dev/null || true)"
+fi
 # Hardened Runtime (--options runtime) is required for notarization. The entitlements
 # grant WKWebView JIT, AppleScript automation, and unsigned Node-module loading.
 CODESIGN_FLAGS=(--force --deep --options runtime --entitlements "${ENTITLEMENTS}")
 if [ -n "${SIGN_IDENTITY}" ]; then
   codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
 else
-  echo "warning: no signing identity; folder permissions will need granting again after a rebuild" >&2
+  if [ "${LOCALGRAVITY_ADHOC_SIGNING:-0}" != "1" ]; then
+    echo "warning: no signing identity; folder permissions will need granting again after a rebuild" >&2
+  fi
   codesign "${CODESIGN_FLAGS[@]}" --sign - "${APP_BUNDLE}" || true
 fi
 
