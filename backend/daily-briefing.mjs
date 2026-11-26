@@ -262,7 +262,7 @@ export async function emailSummary({ limit = 25 } = {}) {
       count: 0,
       error: denied
         ? 'Mail access is not authorized yet. Enable LocalGravity under System Settings → Privacy & Security → Automation → Mail, then ask again.'
-        : `Could not read Mail: ${result.error}`,
+        : 'Couldn\u2019t read Mail right now. Make sure Mail is open and try again.',
     };
   }
   const messages = result.output

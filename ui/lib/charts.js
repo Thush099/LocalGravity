@@ -330,12 +330,14 @@ export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this 
 
   const total = list.reduce((sum, a) => sum + a.bytes, 0);
 
-  const MAX = 7;
-  let shown = list.slice(0, MAX);
-  const rest = list.slice(MAX);
-  if (rest.length) {
-    shown = [...shown, { name: 'Other', bytes: rest.reduce((sum, a) => sum + a.bytes, 0), muted: true }];
-  }
+  // Fold the long tail so the legend reads as a few meaningful rows instead of a wall of
+  // 0% slivers: keep apps that are at least ~1.5% of the month, up to a sane cap.
+  const significant = list.filter((a) => a.bytes / Math.max(1, total) >= 0.015);
+  const shownMain = significant.slice(0, 6);
+  const rest = list.filter((a) => !shownMain.includes(a));
+  const shown = rest.length
+    ? [...shownMain, { name: 'Other', bytes: rest.reduce((sum, a) => sum + a.bytes, 0), muted: true }]
+    : shownMain;
 
   const denom = Math.max(1, total);
   const segments = shown.map((a, i) => ({
