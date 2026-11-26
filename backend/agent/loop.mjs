@@ -13,6 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
+import { answerDirectSystemStatus } from './direct-status.mjs';
 import {
   loadLearnedFixesExcerpt,
   normalizeToolCall,
@@ -232,6 +233,22 @@ export async function runAgentTurn({
     onEvent?.({ type: 'text_delta', text: content });
     onEvent?.({ type: 'done', status: result.ok ? 'completed' : 'error', usage });
     return { session, status: result.ok ? 'completed' : 'error' };
+  }
+
+  // Direct system-status questions ("how much RAM is free", "disk space left",
+  // "battery level", "how long has this been up") are single lookups needing no
+  // interpretation, so answer them on device without waiting on local inference.
+  if (provider === 'ollama' && attachments.length === 0) {
+    const statusAnswer = await answerDirectSystemStatus(fullUserText);
+    if (statusAnswer) {
+      const usage = { durationMs: Math.max(1, Date.now() - turnStartedAt), model: '' };
+      session.messages.push({ role: 'assistant', content: statusAnswer.answer, usage, createdAt: new Date().toISOString() });
+      session.updatedAt = new Date().toISOString();
+      if (persistSession) await saveSession(session, paths);
+      onEvent?.({ type: 'text_delta', text: statusAnswer.answer });
+      onEvent?.({ type: 'done', status: 'completed', usage });
+      return { session, status: 'completed' };
+    }
   }
 
   if (
