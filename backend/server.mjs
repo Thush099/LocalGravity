@@ -1672,6 +1672,32 @@ export function createAgentServer({
   };
 }
 
+/**
+ * Keep the agent backend alive through stray async errors. A fire-and-forget
+ * promise or a bug in one background task must not take down the whole app the
+ * user is relying on. Log the failure to stderr (captured by the host for
+ * diagnosis) and keep serving. Returns the handlers plus an uninstall hook so
+ * the behaviour is testable without tripping the test runner's own listeners.
+ */
+export function installProcessSafetyNets(log = console.error) {
+  const onRejection = (reason) => {
+    log('LocalGravity: unhandled promise rejection (kept alive):', reason?.stack || reason);
+  };
+  const onException = (err) => {
+    log('LocalGravity: uncaught exception (kept alive):', err?.stack || err);
+  };
+  process.on('unhandledRejection', onRejection);
+  process.on('uncaughtException', onException);
+  return {
+    onRejection,
+    onException,
+    uninstall() {
+      process.removeListener('unhandledRejection', onRejection);
+      process.removeListener('uncaughtException', onException);
+    },
+  };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const runtimePaths = getRuntimePaths();
   // Respect the saved setting instead of forcing the notifier on at every launch.
@@ -1723,4 +1749,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Last line of defence: never let a stray async error silently kill the app.
+  installProcessSafetyNets();
 }
