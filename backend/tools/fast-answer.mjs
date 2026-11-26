@@ -110,6 +110,83 @@ function matchPercent(text) {
   return { pct, base, value: (pct / 100) * base };
 }
 
+const MONTHS = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+};
+const HOLIDAYS = {
+  christmas: [11, 25], 'new year': [0, 1], "new year's day": [0, 1], halloween: [9, 31],
+  "valentine's day": [1, 14], 'valentines day': [1, 14],
+};
+
+function dayOnly(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function dayDiff(a, b) {
+  return Math.round((dayOnly(b).getTime() - dayOnly(a).getTime()) / 86400000);
+}
+function addDays(d, n) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+}
+function nextOccurrence(now, month, day) {
+  let d = new Date(now.getFullYear(), month, day);
+  if (dayDiff(now, d) < 0) d = new Date(now.getFullYear() + 1, month, day);
+  return d;
+}
+function parseDateToken(raw, now) {
+  const t = String(raw).trim().toLowerCase().replace(/[.!?]+$/, '');
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (HOLIDAYS[t]) {
+    const [mo, day] = HOLIDAYS[t];
+    return nextOccurrence(now, mo, day);
+  }
+  m = t.match(/^([a-z]+)\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?$/);
+  if (m && MONTHS[m[1]] !== undefined) {
+    const mo = MONTHS[m[1]];
+    const day = Number(m[2]);
+    if (m[3]) return new Date(Number(m[3]), mo, day);
+    return nextOccurrence(now, mo, day);
+  }
+  return null;
+}
+
+function matchDateMath(text) {
+  const now = new Date();
+  const fmt = (d) => d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  let m = text.match(/how\s+many\s+days\s+(until|till|to|before|since|ago)\s+(.+)/i);
+  if (m) {
+    const target = parseDateToken(m[2], now);
+    if (target) {
+      const rel = m[1].toLowerCase();
+      const forward = !(rel === 'since' || rel === 'ago');
+      const days = Math.abs(dayDiff(now, target));
+      return { kind: 'date-math', ok: true, answer: forward ? `**${days} days** until ${fmt(target)}.` : `**${days} days** since ${fmt(target)}.` };
+    }
+  }
+  m = text.match(/how\s+many\s+(days?|weeks?)\s+between\s+(.+?)\s+and\s+(.+)/i);
+  if (m) {
+    const a = parseDateToken(m[2], now);
+    const b = parseDateToken(m[3], now);
+    if (a && b) {
+      const days = Math.abs(dayDiff(a, b));
+      const weekly = /week/i.test(m[1]);
+      return {
+        kind: 'date-math',
+        ok: true,
+        answer: `**${weekly ? `${fmtNumber(days / 7)} weeks` : `${days} days`}** between ${fmt(a)} and ${fmt(b)}.`,
+      };
+    }
+  }
+  m = text.match(/(\d+)\s+(days?|weeks?)\s+(?:from\s+(?:now|today)|later|out)/i);
+  if (m) {
+    const n = Number(m[1]) * (/week/i.test(m[2]) ? 7 : 1);
+    const target = addDays(now, n);
+    return { kind: 'date-math', ok: true, answer: `${n} days from now is **${fmt(target)}**.` };
+  }
+  return null;
+}
+
 function matchTimeDate(text) {
   const t = text.toLowerCase().replace(/[.!?]+$/, '').trim();
   const now = new Date();
@@ -136,6 +213,9 @@ export function tryFastAnswer(message) {
 
   const when = matchTimeDate(text);
   if (when) return { ...when, ok: true };
+
+  const dateMath = matchDateMath(text);
+  if (dateMath) return dateMath;
 
   const conversion = matchConversion(text);
   if (conversion) {

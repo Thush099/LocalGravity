@@ -44,6 +44,17 @@ test('answers the current time and date instantly', () => {
   assert.equal(tryFastAnswer('what day is it').kind, 'date');
 });
 
+test('does date math instantly for clear dates', () => {
+  const untilXmas = tryFastAnswer('how many days until christmas');
+  assert.equal(untilXmas.kind, 'date-math');
+  assert.match(untilXmas.answer, /December 25/);
+  assert.match(tryFastAnswer('how many days between 2026-01-01 and 2026-03-01').answer, /59 days/);
+  assert.match(tryFastAnswer('how many weeks between 2026-01-01 and 2026-01-15').answer, /2 weeks/);
+  assert.match(tryFastAnswer('30 days from now').answer, /days from now/);
+  // needs reasoning about an unknown event → falls through
+  assert.equal(tryFastAnswer('how many days left in my project'), null);
+});
+
 test('falls through to the model for anything that needs reasoning', () => {
   for (const msg of [
     'Tell me a joke',
