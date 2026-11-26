@@ -10,6 +10,7 @@ import zlib from 'node:zlib';
 import { INSTANT_ACTION_IDS, runInstantAction } from './actions.mjs';
 import { setAppForeground } from './tools/macos-tool.mjs';
 import { compactConversation } from './agent/compactor.mjs';
+import { evaluateExpression, extractPureCalculation } from './tools/calc-tool.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
 import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
@@ -1124,6 +1125,28 @@ export function createAgentServer({
               res.write(`data: ${JSON.stringify(event)}\n\n`);
             }
           };
+
+          // Deterministic fast-path: a pure calculation is answered instantly on
+          // device with no model round-trip, so quick maths never stalls on slow
+          // local inference. Anything ambiguous falls through to the model.
+          const pureExpr = extractPureCalculation(body.message || '');
+          if (pureExpr && !(Array.isArray(body.attachments) && body.attachments.length) && !body.instantAction) {
+            const startedAt = Date.now();
+            const computed = evaluateExpression(pureExpr);
+            const content = computed.ok
+              ? `\`${pureExpr}\` = **${computed.formatted}**`
+              : `Could not compute \`${pureExpr}\`: ${computed.error}`;
+            const usage = { durationMs: Date.now() - startedAt, model: '' };
+            if (!Array.isArray(session.messages)) session.messages = [];
+            session.messages.push({ role: 'user', content: String(body.message || '').trim(), createdAt: new Date().toISOString() });
+            session.messages.push({ role: 'assistant', content, usage, createdAt: new Date().toISOString() });
+            session.updatedAt = new Date().toISOString();
+            await saveSession(session, paths).catch(() => {});
+            emitSse({ type: 'text_delta', text: content });
+            emitSse({ type: 'done', status: computed.ok ? 'completed' : 'error', usage });
+            res.end();
+            return;
+          }
 
           const keepaliveTimer = setInterval(() => {
             if (!res.writableEnded) {
