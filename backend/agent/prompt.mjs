@@ -20,6 +20,7 @@ export function buildSystemPrompt({
   suggestedSkills = [],
   knowledgeDocs = [],
   memoryContent = '',
+  memoryQuery = '',
   learnedFixesContent = '',
   repoPath = '',
   safetyMode = 'ask',
@@ -56,7 +57,10 @@ export function buildSystemPrompt({
       ? knowledgeDocs.map((d) => `- ${d.name}: ${d.title}`).join('\n')
       : '- (no knowledge documents yet)';
 
-  const trimmedMemory = boundedMemoryContent(memoryContent, { maxChars: compact ? 600 : 1200 });
+  const trimmedMemory = boundedMemoryContent(memoryContent, {
+    maxChars: compact ? 600 : 1200,
+    query: memoryQuery,
+  });
   const trimmedFixes = String(learnedFixesContent || '').trim().slice(0, compact ? 500 : 1000);
   const modeLine = isHeadless
     ? allowAutoRun
