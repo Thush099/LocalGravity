@@ -72,13 +72,13 @@ test('reminder messages are passed as positional arguments, never interpolated i
 
 test('harmless macOS actions are allowed interactively but gated in headless audit mode', () => {
   const interactive = { safetyMode: 'ask', isHeadless: false, allowAutoRun: false };
-  for (const name of ['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder']) {
+  for (const name of ['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder', 'cancel_reminder']) {
     assert.equal(evaluateToolSafety({ name, args: {} }, interactive).decision, 'allow', `${name} allowed interactively`);
   }
   assert.equal(evaluateToolSafety({ name: 'paste_from_clipboard', args: {} }, interactive).decision, 'allow');
 
   const headlessAudit = { safetyMode: 'ask', isHeadless: true, allowAutoRun: false };
-  for (const name of ['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder']) {
+  for (const name of ['copy_to_clipboard', 'show_notification', 'open_app', 'set_reminder', 'cancel_reminder']) {
     assert.equal(evaluateToolSafety({ name, args: {} }, headlessAudit).decision, 'block', `${name} blocked headless`);
   }
   // Reading the clipboard is read-only and always fine

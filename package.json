@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": false,
   "type": "module",
-  "description": "Native macOS AI command center for local Ollama & cloud models — split-pane Artifact Canvas, per-chat project folders, edit/branch/pin chat controls, agent modes, voice/TTS, live SVG telemetry graphs, 36 Mac/web tools, and zero npm dependencies.",
+  "description": "Native macOS AI command center for local Ollama & cloud models — split-pane Artifact Canvas, per-chat project folders, edit/branch/pin chat controls, agent modes, voice/TTS, live SVG telemetry graphs, 49 Mac/web tools, and zero npm dependencies.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "bash scripts/check.sh",

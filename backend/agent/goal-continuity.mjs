@@ -28,6 +28,18 @@ const GOAL_STOPWORDS = new Set([
   'should', 'now', 'just', 'like', 'get', 'got', 'need', 'want', 'make', 'made', 'also',
 ]);
 
+/** Pure: does `word` appear in `text` as a real token (split on non-alphanumerics,
+ * so snake_case and dotted names count)? A substring inside an unrelated word
+ * never counts; light plural/tense suffixes still do. */
+function wordMatchesText(word, text) {
+  const w = String(word || '').toLowerCase();
+  if (!w) return false;
+  const stems = w.endsWith('e') ? [w, w.slice(0, -1)] : [w];
+  const variants = new Set(stems.flatMap((s) => [s, `${s}s`, `${s}es`, `${s}ing`, `${s}ed`, `${s}d`]));
+  const tokens = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  return tokens.some((t) => variants.has(t));
+}
+
 /** Pure: does this message plausibly concern these plan steps? */
 export function goalMatchesQuery(steps, query) {
   const text = String(query || '');
@@ -42,13 +54,25 @@ export function goalMatchesQuery(steps, query) {
   ];
   if (words.length === 0) return false;
   const haystack = steps.map((s) => String(s?.text || '')).join(' ').toLowerCase();
-  return words.some((word) => haystack.includes(word));
+  return words.some((word) => wordMatchesText(word, haystack));
+}
+
+/** Pure: a goal that still owes the user something — unfinished steps, or done
+ * claims that were never backed by an observable action (unverified). */
+function isOpenGoal(goal) {
+  if (!goal || !Array.isArray(goal.steps)) return false;
+  return (
+    unfinishedPlanSteps(goal.steps).length > 0 || goal.steps.some((s) => s && s.unverified === true)
+  );
 }
 
 function goalBlock(goal) {
   const when = String(goal.updatedAt || '').slice(0, 10) || 'earlier';
   const lines = goal.steps
-    .map((s) => `  [${s.status === 'done' ? 'x' : ' '}] ${String(s.text)}`)
+    .map(
+      (s) =>
+        `  [${s.status === 'done' ? 'x' : ' '}] ${String(s.text)}${s.unverified ? ' (unverified)' : ''}`,
+    )
     .join('\n');
   return `Open plan (updated ${when}):\n${lines}`;
 }
@@ -58,16 +82,25 @@ function goalBlock(goal) {
  * `query`, or '' when nothing open is relevant — silence is the default.
  */
 export function goalContinuityNote(goals, query, { maxChars = 900, maxGoals = 2 } = {}) {
-  const open = (Array.isArray(goals) ? goals : []).filter(
-    (goal) => goal && Array.isArray(goal.steps) && unfinishedPlanSteps(goal.steps).length > 0,
-  );
+  const open = (Array.isArray(goals) ? goals : []).filter(isOpenGoal);
   const relevant = open.filter((goal) => goalMatchesQuery(goal.steps, query)).slice(-maxGoals);
   if (relevant.length === 0) return '';
-  const note =
-    '## Open Goals (your own published plans, unfinished)\n' +
-    `${relevant.map(goalBlock).join('\n\n')}\n` +
+  const header = '## Open Goals (your own published plans, unfinished or unverified)';
+  const guidance =
     'These are promises from earlier turns. Continue them when the user is asking about this work; otherwise answer what was actually asked.';
-  return note.slice(0, maxChars);
+  // Fit whole lines between header and guidance: truncation drops trailing
+  // step lines (and then whole goals) but never cuts mid-line, and the
+  // guidance — the guardrail that keeps the note from hijacking ordinary
+  // turns — is never a casualty of the budget.
+  const goalLines = relevant.map(goalBlock);
+  let body = goalLines.join('\n\n');
+  while (body.length > 0 && `${header}\n${body}\n${guidance}`.length > maxChars) {
+    const lines = body.split('\n');
+    lines.pop();
+    body = lines.join('\n').replace(/\n+$/, '');
+  }
+  if (!body.trim()) return '';
+  return `${header}\n${body}\n${guidance}`;
 }
 
 /**
@@ -77,29 +110,43 @@ export function goalContinuityNote(goals, query, { maxChars = 900, maxGoals = 2 
  */
 export async function persistGoalState(
   plan,
-  { paths = getRuntimePaths(), sessionId = 'unknown', now = new Date().toISOString() } = {},
+  { paths = getRuntimePaths(), sessionId = 'unknown', now = new Date().toISOString(), unverifiedTexts = [] } = {},
 ) {
   const key = String(sessionId || 'unknown');
+  const unverified = new Set((Array.isArray(unverifiedTexts) ? unverifiedTexts : []).map(String));
   const steps = (Array.isArray(plan) ? plan : [])
     .filter((s) => s && typeof s.text === 'string' && s.text.trim().length > 0)
     .map((s) => ({
       text: s.text.trim(),
       status: s.status === 'done' ? 'done' : s.status === 'active' ? 'active' : 'pending',
+      ...(s.status === 'done' && unverified.has(s.text.trim()) ? { unverified: true } : {}),
     }));
   const rest = (await loadOpenGoals(paths)).filter((goal) => goal.sessionId !== key);
-  const goals =
-    unfinishedPlanSteps(steps).length > 0 ? [...rest, { sessionId: key, updatedAt: now, steps }] : rest;
+  // The record survives while the plan owes something: unfinished steps, or
+  // done claims still marked unverified. It clears only once every step is
+  // done and backed.
+  const goals = isOpenGoal({ steps }) ? [...rest, { sessionId: key, updatedAt: now, steps }] : rest;
   await fs.mkdir(paths.root, { recursive: true });
   await fs.writeFile(paths.goalsFile, `${JSON.stringify({ goals }, null, 2)}\n`, { mode: 0o600 });
   return goals;
 }
 
+const GOAL_RETENTION_DAYS = 30;
+
 export async function loadOpenGoals(paths = getRuntimePaths()) {
   try {
     const raw = JSON.parse(await fs.readFile(paths.goalsFile, 'utf8'));
     const goals = Array.isArray(raw?.goals) ? raw.goals : [];
+    // Retention: a record from an abandoned session would otherwise live
+    // forever (clearing only happens when its own session finishes the plan),
+    // and a month-old plan surfacing in a prompt is an ambush, not help.
+    const cutoff = Date.now() - GOAL_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     return goals.filter(
-      (goal) => goal && typeof goal.sessionId === 'string' && Array.isArray(goal.steps),
+      (goal) =>
+        goal &&
+        typeof goal.sessionId === 'string' &&
+        Array.isArray(goal.steps) &&
+        Date.parse(goal.updatedAt || '') > cutoff,
     );
   } catch {
     return [];
