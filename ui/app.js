@@ -813,7 +813,7 @@ function renderNetwork() {
   const monthApps = (net.monthApps || []).filter((a) => Number(a?.total) > 0);
   const usingMonth = monthApps.length > 0;
   const donut = renderNetworkDonut(usingMonth ? monthApps : net.topApps || [], {
-    size: 188,
+    size: 132,
     centerLabel: usingMonth ? 'this month' : 'since launch',
   });
   const bars = renderNetworkHistoryChart(net.history || {}, { month: net.month || '' });

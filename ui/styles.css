@@ -3223,15 +3223,15 @@ button, input, textarea, select {
 
 .net-flex {
   display: flex;
-  gap: 22px;
+  gap: 16px;
   align-items: center;
   margin-top: 14px;
   flex-wrap: wrap;
 }
 
 .net-flex .donut-svg {
-  width: 184px;
-  height: 184px;
+  width: 132px;
+  height: 132px;
   flex: none;
 }
 
