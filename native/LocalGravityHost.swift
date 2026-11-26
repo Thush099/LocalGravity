@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var serverPort: Int = 0
     private var stdoutBuffer = ""
     private var stderrBuffer = ""
+    private var isQuitting = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -48,11 +49,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         startBackendServer()
     }
 
+    // A persistent agent should keep running when its window closes; macOS
+    // gestures (Mission Control, Show Desktop, App Exposé) can close the window
+    // and must not silently take the whole app down. The Dock icon reopens it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            window?.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isQuitting = true
         stopBackendServer()
     }
 
@@ -315,9 +327,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
                 guard let self else { return }
-                if process.terminationStatus != 0 && self.serverPort == 0 {
-                    let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
+                if self.isQuitting { return }
+                let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
+                if self.serverPort == 0 {
                     self.showStartupError("Agent backend failed to start:\n\(msg)")
+                } else {
+                    self.showStartupError(
+                        "The agent backend stopped unexpectedly (exit code \(process.terminationStatus)).\n\n\(msg)\n\nQuit and reopen LocalGravity to restart it.",
+                        title: "LocalGravity backend stopped"
+                    )
                 }
             }
         }
@@ -358,10 +376,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    private func showStartupError(_ message: String) {
+    private func showStartupError(_ message: String, title: String = "LocalGravity could not start") {
         let html = """
         <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0b0c0f;color:#f5f5f7;padding:48px;">
-        <h2>LocalGravity could not start</h2>
+        <h2>\(title)</h2>
         <pre style="white-space:pre-wrap;background:#15181f;padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);">\(message)</pre>
         </body></html>
         """

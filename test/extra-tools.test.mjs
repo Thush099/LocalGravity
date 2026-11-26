@@ -98,8 +98,19 @@ test('spotlightSearchTool validates empty query and executes safely via registry
   }
 });
 
-test('new domain tools route cleanly via tool-selector without inflating baseline coding prompts', () => {
-  assert.equal(TOOL_DEFINITIONS.length, 48);
+test('package.json advertises the real tool count', async () => {
+  const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const match = /(\d+)\s+Mac\/web tools/.exec(pkg.description || '');
+  assert.ok(match, `package.json description should name the tool count; got: ${pkg.description}`);
+  assert.equal(
+    Number(match[1]),
+    TOOL_DEFINITIONS.length,
+    `package.json says ${match[1]} tools but the catalog has ${TOOL_DEFINITIONS.length}`
+  );
+});
+
+test('new domain tools route cleanly via tool-selector without inflating baseline coding prompts', async () => {
+  assert.equal(TOOL_DEFINITIONS.length, 49);
 
   const webTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',

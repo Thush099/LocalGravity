@@ -30,6 +30,44 @@ export function recordTokenUsage(count) {
   }
 }
 
+const MODEL_SPEED_KEY = 'lg-model-speed';
+
+/**
+ * Measured throughput per model, kept so the model picker can show real numbers
+ * instead of asking the user to guess whether 4B or 9B is worth the wait. Values
+ * are exponentially smoothed so one slow turn (a big context, a cold model)
+ * cannot brand the model forever.
+ */
+export function getModelSpeeds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MODEL_SPEED_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+/** @returns {{tps: number, samples: number} | null} */
+export function getModelSpeed(model) {
+  if (!model) return null;
+  const entry = getModelSpeeds()[model];
+  if (!entry || !(entry.tps > 0)) return null;
+  return { tps: entry.tps, samples: Number(entry.samples) || 0 };
+}
+
+export function recordModelSpeed(model, { durationMs, completionTokens } = {}) {
+  if (!model || !(durationMs > 400) || !(completionTokens > 0)) return null;
+  const tps = completionTokens / (durationMs / 1000);
+  if (!(tps > 0) || !Number.isFinite(tps)) return null;
+  const speeds = getModelSpeeds();
+  const prev = speeds[model];
+  const samples = (Number(prev?.samples) || 0) + 1;
+  const smoothed = prev?.tps > 0 ? prev.tps * 0.6 + tps * 0.4 : tps;
+  speeds[model] = { tps: Number(smoothed.toFixed(2)), samples, at: Date.now() };
+  localStorage.setItem(MODEL_SPEED_KEY, JSON.stringify(speeds));
+  return speeds[model];
+}
+
 /**
  * Build the settings-page telemetry chips from one session's numbers.
  *
