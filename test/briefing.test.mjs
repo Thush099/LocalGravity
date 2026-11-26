@@ -105,6 +105,19 @@ test('summarizeBriefing composes system summary and today\'s schedule', () => {
   assert.deepEqual(b.schedule.next, { title: 'Design review', time: '11:00' });
 });
 
+test('summarizeBriefing orders and filters by real start time, not string shape', () => {
+  // A hand-edited schedule file may hold '9:00' (not zero-padded). String
+  // comparison reads '9:00' >= '10:15' as true — a past event as upcoming —
+  // and localeCompare sorts '09:30' before '9:00'. Both are wrong.
+  const loose = [
+    { title: 'Loose morning', time: '9:00', days: [DOW] },
+    { title: 'Loose mid', time: '09:30', days: [DOW] },
+  ];
+  const b = summarizeBriefing({ metrics: healthyMetrics(), scheduleEntries: loose, now: NOW });
+  assert.deepEqual(b.schedule.items.map((i) => i.title), ['Loose morning', 'Loose mid'], 'sorted by start time');
+  assert.equal(b.schedule.next, null, 'both are past at 10:15 — nothing upcoming');
+});
+
 test('summarizeBriefing flags an imminent next event with minutes-to-go', () => {
   const b = summarizeBriefing({ metrics: healthyMetrics(), scheduleEntries: SCHEDULE, now: NOW });
   const sched = b.attention.find((a) => a.area === 'schedule');

@@ -74,6 +74,7 @@ import {
   takeScreenshotTool,
 } from './tools/macos-tool.mjs';
 import { startAgendaNotifier } from './agenda-notifier.mjs';
+import { startAmbientAlerter } from './ambient-alerts.mjs';
 import { assertPublicHttpUrl, safePublicFetch } from './net-guard.mjs';
 import { expandUserPath } from './tools/safety.mjs';
 import { collectSystemMetrics } from './system-monitor.mjs';
@@ -348,6 +349,11 @@ function maskConfigForClient(cfg) {
   return { config: rest, configuredKeys };
 }
 
+/** Speak text aloud with macOS `say`. Injectable so tests never make noise. */
+function defaultSpeakFn(text) {
+  return spawn('/usr/bin/say', [text], { stdio: 'ignore' });
+}
+
 export function createAgentServer({
   authToken,
   paths = getRuntimePaths(),
@@ -358,6 +364,7 @@ export function createAgentServer({
   warmModelFn = warmOllamaModel,
   unloadModelsFn = unloadOllamaModels,
   runAgentTurnFn = runAgentTurn,
+  speakFn = defaultSpeakFn,
   gatherBriefingFn = null,
 } = {}) {
   const token = authToken || process.env.AUTH_TOKEN || crypto.randomBytes(32).toString('hex');
@@ -387,6 +394,7 @@ export function createAgentServer({
     activeSpeakProc = null;
   };
   let agendaStop = null;
+  let ambientStop = null;
   let networkWarmTimer = null;
   let networkSampleTimer = null;
   const resolveRunApprovals = (runState, reason) => {
@@ -797,7 +805,7 @@ export function createAgentServer({
         const speech = stripMarkdownForSpeech(body.text);
         if (!speech) return sendJson(res, 400, { ok: false, error: 'Nothing to read aloud.' });
         stopSpeaking();
-        const child = spawn('/usr/bin/say', [speech], { stdio: 'ignore' });
+        const child = speakFn(speech);
         activeSpeakProc = child;
         child.on('exit', () => {
           if (activeSpeakProc === child) activeSpeakProc = null;
@@ -1080,6 +1088,9 @@ export function createAgentServer({
 
         if (action === 'run' && req.method === 'POST') {
           const body = await readJsonBody(req);
+          // Barge-in: the user sends a new message while LocalGravity is reading
+          // aloud, so in-flight speech stops immediately — the user speaks first.
+          stopSpeaking();
           const existingRun = activeRuns.get(sessionId);
           if (existingRun) {
             existingRun.abortController.abort();
@@ -1641,8 +1652,13 @@ export function createAgentServer({
       if (agendaNotifications && process.env.LOCALGRAVITY_DISABLE_AGENDA_NOTIFIER !== '1') {
         agendaStop = startAgendaNotifier({ paths, notify: showNotificationTool });
       }
+      if (process.env.LOCALGRAVITY_DISABLE_AMBIENT_ALERTS !== '1') {
+        ambientStop = startAmbientAlerter({ paths, notify: showNotificationTool });
+      }
       // Delay initial nettop sampling slightly so app boot & UI stay instantaneous,
-      // then accumulate interface deltas every 5 minutes in the background.
+      // then accumulate interface deltas every 5 minutes in the background. Kernel
+      // counters reset on reboot, so each delta is folded into a persistent state file.
+      const { recordNetworkSample } = await import('./network-monitor.mjs');
       networkWarmTimer = setTimeout(() => {
         recordNetworkSample().catch(() => {});
       }, 8000);
@@ -1657,6 +1673,8 @@ export function createAgentServer({
       stopSpeaking();
       agendaStop?.();
       agendaStop = null;
+      ambientStop?.();
+      ambientStop = null;
       clearTimeout(networkWarmTimer);
       networkWarmTimer = null;
       clearInterval(networkSampleTimer);

@@ -110,7 +110,7 @@ test('package.json advertises the real tool count', async () => {
 });
 
 test('new domain tools route cleanly via tool-selector without inflating baseline coding prompts', async () => {
-  assert.equal(TOOL_DEFINITIONS.length, 48);
+  assert.equal(TOOL_DEFINITIONS.length, 49);
 
   const webTools = selectToolsForTurn(TOOL_DEFINITIONS, {
     provider: 'ollama',

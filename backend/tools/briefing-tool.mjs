@@ -12,12 +12,18 @@
 
 import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
 import { entriesForDate, loadSchedule } from '../schedule.mjs';
+import { readActions } from '../agent/action-log.mjs';
+import { loadOpenGoals } from '../agent/goal-continuity.mjs';
+import { dueReminders, upcomingReminders, acknowledgeReminders } from './reminders.mjs';
 
 export const CPU_HIGH_PERCENT = 80;
 export const MEMORY_HIGH_PERCENT = 85;
 export const BATTERY_LOW_PERCENT = 20;
 export const DISK_HIGH_PERCENT = 90;
 export const UPCOMING_WINDOW_MINUTES = 60;
+/** A plan untouched this long is worth raising; a fresh one is not. */
+export const STALE_WORK_HOURS = 24;
+export const MAX_OPEN_WORK_ITEMS = 3;
 
 /**
  * Grounded follow-up suggestions: each flagged area maps to one concrete, safe
@@ -64,8 +70,34 @@ export function deriveAttention(metrics, now = new Date()) {
   return flags;
 }
 
-function hhmm(date) {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+/** Pure: a goal that still owes the user something — unfinished steps, or done
+ * claims nothing ever backed. The record holds only steps the model itself
+ * published, so this can report outstanding work but never invent it. */
+function openParts(goal) {
+  const steps = Array.isArray(goal?.steps) ? goal.steps.filter(Boolean) : [];
+  return {
+    unfinished: steps.filter((step) => step.status !== 'done'),
+    unverified: steps.filter((step) => step.status === 'done' && step.unverified === true),
+  };
+}
+
+/**
+ * Pure: what the agent still owes the user across sessions, bounded and
+ * grounded — a count of the real open plans, plus the next step of the first
+ * few. No titles, no summaries: the step text is the model's own words.
+ */
+export function openWorkSummary(goals = [], { maxGoals = MAX_OPEN_WORK_ITEMS } = {}) {
+  const open = (Array.isArray(goals) ? goals : [])
+    .filter((goal) => goal && Array.isArray(goal.steps))
+    .map((goal) => ({ goal, ...openParts(goal) }))
+    .filter((entry) => entry.unfinished.length > 0 || entry.unverified.length > 0);
+  const items = open.slice(0, Math.max(1, maxGoals)).map(({ goal, unfinished, unverified }) => ({
+    updated_at: String(goal.updatedAt || ''),
+    steps_remaining: unfinished.length,
+    unverified: unverified.length,
+    next_step: String((unfinished[0] ?? unverified[0])?.text || ''),
+  }));
+  return { count: open.length, items };
 }
 
 /**
@@ -73,21 +105,28 @@ function hhmm(date) {
  * deterministic and testable; the async tool wrapper fills these from the live
  * system. Returns a grounded, JSON-serializable report.
  */
-export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = new Date(), focus = '' } = {}) {
+export function summarizeBriefing({
+  metrics = null,
+  scheduleEntries = [],
+  now = new Date(),
+  focus = '',
+  recentActions = [],
+  openGoals = [],
+  dueReminderEntries = [],
+  upcomingReminderEntries = [],
+} = {}) {
   const attention = deriveAttention(metrics, now);
 
-  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now)
-    .slice()
-    .sort((a, b) => String(a.time).localeCompare(String(b.time)));
-  const nowStr = hhmm(now);
-  const upcoming = todays.filter((e) => String(e.time) >= nowStr);
+  const todays = entriesForDate(Array.isArray(scheduleEntries) ? scheduleEntries : [], now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  // entriesForDate already sorts by real start time and carries startMinutes;
+  // string comparisons would misread unpadded times like '9:00'.
+  const upcoming = todays.filter((e) => e.startMinutes >= nowMinutes);
 
   let next = null;
   if (upcoming.length > 0) {
     next = { title: upcoming[0].title, time: upcoming[0].time };
-    const [h, m] = String(upcoming[0].time).split(':').map(Number);
-    const [nh, nm] = nowStr.split(':').map(Number);
-    const inMinutes = (h * 60 + m) - (nh * 60 + nm);
+    const inMinutes = upcoming[0].startMinutes - nowMinutes;
     if (inMinutes >= 0 && inMinutes <= UPCOMING_WINDOW_MINUTES) {
       attention.push({
         area: 'schedule',
@@ -98,6 +137,56 @@ export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = 
     }
   }
 
+  const openWork = openWorkSummary(openGoals, { now });
+  const staleWork = openWork.items
+    .filter((item) => {
+      const at = Date.parse(item.updated_at || '');
+      return Number.isFinite(at) && now.getTime() - at > STALE_WORK_HOURS * 60 * 60 * 1000;
+    })
+    .sort((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at));
+  if (staleWork.length > 0) {
+    const oldest = staleWork[0];
+    const count = staleWork.length;
+    attention.push({
+      area: 'work',
+      level: 'info',
+      detail: `${count} plan${count === 1 ? '' : 's'} from an earlier session ${count === 1 ? 'is' : 'are'} still open — next step: "${oldest.next_step.slice(0, 120)}".`,
+      suggest: suggestFor('work'),
+    });
+  }
+
+  // Reminders the user asked for and the machine owes them: the user's own words,
+  // with the real overdue time. Said once — the tool acknowledges what it delivers.
+  const dueRemindersOut = (Array.isArray(dueReminderEntries) ? dueReminderEntries : [])
+    .slice(0, 3)
+    .map((entry) => ({
+      message: String(entry?.message ?? ''),
+      fire_at: String(entry?.fireAt ?? ''),
+      overdue_minutes: Number.isFinite(entry?.overdue_minutes) ? entry.overdue_minutes : 0,
+    }));
+  if (dueRemindersOut.length > 0) {
+    const first = dueRemindersOut[0];
+    const late = first.overdue_minutes;
+    const lateText = late >= 60 ? `${Math.floor(late / 60)}h` : `${late} min`;
+    const more = dueRemindersOut.length > 1 ? ` (${dueRemindersOut.length - 1} more)` : '';
+    attention.push({
+      area: 'reminder',
+      level: 'info',
+      detail: `You asked to be reminded: "${first.message.slice(0, 120)}" — ${lateText} ago${more}.`,
+      suggest: suggestFor('reminder'),
+    });
+  }
+
+  // What is still ahead: the answer to "did it stick?", shown as a fact rather than an
+  // alarm — a reminder that has not come due yet is not a problem to solve.
+  const upcomingRemindersOut = (Array.isArray(upcomingReminderEntries) ? upcomingReminderEntries : [])
+    .slice(0, 3)
+    .map((entry) => ({
+      message: String(entry?.message ?? ''),
+      fire_at: String(entry?.fireAt ?? ''),
+      minutes_until: Number.isFinite(entry?.minutes_until) ? entry.minutes_until : 0,
+    }));
+
   return {
     generated_at: now.toISOString(),
     system_summary: metrics ? summarizeSystemMetrics(metrics) : 'System metrics unavailable.',
@@ -107,6 +196,20 @@ export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = 
       next,
     },
     attention,
+    // What the agent itself changed (or was stopped from changing), newest first.
+    // Echoed straight from the durable trail — nothing inferred or summarized.
+    recent_actions: (Array.isArray(recentActions) ? recentActions : [])
+      .slice(0, 5)
+      .map((action) => ({
+        at: String(action?.at ?? ''),
+        tool: String(action?.tool ?? ''),
+        kind: String(action?.kind ?? ''),
+        detail: String(action?.detail ?? ''),
+      })),
+    // Outstanding promises from earlier sessions: the agent's own published steps.
+    open_work: openWork,
+    due_reminders: { count: dueRemindersOut.length, items: dueRemindersOut },
+    upcoming_reminders: { count: upcomingRemindersOut.length, items: upcomingRemindersOut },
     focus: focus ? String(focus) : null,
   };
 }
@@ -115,15 +218,30 @@ export function summarizeBriefing({ metrics = null, scheduleEntries = [], now = 
  * Live briefing: collects real metrics + schedule, then composes them.
  * Collection failures degrade to a neutral report rather than throwing.
  */
-export async function briefingTool({ focus = '', include_system = true, include_schedule = true } = {}) {
-  const [metrics, scheduleEntries] = await Promise.all([
+export async function briefingTool({ focus = '', include_system = true, include_schedule = true, paths } = {}) {
+  const now = new Date();
+  const [metrics, scheduleEntries, recentActions, openGoals, due, upcoming] = await Promise.all([
     include_system ? collectSystemMetrics().catch(() => null) : null,
     include_schedule ? loadSchedule().catch(() => []) : [],
+    readActions(paths, { limit: 5 }).catch(() => []),
+    loadOpenGoals(paths).catch(() => []),
+    dueReminders(paths, { now }).catch(() => []),
+    upcomingReminders(paths, { now }).catch(() => []),
   ]);
-  return summarizeBriefing({
+  const report = summarizeBriefing({
     metrics,
     scheduleEntries: Array.isArray(scheduleEntries) ? scheduleEntries : [],
-    now: new Date(),
+    now,
     focus: typeof focus === 'string' ? focus : '',
+    recentActions,
+    openGoals,
+    dueReminderEntries: due,
+    upcomingReminderEntries: upcoming,
   });
+  // Delivered once, then acknowledged: the briefing is the user asking what is going
+  // on, so this is the moment the reminder is actually said.
+  if (Array.isArray(due) && due.length > 0) {
+    await acknowledgeReminders(paths, due.map((entry) => entry.id)).catch(() => {});
+  }
+  return report;
 }
