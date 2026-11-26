@@ -269,6 +269,37 @@ export function foldUsageSample(state, { total = 0, apps = [] } = {}, now = new 
 }
 
 /**
+ * Before process names were resolved from nettop's .pid, long names were folded into the
+ * running totals cut off at 15 chars, so a key like "DeepAI Code Hel" sat next to its full
+ * form "DeepAI Code Helper" and split a month's totals across both spellings. Fold each
+ * truncated key into the full name that starts with it. Pure: mutates and returns state.
+ */
+export function reconcileAppNames(state, apps = []) {
+  const fullNames = [...new Set(apps.map((a) => a.name))];
+  const rename = new Map();
+  for (const bucket of [state.apps, state.lastApps]) {
+    for (const key of Object.keys(bucket || {})) {
+      if (fullNames.includes(key) || rename.has(key)) continue;
+      const match = fullNames.find((f) => f.startsWith(key) && f !== key);
+      if (match) rename.set(key, match);
+    }
+  }
+  for (const [from, to] of rename) {
+    if (state.apps && from in state.apps) {
+      state.apps[to] = (state.apps[to] || 0) + state.apps[from];
+      delete state.apps[from];
+    }
+    if (state.lastApps && from in state.lastApps) {
+      // lastApps holds cumulative counter baselines, not additive deltas: keep the
+      // destination's own baseline if it already exists, else carry the old one over.
+      if (state.lastApps[to] == null) state.lastApps[to] = state.lastApps[from];
+      delete state.lastApps[from];
+    }
+  }
+  return state;
+}
+
+/**
  * Record one live usage sample: gather current interface + per-app counters and fold
  * them into the persisted running totals.
  */
@@ -284,6 +315,7 @@ export async function recordNetworkSample({ stateFile } = {}) {
     // No prior state yet — first sample seeds the baseline with a zero delta.
   }
 
+  reconcileAppNames(state, apps);
   state = foldUsageSample(state, { total, apps }, new Date());
 
   await fs.mkdir(path.dirname(file), { recursive: true });

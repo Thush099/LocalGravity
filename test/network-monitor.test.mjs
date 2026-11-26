@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNettop, parseNetstat, emptyState, foldUsageSample, perAppUsage } from '../backend/network-monitor.mjs';
+import { parseNettop, parseNetstat, emptyState, foldUsageSample, perAppUsage, reconcileAppNames } from '../backend/network-monitor.mjs';
 
 // These fixtures are the real, unedited output of `nettop -P -L 1 -x -J bytes_in,bytes_out`
 // and `netstat -ib` captured from macOS, so the parsers are pinned to actual formats.
@@ -116,4 +116,20 @@ test('perAppUsage resolves full process names via the pid (nettop truncates them
   assert.ok(!names.includes('DeepAI Code Hel'), 'truncated nettop name is replaced');
   const helper = res.apps.find((a) => a.name === 'DeepAI Code Helper');
   assert.equal(helper.total, 3000, 'the truncated row\u2019s bytes land under the full name');
+});
+
+test('reconcileAppNames folds truncated nettop names into their full-name bucket', () => {
+  const state = {
+    apps: { 'DeepAI Code Hel': 2000, node: 10 },
+    lastApps: { 'DeepAI Code Hel': 5000, node: 5 },
+  };
+  reconcileAppNames(state, [{ name: 'DeepAI Code Helper' }, { name: 'node' }]);
+  assert.deepEqual(state.apps, { 'DeepAI Code Helper': 2000, node: 10 });
+  assert.deepEqual(state.lastApps, { 'DeepAI Code Helper': 5000, node: 5 });
+
+  // Already-full names and keys with no live match are left alone.
+  const clean = { apps: { Safari: 100 }, lastApps: { Safari: 9 } };
+  reconcileAppNames(clean, [{ name: 'Safari' }]);
+  assert.deepEqual(clean.apps, { Safari: 100 });
+  assert.deepEqual(clean.lastApps, { Safari: 9 });
 });
