@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNettop, parseNetstat, emptyState, foldUsageSample } from '../backend/network-monitor.mjs';
+import { parseNettop, parseNetstat, emptyState, foldUsageSample, perAppUsage } from '../backend/network-monitor.mjs';
 
 // These fixtures are the real, unedited output of `nettop -P -L 1 -x -J bytes_in,bytes_out`
 // and `netstat -ib` captured from macOS, so the parsers are pinned to actual formats.
@@ -94,4 +94,26 @@ test('foldUsageSample resets per-app month totals on month rollover', () => {
   assert.equal(state.month, '2026-02');
   assert.equal(state.monthTotal, 50, 'only the new-month delta counts');
   assert.equal(state.apps.Safari, 30, 'per-app bucket reset to just the new-month delta');
+});
+
+test('perAppUsage resolves full process names via the pid (nettop truncates them)', async () => {
+  // nettop returns "DeepAI Code Hel.100" — the name is cut to 15 chars but the .pid is exact.
+  const execFileFn = async (cmd) => {
+    if (cmd === 'nettop') return { stdout: ',bytes_in,bytes_out,\nDeepAI Code Hel.100,1000,2000,\nnode.200,5,5,\n' };
+    if (cmd === 'ps') {
+      return {
+        stdout:
+          '  100 /Applications/DeepAI Code.app/Contents/MacOS/DeepAI Code Helper\n  200 /usr/local/bin/node\n',
+      };
+    }
+    return { stdout: '' };
+  };
+  const res = await perAppUsage({ execFileFn, bypassCache: true, limit: 10 });
+  assert.equal(res.ok, true);
+  const names = res.apps.map((a) => a.name);
+  assert.ok(names.includes('DeepAI Code Helper'), 'full name resolved from the pid');
+  assert.ok(names.includes('node'), 'already-short name is preserved');
+  assert.ok(!names.includes('DeepAI Code Hel'), 'truncated nettop name is replaced');
+  const helper = res.apps.find((a) => a.name === 'DeepAI Code Helper');
+  assert.equal(helper.total, 3000, 'the truncated row\u2019s bytes land under the full name');
 });

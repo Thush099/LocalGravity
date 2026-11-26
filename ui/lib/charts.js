@@ -365,10 +365,10 @@ export function renderNetworkDonut(apps = [], { size = 176, centerLabel = 'this 
 
   const legendHtml = segments
     .map(
-      (seg) => `<div class="donut-legend-row">
+      (seg) => `<div class="donut-legend-row" title="${escapeHtml(seg.label)}">
         <span class="donut-swatch" style="background:${seg.color}"></span>
         <span class="donut-legend-label">${escapeHtml(seg.label)}</span>
-        <span class="donut-legend-val">${escapeHtml(formatBytes(seg.bytes))}</span>
+        <span class="donut-legend-val">${escapeHtml(formatBytes(seg.bytes))} · ${Math.round(seg.pct)}%</span>
       </div>`
     )
     .join('');

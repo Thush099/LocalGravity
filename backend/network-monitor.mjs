@@ -33,10 +33,12 @@ export function parseNettop(text) {
     if (!trimmed) continue;
     const parts = trimmed.split(',');
     if (!parts[0]) continue; // header row has an empty first field
-    const name = parts[0].replace(/\.\d+$/, ''); // drop the trailing .pid
+    const pidMatch = /^(.*)\.(\d+)$/.exec(parts[0]);
+    const name = pidMatch ? pidMatch[1] : parts[0]; // drop the trailing .pid
+    const pid = pidMatch ? Number(pidMatch[2]) : null;
     const bytesIn = Number(parts[1]) || 0;
     const bytesOut = Number(parts[2]) || 0;
-    rows.push({ name, bytesIn, bytesOut });
+    rows.push({ name, pid, bytesIn, bytesOut });
   }
   return rows;
 }
@@ -69,6 +71,32 @@ function isPhysicalInterface(name) {
   return /^(en|eth|wl|wlan)\d/i.test(name);
 }
 
+// nettop truncates long process names to ~15 chars ("DeepAI Code Helper" comes back as
+// "DeepAI Code Hel"), but its .PID suffix is exact. Resolve each PID to the executable's
+// base name once via `ps` so callers see real names, not cut-off ones. Returns an empty
+// map on failure, which leaves the (truncated) nettop names as a graceful fallback.
+async function processNamesByPid(execFileFn) {
+  try {
+    const { stdout } = await execFileFn('ps', ['-A', '-o', 'pid=,comm='], {
+      timeout: EXEC_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const map = new Map();
+    for (const line of String(stdout ?? '').split('\n')) {
+      const trimmed = line.trim();
+      const sp = trimmed.indexOf(' ');
+      if (sp < 1) continue;
+      const pid = Number(trimmed.slice(0, sp));
+      const comm = trimmed.slice(sp + 1).trim();
+      const base = comm.split('/').pop() || comm;
+      if (pid && base) map.set(pid, base);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
 /** Per-process network usage (cumulative since each process started), largest first. */
 export async function perAppUsage({ limit = 12, execFileFn = execFileAsync, bypassCache = false } = {}) {
   const isDefaultExec = execFileFn === execFileAsync;
@@ -83,16 +111,20 @@ export async function perAppUsage({ limit = 12, execFileFn = execFileAsync, bypa
 
   perAppInFlight = (async () => {
     try {
-      const { stdout } = await execFileFn('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
-        timeout: EXEC_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      const [{ stdout }, pidNames] = await Promise.all([
+        execFileFn('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
+          timeout: EXEC_TIMEOUT_MS,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+        processNamesByPid(execFileFn),
+      ]);
       const byName = new Map();
       for (const row of parseNettop(stdout)) {
-        const cur = byName.get(row.name) || { name: row.name, bytesIn: 0, bytesOut: 0 };
+        const name = (row.pid && pidNames.get(row.pid)) || row.name;
+        const cur = byName.get(name) || { name, bytesIn: 0, bytesOut: 0 };
         cur.bytesIn += row.bytesIn;
         cur.bytesOut += row.bytesOut;
-        byName.set(row.name, cur);
+        byName.set(name, cur);
       }
       const apps = [...byName.values()]
         .map((a) => ({ ...a, total: a.bytesIn + a.bytesOut }))

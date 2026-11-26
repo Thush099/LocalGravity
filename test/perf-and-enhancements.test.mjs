@@ -169,17 +169,24 @@ test('briefing endpoint coalesces requests, serves disk/stale cache immediately,
 });
 
 test('perAppUsage coalesces concurrent calls onto a single nettop execution', async () => {
-  let execCalls = 0;
-  const fakeExec = async () => {
-    execCalls += 1;
+  // Two concurrent callers must share one nettop run — and one name-resolution ps run —
+  // rather than double-executing either.
+  let nettopCalls = 0;
+  let psCalls = 0;
+  const fakeExec = async (cmd) => {
+    if (cmd === 'nettop') nettopCalls += 1;
+    else psCalls += 1;
     await new Promise((r) => setTimeout(r, 40));
-    return { stdout: ',bytes_in,bytes_out,\nSafari.123,5000,1000,\n' };
+    return cmd === 'nettop'
+      ? { stdout: ',bytes_in,bytes_out,\nSafari.123,5000,1000,\n' }
+      : { stdout: '  123 /Applications/Safari.app/Contents/MacOS/Safari\n' };
   };
   const [a, b] = await Promise.all([
     perAppUsage({ limit: 5, execFileFn: fakeExec, bypassCache: true }),
     perAppUsage({ limit: 5, execFileFn: fakeExec, bypassCache: true }),
   ]);
-  assert.equal(execCalls, 1);
+  assert.equal(nettopCalls, 1, 'concurrent callers share one nettop run');
+  assert.equal(psCalls, 1, 'name resolution is coalesced onto one ps run');
   assert.equal(a.ok, true);
   assert.equal(a.apps[0].name, 'Safari');
   assert.deepEqual(b.apps, a.apps);
