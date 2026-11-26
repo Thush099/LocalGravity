@@ -30,6 +30,7 @@ fi
 CONTENTS="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS}/MacOS"
 RESOURCES_DIR="${CONTENTS}/Resources"
+ENTITLEMENTS="${REPO_ROOT}/native/LocalGravity.entitlements"
 
 echo "Building ${APP_NAME}.app from ${REPO_ROOT} -> ${APP_BUNDLE}..."
 mkdir -p "${REPO_ROOT}/build"
@@ -85,6 +86,8 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>LocalGravity uses AppleScript to read your Mail and Calendar for the daily briefing.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>
@@ -99,11 +102,30 @@ echo -n "APPL????" > "${CONTENTS}/PkgInfo"
 # build, so macOS treats each rebuild as a new app and forgets the folder access
 # the user already granted (Downloads, Desktop, Documents).
 SIGN_IDENTITY="$("${REPO_ROOT}/scripts/ensure-signing-identity.sh" 2>/dev/null || true)"
+# Hardened Runtime (--options runtime) is required for notarization. The entitlements
+# grant WKWebView JIT, AppleScript automation, and unsigned Node-module loading.
+CODESIGN_FLAGS=(--force --deep --options runtime --entitlements "${ENTITLEMENTS}")
 if [ -n "${SIGN_IDENTITY}" ]; then
-  codesign --force --deep --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+  codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
 else
   echo "warning: no signing identity; folder permissions will need granting again after a rebuild" >&2
-  codesign --force --deep --sign - "${APP_BUNDLE}" || true
+  codesign "${CODESIGN_FLAGS[@]}" --sign - "${APP_BUNDLE}" || true
+fi
+
+# Notarization needs a Developer ID Application certificate plus stored notary
+# credentials (xcrun notarytool store-credentials <profile>). It runs only when
+# APPLE_NOTARY_PROFILE names that keychain profile, so local builds stay
+# credential-free and no secret is ever stored in the repo.
+if [ -n "${APPLE_NOTARY_PROFILE:-}" ]; then
+  echo "Notarizing with keychain profile '${APPLE_NOTARY_PROFILE}'..."
+  NOTARY_ZIP="${APP_BUNDLE}.zip"
+  ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARY_ZIP}"
+  xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${APPLE_NOTARY_PROFILE}" --wait
+  xcrun stapler staple "${APP_BUNDLE}"
+  rm -f "${NOTARY_ZIP}"
+  echo "Notarization complete and stapled."
+else
+  echo "Skipping notarization (set APPLE_NOTARY_PROFILE to enable). Build is Hardened-Runtime signed."
 fi
 
 if [ -x "${LSREGISTER}" ]; then

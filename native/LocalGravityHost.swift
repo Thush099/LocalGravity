@@ -356,7 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if line.hasPrefix("READY:"), let port = Int(line.dropFirst(6)), serverPort == 0 {
                 serverPort = port
                 if let url = URL(string: "http://127.0.0.1:\(port)/?token=\(authToken)") {
-                    webView.load(URLRequest(url: url))
+                    webView?.load(URLRequest(url: url))
                 }
             }
         }
@@ -383,17 +383,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         <pre style="white-space:pre-wrap;background:#15181f;padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);">\(message)</pre>
         </body></html>
         """
-        webView.loadHTMLString(html, baseURL: nil)
+        webView?.loadHTMLString(html, baseURL: nil)
     }
 
     private func sendFilesToJS(_ paths: [String]) {
         guard let data = try? JSONSerialization.data(withJSONObject: paths),
               let json = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.__lgReceiveFiles && window.__lgReceiveFiles(\(json));")
+        webView?.evaluateJavaScript("window.__lgReceiveFiles && window.__lgReceiveFiles(\(json));")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        // Defensive: every window/webView access below must never crash the host.
+        guard let window = window else { return }
         if type == "pickFiles" {
             let panel = NSOpenPanel()
             panel.canChooseFiles = true
@@ -414,7 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 if response == .OK, let folderUrl = panel.url,
                    let data = try? JSONSerialization.data(withJSONObject: folderUrl.path),
                    let json = String(data: data, encoding: .utf8) {
-                    self?.webView.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
+                    self?.webView?.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
                 }
             }
         } else if type == "revealInFinder", let rawPath = body["path"] as? String, !rawPath.isEmpty {
@@ -448,7 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         } else if type == "saveFile", let content = body["content"] as? String {
             let suggestedName = (body["filename"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let panel = NSSavePanel()
-            panel.nameFieldStringValue = (suggestedName?.isEmpty == false ? suggestedName! : "conversation.md")
+            panel.nameFieldStringValue = (suggestedName?.isEmpty == false) ? (suggestedName ?? "conversation.md") : "conversation.md"
             panel.canCreateDirectories = true
             panel.beginSheetModal(for: window) { [weak self] response in
                 if response == .OK, let destUrl = panel.url {
@@ -456,7 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                         try content.write(to: destUrl, atomically: true, encoding: .utf8)
                         if let data = try? JSONSerialization.data(withJSONObject: destUrl.path),
                            let json = String(data: data, encoding: .utf8) {
-                            self?.webView.evaluateJavaScript("window.__lgFileSaved && window.__lgFileSaved(\(json));")
+                            self?.webView?.evaluateJavaScript("window.__lgFileSaved && window.__lgFileSaved(\(json));")
                         }
                     } catch {
                         // Best-effort save error handling
