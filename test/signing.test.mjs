@@ -31,3 +31,20 @@ test('build signs with hardened runtime and keeps notarization credential-free',
   // Info.plist must describe why Apple Events are used (TCC prompt copy).
   assert.match(script, /NSAppleEventsUsageDescription/);
 });
+
+test('build wires launch-at-login and the deep-link URL scheme', () => {
+  const script = readFileSync(path.join(repoRoot, 'scripts/build-app.sh'), 'utf8');
+  // SMAppService (Start at Login) needs the ServiceManagement framework.
+  assert.match(script, /-framework ServiceManagement/);
+  // Deep links: the localgravity:// scheme must be declared in Info.plist.
+  assert.match(script, /CFBundleURLTypes/);
+  assert.match(script, /<string>localgravity<\/string>/);
+});
+
+test('host implements the launch-at-login and deep-link handlers', () => {
+  const host = readFileSync(path.join(repoRoot, 'native/LocalGravityHost.swift'), 'utf8');
+  assert.match(host, /SMAppService\.mainApp/);
+  assert.match(host, /open urls: \[URL\]/);
+  assert.match(host, /pendingDeepLinks/);
+  assert.match(host, /localgravity/);
+});

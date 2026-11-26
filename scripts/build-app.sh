@@ -46,6 +46,7 @@ swiftc -O -strict-concurrency=complete \
   -framework Cocoa \
   -framework WebKit \
   -framework Security \
+  -framework ServiceManagement \
   "${REPO_ROOT}/native/LocalGravityHost.swift" \
   -o "${MACOS_DIR}/${APP_NAME}"
 
@@ -93,6 +94,17 @@ cat > "${CONTENTS}/Info.plist" << 'PLIST'
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.localgravity.app</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>localgravity</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

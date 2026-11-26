@@ -1,5 +1,6 @@
 import Cocoa
 import Security
+import ServiceManagement
 import WebKit
 
 final class GravityWebView: WKWebView {
@@ -42,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var stdoutBuffer = ""
     private var stderrBuffer = ""
     private var isQuitting = false
+    private var pendingDeepLinks: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -63,6 +65,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         return true
     }
 
+    // Deep links (localgravity://action/<name>, localgravity://open?path=<path>)
+    // let external scripts / Shortcuts drive the app. They are queued until the
+    // webview has loaded so a launch-via-URL still lands on the target action.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "localgravity" {
+            pendingDeepLinks.append(url)
+        }
+        flushPendingDeepLinks()
+    }
+
+    private func flushPendingDeepLinks() {
+        guard let webView, !webView.isLoading, webView.url != nil, !pendingDeepLinks.isEmpty else { return }
+        let queued = pendingDeepLinks
+        pendingDeepLinks.removeAll()
+        for url in queued {
+            handleDeepLink(url)
+        }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        let host = (url.host ?? "").lowercased()
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if host == "action", !path.isEmpty {
+            sendMenuAction(path)
+        } else if host == "open" {
+            let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value
+            if let target {
+                let expanded = (target as NSString).expandingTildeInPath
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: expanded)])
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         isQuitting = true
         stopBackendServer()
@@ -78,6 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         appMenu.addItem(withTitle: "About LocalGravity", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(triggerSettings), keyEquivalent: ",")
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        appMenu.addItem(loginItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide LocalGravity", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -160,6 +201,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         guard let data = try? JSONSerialization.data(withJSONObject: action),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction(\(json));")
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            // Registration can be denied by the user or the system; keep the menu truthful.
+            NSLog("Launch at Login change failed: \(error.localizedDescription)")
+        }
+        sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     @objc private func triggerSettings() {
@@ -466,6 +521,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 }
             }
         }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        flushPendingDeepLinks()
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
