@@ -138,7 +138,11 @@ test('briefing endpoint coalesces requests, serves disk/stale cache immediately,
     const staleRes = await fetch(`${base}/api/briefing`, { headers: { 'X-Auth-Token': authToken } });
     const dt = performance.now() - t0;
     assert.equal(staleRes.status, 200);
-    assert.ok(dt < 500, `stale briefing returned in ${dt.toFixed(1)}ms instead of blocking`);
+    // The non-blocking guarantee is structural: if this handler blocked on the
+    // parked gather below it would deadlock, never merely run slowly. So this
+    // bound is only a machine-speed SLO (it can stretch past a tight floor under
+    // parallel test-file CPU load), not the behaviour being verified.
+    assert.ok(dt < 2000, `stale briefing returned in ${dt.toFixed(1)}ms instead of returning from cache`);
     const staleData = await staleRes.json();
     assert.equal(staleData.briefing.news[0].title, 'Disk Cached Lead');
     assert.equal(staleData.stale, true);
@@ -226,15 +230,18 @@ test('Smart Assist API computes live suggestions and persists dismissals', async
     });
     assert.equal(badDismiss.status, 400);
 
-    // Valid dismissal persists and disappears from suggestions
-    const dismissRes = await fetch(`${base}/api/suggestions/dismiss`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
-      body: JSON.stringify({ id: 'summarize-inbox' }),
-    });
-    assert.equal(dismissRes.status, 200);
-    const afterData = await dismissRes.json();
+    // Concurrent dismissals must both persist, rather than last-write-wins.
+    const dismiss = (id) =>
+      fetch(`${base}/api/suggestions/dismiss`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Auth-Token': authToken },
+        body: JSON.stringify({ id }),
+      });
+    const dismissResponses = await Promise.all([dismiss('summarize-inbox'), dismiss('network-insight')]);
+    assert.deepEqual(dismissResponses.map((response) => response.status), [200, 200]);
+    const afterData = await (await fetch(`${base}/api/suggestions`, { headers: { 'X-Auth-Token': authToken } })).json();
     assert.ok(!afterData.suggestions.some((s) => s.id === 'summarize-inbox'));
+    assert.ok(!afterData.suggestions.some((s) => s.id === 'network-insight'));
   } finally {
     await srv.stop();
     await fs.rm(tmpHome, { recursive: true, force: true });

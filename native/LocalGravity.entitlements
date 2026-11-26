@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- WKWebView runs page JavaScript; the JIT needs this under Hardened Runtime. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- AppleScript automation for the Mail / Calendar integration. The user still
+       grants Automation access on first use (System Settings > Privacy & Security). -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <!-- The bundled Node backend loads its own native modules at runtime. Hardened
+       Runtime's library validation would otherwise refuse unsigned modules that are
+       not signed by the same identity as the app. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

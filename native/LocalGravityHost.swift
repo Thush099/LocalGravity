@@ -1,5 +1,6 @@
 import Cocoa
 import Security
+import ServiceManagement
 import WebKit
 
 final class GravityWebView: WKWebView {
@@ -41,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var serverPort: Int = 0
     private var stdoutBuffer = ""
     private var stderrBuffer = ""
+    private var isQuitting = false
+    private var pendingDeepLinks: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -48,11 +51,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         startBackendServer()
     }
 
+    // A persistent agent should keep running when its window closes; macOS
+    // gestures (Mission Control, Show Desktop, App Exposé) can close the window
+    // and must not silently take the whole app down. The Dock icon reopens it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            window?.makeKeyAndOrderFront(nil)
+        }
         return true
     }
 
+    // Deep links (localgravity://action/<name>, localgravity://open?path=<path>)
+    // let external scripts / Shortcuts drive the app. They are queued until the
+    // webview has loaded so a launch-via-URL still lands on the target action.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "localgravity" {
+            pendingDeepLinks.append(url)
+        }
+        flushPendingDeepLinks()
+    }
+
+    private func flushPendingDeepLinks() {
+        guard let webView, !webView.isLoading, webView.url != nil, !pendingDeepLinks.isEmpty else { return }
+        let queued = pendingDeepLinks
+        pendingDeepLinks.removeAll()
+        for url in queued {
+            handleDeepLink(url)
+        }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        let host = (url.host ?? "").lowercased()
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if host == "action", !path.isEmpty {
+            sendMenuAction(path)
+        } else if host == "open" {
+            let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value
+            if let target {
+                let expanded = (target as NSString).expandingTildeInPath
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: expanded)])
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        isQuitting = true
         stopBackendServer()
     }
 
@@ -66,6 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         appMenu.addItem(withTitle: "About LocalGravity", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(triggerSettings), keyEquivalent: ",")
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        appMenu.addItem(loginItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide LocalGravity", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -148,6 +201,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         guard let data = try? JSONSerialization.data(withJSONObject: action),
               let json = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript("window.__lgMenuAction && window.__lgMenuAction(\(json));")
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            // Registration can be denied by the user or the system; keep the menu truthful.
+            NSLog("Launch at Login change failed: \(error.localizedDescription)")
+        }
+        sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     @objc private func triggerSettings() {
@@ -293,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.handleBackendStdout(chunk)
             }
         }
@@ -301,7 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.stderrBuffer += chunk
                 if self.stderrBuffer.count > 8192 {
@@ -313,11 +380,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         proc.terminationHandler = { [weak self] process in
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                if process.terminationStatus != 0 && self.serverPort == 0 {
-                    let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
+                if self.isQuitting { return }
+                let msg = self.stderrBuffer.isEmpty ? "Unknown backend error" : self.stderrBuffer
+                if self.serverPort == 0 {
                     self.showStartupError("Agent backend failed to start:\n\(msg)")
+                } else {
+                    self.showStartupError(
+                        "The agent backend stopped unexpectedly (exit code \(process.terminationStatus)).\n\n\(msg)\n\nQuit and reopen LocalGravity to restart it.",
+                        title: "LocalGravity backend stopped"
+                    )
                 }
             }
         }
@@ -338,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if line.hasPrefix("READY:"), let port = Int(line.dropFirst(6)), serverPort == 0 {
                 serverPort = port
                 if let url = URL(string: "http://127.0.0.1:\(port)/?token=\(authToken)") {
-                    webView.load(URLRequest(url: url))
+                    webView?.load(URLRequest(url: url))
                 }
             }
         }
@@ -358,24 +431,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    private func showStartupError(_ message: String) {
+    private func showStartupError(_ message: String, title: String = "LocalGravity could not start") {
         let html = """
         <!doctype html><html><body style="font-family:-apple-system,sans-serif;background:#0b0c0f;color:#f5f5f7;padding:48px;">
-        <h2>LocalGravity could not start</h2>
+        <h2>\(title)</h2>
         <pre style="white-space:pre-wrap;background:#15181f;padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);">\(message)</pre>
         </body></html>
         """
-        webView.loadHTMLString(html, baseURL: nil)
+        webView?.loadHTMLString(html, baseURL: nil)
     }
 
     private func sendFilesToJS(_ paths: [String]) {
         guard let data = try? JSONSerialization.data(withJSONObject: paths),
               let json = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.__lgReceiveFiles && window.__lgReceiveFiles(\(json));")
+        webView?.evaluateJavaScript("window.__lgReceiveFiles && window.__lgReceiveFiles(\(json));")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        // Defensive: every window/webView access below must never crash the host.
+        guard let window = window else { return }
         if type == "pickFiles" {
             let panel = NSOpenPanel()
             panel.canChooseFiles = true
@@ -396,7 +471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 if response == .OK, let folderUrl = panel.url,
                    let data = try? JSONSerialization.data(withJSONObject: folderUrl.path),
                    let json = String(data: data, encoding: .utf8) {
-                    self?.webView.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
+                    self?.webView?.evaluateJavaScript("window.__lgFolderPicked && window.__lgFolderPicked(\(json));")
                 }
             }
         } else if type == "revealInFinder", let rawPath = body["path"] as? String, !rawPath.isEmpty {
@@ -430,7 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         } else if type == "saveFile", let content = body["content"] as? String {
             let suggestedName = (body["filename"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let panel = NSSavePanel()
-            panel.nameFieldStringValue = (suggestedName?.isEmpty == false ? suggestedName! : "conversation.md")
+            panel.nameFieldStringValue = (suggestedName?.isEmpty == false) ? (suggestedName ?? "conversation.md") : "conversation.md"
             panel.canCreateDirectories = true
             panel.beginSheetModal(for: window) { [weak self] response in
                 if response == .OK, let destUrl = panel.url {
@@ -438,7 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                         try content.write(to: destUrl, atomically: true, encoding: .utf8)
                         if let data = try? JSONSerialization.data(withJSONObject: destUrl.path),
                            let json = String(data: data, encoding: .utf8) {
-                            self?.webView.evaluateJavaScript("window.__lgFileSaved && window.__lgFileSaved(\(json));")
+                            self?.webView?.evaluateJavaScript("window.__lgFileSaved && window.__lgFileSaved(\(json));")
                         }
                     } catch {
                         // Best-effort save error handling
@@ -448,7 +523,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        flushPendingDeepLinks()
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url,
            let host = url.host,
            host != "127.0.0.1" && host != "localhost" && (url.scheme == "http" || url.scheme == "https") {
