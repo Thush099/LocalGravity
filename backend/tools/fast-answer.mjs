@@ -32,6 +32,17 @@ const UNITS = {
   ms: [0.001, 's'], millisecond: [0.001, 's'], milliseconds: [0.001, 's'], s: [1, 's'], sec: [1, 's'], second: [1, 's'], seconds: [1, 's'],
   min: [60, 's'], mins: [60, 's'], minute: [60, 's'], minutes: [60, 's'], h: [3600, 's'], hr: [3600, 's'], hrs: [3600, 's'],
   hour: [3600, 's'], hours: [3600, 's'], day: [86400, 's'], days: [86400, 's'], week: [604800, 's'], weeks: [604800, 's'],
+  // volume (base litre)
+  ml: [0.001, 'L'], milliliter: [0.001, 'L'], milliliters: [0.001, 'L'], millilitre: [0.001, 'L'], millilitres: [0.001, 'L'],
+  l: [1, 'L'], liter: [1, 'L'], liters: [1, 'L'], litre: [1, 'L'], litres: [1, 'L'],
+  gallon: [3.785411784, 'L'], gallons: [3.785411784, 'L'], cup: [0.2365882365, 'L'], cups: [0.2365882365, 'L'],
+  quart: [0.946352946, 'L'], quarts: [0.946352946, 'L'], pint: [0.473176473, 'L'], pints: [0.473176473, 'L'],
+  floz: [0.0295735295625, 'L'], tbsp: [0.01478676478125, 'L'], tsp: [0.00492892159375, 'L'],
+  // area (base square metre)
+  acre: [4046.8564224, 'm2'], acres: [4046.8564224, 'm2'], hectare: [10000, 'm2'], hectares: [10000, 'm2'], ha: [10000, 'm2'],
+  // speed (base metre per second)
+  mph: [0.44704, 'mps'], kph: [0.2777777777777778, 'mps'], kmh: [0.2777777777777778, 'mps'],
+  mps: [1, 'mps'], fps: [0.3048, 'mps'], knot: [0.5144444444444445, 'mps'], knots: [0.5144444444444445, 'mps'],
 };
 
 // Temperature scales convert by formula, not by a fixed factor.

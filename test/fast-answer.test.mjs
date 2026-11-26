@@ -23,6 +23,10 @@ test('converts units instantly and only within the same dimension', () => {
   const c = tryFastAnswer('convert 100 f to c');
   assert.match(c.answer, /37\.77/);
   assert.match(tryFastAnswer('how many minutes in 2 hours').answer, /120/);
+  // volume, area, and speed dimensions
+  assert.match(tryFastAnswer('2 liters to gallons').answer, /0\.528/);
+  assert.match(tryFastAnswer('1 acre to hectares').answer, /0\.404/);
+  assert.match(tryFastAnswer('60 mph to kmh').answer, /96\.56/);
   // cross-dimension is not a conversion — falls to the model
   assert.equal(tryFastAnswer('5 apples to oranges'), null);
 });
