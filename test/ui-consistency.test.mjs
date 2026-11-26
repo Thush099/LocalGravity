@@ -49,6 +49,9 @@ test('friendlyError turns raw model failures into actionable messages', async ()
     ['model_not_found: qwen99', /not available|model/i],
     ['Request timed out after 120s', /timed out/i],
     ['maximum context length exceeded', /too long|compacts/i],
+    // Ollama's 500 for malformed model tool-call XML also contains "Ollama";
+    // it must not be reported as "the local model isn't responding".
+    ['Ollama chat error (500): {"error":"XML syntax error on line 3: element <function> closed by </parameter>"}', /malformed|retried|tool call/i],
     ['something odd happened', /Something went wrong/i],
   ];
   for (const [msg, hint] of cases) {
@@ -57,6 +60,11 @@ test('friendlyError turns raw model failures into actionable messages', async ()
     assert.equal(r.detail, msg, 'keeps the raw detail for debugging');
   }
   assert.equal(friendlyError(undefined).detail, 'Model error');
+  assert.doesNotMatch(
+    friendlyError('Ollama chat error (500): XML syntax error on line 3').title,
+    /isn't responding/i,
+    'a malformed tool-call error is not an Ollama outage'
+  );
 });
 
 async function readIndexSource() {
@@ -119,4 +127,42 @@ test('dialogs hide the page behind them from keyboard and assistive tech', async
   assert.match(app, /function trapTabKey/, 'Tab must stay inside an open dialog');
   const html = await fs.readFile(new URL('../ui/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="modal-backdrop"[^>]*aria-labelledby="modal-title"/, 'dialog needs an accessible name');
+});
+
+
+test('a silent assistant turn renders an explanation instead of an empty bubble', async () => {
+  const app = await readAppSource();
+  assert.match(app, /empty-reply-note/, 'the blank-reply fallback class is missing');
+  assert.match(app, /No written reply came back/, 'the blank-reply explanation is missing');
+  assert.match(app, /const showActions = !item\.isStreaming \|\| item\.isError;/, 'retry actions must appear for silent turns');
+  const css = await fs.readFile(new URL('../ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.empty-reply-note \{/, 'the blank-reply style is missing');
+});
+
+test('permission denials offer a one-click route to Privacy settings', async () => {
+  const app = await readAppSource();
+  assert.match(app, /permission-note/, 'the permission hint markup is missing');
+  assert.match(app, /data-privacy-pane/, 'the permission button target is missing');
+  assert.match(app, /api\/system\/privacy-pane/, 'the privacy pane endpoint is not wired');
+  const css = await fs.readFile(new URL('../ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.permission-note \{/, 'the permission hint style is missing');
+});
+
+test('Smart Assist refreshes after dashboard signals load and ignores stale responses', async () => {
+  const app = await readAppSource();
+  assert.match(app, /suggestionRequestId/, 'suggestion responses need a monotonic freshness guard');
+  const metrics = extractBlock(app, 'async function refreshSystemMetrics()', '\nfunction updateMonitorAutoRefresh(');
+  assert.match(metrics, /if \(!hadMetrics\) refreshSuggestions\(\)/, 'first live metrics should refresh dashboard suggestions');
+  const briefing = extractBlock(app, 'async function refreshBriefing(', '\nfunction renderBriefing(');
+  assert.match(briefing, /refreshSuggestions\(\)/, 'a refreshed briefing should refresh derived suggestions');
+});
+
+test('the dashboard preloads the configured local model instead of waiting for a prompt', async () => {
+  const app = await readAppSource();
+  assert.match(
+    app,
+    /requestOllamaWarmup\(state\.config\.model\)/,
+    'init must warm the configured model so the first prompt does not pay the load'
+  );
+  assert.match(app, /provider === 'ollama'/, 'only Ollama models are preloaded');
 });

@@ -5,7 +5,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   suggestActions, buildSuggestions, filterDismissed, dismissSuggestion, loadDismissed,
+  storageFreePercentFromMetrics,
 } from '../backend/smart-assist.mjs';
+
+test('storage signal uses the dashboard data volume and ignores non-finite percentages', () => {
+  const metrics = {
+    disks: [
+      { mount: '/', usedPercent: 92 },
+      { mount: '/System/Volumes/Data', usedPercent: 70 },
+    ],
+  };
+  assert.equal(storageFreePercentFromMetrics(metrics), 30);
+  assert.equal(storageFreePercentFromMetrics({ disks: [{ mount: '/', usedPercent: Number.NaN }] }), null);
+  assert.equal(storageFreePercentFromMetrics({ disks: [] }), null);
+});
 
 test('storage pressure drives urgency', () => {
   const urgent = suggestActions({ storageFreePercent: 6 });
@@ -65,8 +78,16 @@ test('dismissed suggestions are filtered for a window then return', () => {
   assert.equal(filterDismissed(s, { a: Date.now() - 8 * 24 * 60 * 60 * 1000 }).length, 2);
 });
 
+test('invalid and future dismissal timestamps do not hide suggestions', () => {
+  const suggestions = [{ id: 'a' }, { id: 'b' }];
+  assert.equal(filterDismissed(suggestions, { a: 'not-a-timestamp' }).length, 2);
+  assert.equal(filterDismissed(suggestions, { a: Number.NaN }).length, 2);
+  assert.equal(filterDismissed(suggestions, { a: Date.now() + 60_000 }).length, 2);
+});
+
 test('dismissals persist and buildSuggestions caps + filters', async () => {
-  const paths = { root: await fs.mkdtemp(path.join(os.tmpdir(), 'lg-smart-')) };
+  const root = path.join(os.tmpdir(), `lg-smart-${Date.now()}-${Math.random()}`);
+  const paths = { root };
   await dismissSuggestion(paths, 'organize-downloads');
   const loaded = await loadDismissed(paths);
   assert.ok(loaded['organize-downloads']);

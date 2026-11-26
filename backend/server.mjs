@@ -14,7 +14,7 @@ import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
 import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
 import { networkUsageSummary, perAppUsage, recordNetworkSample, totalInterfaceBytes } from './network-monitor.mjs';
-import { buildSuggestions, dismissSuggestion, loadDismissed } from './smart-assist.mjs';
+import { buildSuggestions, dismissSuggestion, loadDismissed, storageFreePercentFromMetrics } from './smart-assist.mjs';
 import {
   deleteKnowledge,
   ensureKnowledgeSeeded,
@@ -484,24 +484,22 @@ export function createAgentServer({
     // Do not read ~/Downloads just to count files for a suggestion: on macOS that
     // raises the folder-permission dialog at launch, before the user asked for
     // anything. The agent reads the folder only when a turn actually needs it.
+    const storageFreePercent = storageFreePercentFromMetrics(cachedMetrics);
     const [diskStat, scheduleEntries, dismissed] = await Promise.all([
-      cachedMetrics?.disks?.[0]
+      storageFreePercent !== null
         ? Promise.resolve(null)
         : fs.statfs(os.homedir()).catch(() => null),
       loadSchedule(paths).catch(() => []),
       loadDismissed(paths).catch(() => ({})),
     ]);
 
-    let storageFreePercent = null;
-    if (cachedMetrics?.disks?.[0]?.usedPercent !== undefined) {
-      storageFreePercent = Math.max(0, 100 - Number(cachedMetrics.disks[0].usedPercent));
-    } else if (diskStat && diskStat.blocks > 0) {
-      storageFreePercent = (diskStat.bavail / diskStat.blocks) * 100;
-    }
+    const resolvedStorageFreePercent =
+      storageFreePercent ??
+      (diskStat && diskStat.blocks > 0 ? (diskStat.bavail / diskStat.blocks) * 100 : null);
 
     const snap = {
       hourOfDay: new Date().getHours(),
-      storageFreePercent,
+      storageFreePercent: resolvedStorageFreePercent,
       // Left null on purpose: see the note above the statfs call.
       downloadsCount: null,
       emailCount: cachedBriefing?.email?.ok ? Number(cachedBriefing.email.count ?? 0) : null,
@@ -834,6 +832,25 @@ export function createAgentServer({
           if (oldest) previewArtifacts.delete(oldest);
         }
         return sendJson(res, 200, { ok: true, id, previewUrl: `/preview-sandbox/${id}` });
+      }
+
+      // Deep link into the right Privacy & Security pane. macOS folder access can
+      // only be granted by a human, so the UI offers this instead of repeating a
+      // dialog the app cannot dismiss.
+      if (req.method === 'POST' && pathname === '/api/system/privacy-pane') {
+        const body = await readJsonBody(req);
+        const panes = {
+          allfiles: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+          filesandfolders: 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
+          automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation',
+          accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        };
+        const target = panes[String(body.pane || '')];
+        if (!target) {
+          return sendJson(res, 400, { ok: false, error: 'Unknown privacy pane.' });
+        }
+        spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+        return sendJson(res, 200, { ok: true, opened: String(body.pane) });
       }
 
       // Quick reminders from the Dashboard (delegates to the macOS notification reminder tool)
@@ -1655,6 +1672,32 @@ export function createAgentServer({
   };
 }
 
+/**
+ * Keep the agent backend alive through stray async errors. A fire-and-forget
+ * promise or a bug in one background task must not take down the whole app the
+ * user is relying on. Log the failure to stderr (captured by the host for
+ * diagnosis) and keep serving. Returns the handlers plus an uninstall hook so
+ * the behaviour is testable without tripping the test runner's own listeners.
+ */
+export function installProcessSafetyNets(log = console.error) {
+  const onRejection = (reason) => {
+    log('LocalGravity: unhandled promise rejection (kept alive):', reason?.stack || reason);
+  };
+  const onException = (err) => {
+    log('LocalGravity: uncaught exception (kept alive):', err?.stack || err);
+  };
+  process.on('unhandledRejection', onRejection);
+  process.on('uncaughtException', onException);
+  return {
+    onRejection,
+    onException,
+    uninstall() {
+      process.removeListener('unhandledRejection', onRejection);
+      process.removeListener('uncaughtException', onException);
+    },
+  };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const runtimePaths = getRuntimePaths();
   // Respect the saved setting instead of forcing the notifier on at every launch.
@@ -1706,4 +1749,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Last line of defence: never let a stray async error silently kill the app.
+  installProcessSafetyNets();
 }
