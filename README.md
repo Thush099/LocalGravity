@@ -2,6 +2,8 @@
 
 # LocalGravity
 
+[![CI](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml/badge.svg)](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml)
+
 **A native macOS AI command center for local Ollama and cloud models — zero npm dependencies.**
 
 [![CI](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml/badge.svg)](https://github.com/Thush099/LocalGravity/actions/workflows/ci.yml)
