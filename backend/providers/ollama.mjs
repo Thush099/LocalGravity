@@ -460,6 +460,14 @@ export async function streamOllamaChat({
         }
       }
 
+      // Local models occasionally emit malformed tool-call markup, and Ollama's
+      // chat-template parser turns that into a 500. Re-asking usually parses, so
+      // retry once here instead of failing an otherwise good turn.
+      if (res.status >= 500 && /XML syntax error|malformed (tool|function)|parse error/i.test(errText)) {
+        res = await postChat(true, activeModel);
+        if (!res.ok) errText = await res.text();
+      }
+
       if (!res.ok) {
         if (res.status === 400 && /does not support thinking/i.test(errText)) {
           res = await postChat(false, activeModel);

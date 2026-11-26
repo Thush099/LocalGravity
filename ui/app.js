@@ -5,7 +5,7 @@ import { createOllamaWarmupRequester } from './lib/ollama-warmup.js';
 import { describeRuntimeState, getLivePhase } from './lib/live-status.js';
 import { buildPaletteItems } from './lib/palette.js';
 import { debounce } from './lib/utils.js';
-import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage } from './lib/performance.js';
+import { getPerformanceMetrics, perfSummary, recordLatency, recordTokenUsage, getModelSpeeds, recordModelSpeed } from './lib/performance.js';
 import {
   renderMemoryDonut,
   renderNetworkDonut,
@@ -184,6 +184,7 @@ const HUMAN_TOOL_META = {
   open_app: { label: 'Open App', summarize: (a) => a.name || '' },
   manage_notes: { label: 'Apple Notes', summarize: (a) => `${a.action || 'list'}${a.title ? ` · ${a.title}` : ''}` },
   set_reminder: { label: 'Set Reminder', summarize: (a) => `${a.seconds || 0}s` },
+  cancel_reminder: { label: 'Cancel Reminder', summarize: (a) => a.message || a.id || '' },
   system_stats: { label: 'System Stats', summarize: () => 'CPU, RAM, GPU & Swap' },
   briefing: { label: 'Situational Briefing', summarize: (a) => a.focus || 'System & schedule' },
   network_usage: { label: 'Network Usage', summarize: () => 'Data used per app & this month' },
@@ -669,9 +670,13 @@ function describeModelRuntime() {
   return describeRuntimeState(state.config || {}, state.presets || {}, state.health || {});
 }
 
+let suggestionRequestId = 0;
+
 async function refreshSuggestions() {
+  const requestId = ++suggestionRequestId;
   try {
     const data = await apiRequest('/api/suggestions');
+    if (requestId !== suggestionRequestId) return;
     state.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     renderSmartAssist();
   } catch {
@@ -739,6 +744,7 @@ async function refreshBriefing(force = false) {
     state.briefingAt = Date.now();
     renderBriefing();
     renderNetwork();
+    refreshSuggestions();
   } catch {
     // Keep the last briefing; the next refresh retries.
   } finally {
@@ -1130,6 +1136,7 @@ function renderMonitor() {
 async function refreshSystemMetrics() {
   try {
     const data = await apiRequest('/api/system/metrics');
+    const hadMetrics = Boolean(state.metrics);
     state.metrics = data.metrics || null;
     if (Array.isArray(data.history) && data.history.length > 0) {
       state.metricsHistory = data.history;
@@ -1143,8 +1150,10 @@ async function refreshSystemMetrics() {
       });
       if (state.metricsHistory.length > 60) state.metricsHistory.shift();
     }
-    if (state.view === 'dashboard') renderDashboard();
-    else if (state.view === 'monitor') renderMonitor();
+    if (state.view === 'dashboard') {
+      renderDashboard();
+      if (!hadMetrics) refreshSuggestions();
+    } else if (state.view === 'monitor') renderMonitor();
   } catch {
     // Keep the last snapshot; the next tick retries.
   }
@@ -1845,6 +1854,23 @@ function buildToolBodyHtml(tool) {
   return `<pre class="tool-body">${escapeHtml(JSON.stringify(tool.arguments || {}, null, 2))}</pre>`;
 }
 
+/**
+ * macOS blocks protected folders (Downloads, Desktop, Documents) with a system
+ * dialog the app cannot click. When a tool reports that denial, point at the one
+ * place a human can grant it permanently instead of silently failing again.
+ */
+function permissionHintHtml(tool) {
+  const output = String(tool.output || '');
+  if (!output || tool.status === 'running') return '';
+  const denied =
+    /(?:not authorized|operation not permitted|permission denied|errno -1|tcc|full disk access)/i.test(output);
+  if (!denied) return '';
+  return `<div class="permission-note">
+    <span>macOS blocked a protected folder for this action. Grant it once; LocalGravity's signature is stable now, so it stays granted.</span>
+    <button type="button" class="permission-btn" data-privacy-pane="allfiles">Open Privacy settings</button>
+  </div>`;
+}
+
 function formatToolDisplayMeta(tool) {
   const meta = HUMAN_TOOL_META[tool.name];
   const label = meta ? meta.label : tool.name;
@@ -1908,6 +1934,7 @@ function buildToolsHtml(tools = []) {
             <span class="tool-head-right">${durationHtml}<span class="tool-badge ${badgeCls}">${badgeLabel}</span></span>
           </div>
           ${buildToolBodyHtml(t)}
+          ${permissionHintHtml(t)}
           ${thumbs}
           ${approvalHtml}
         </div>`;
@@ -1973,6 +2000,13 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
     return `<div class="msg-row"><div class="msg-user-wrap"><div class="msg-user">${escapeHtml(textOnly)}${attachTag}</div><div class="user-msg-actions"><button type="button" class="msg-action-btn user-copy-btn" data-idx="${idx}">Copy</button><button type="button" class="msg-action-btn user-edit-btn" data-idx="${idx}">Edit &amp; re-run</button><button type="button" class="msg-action-btn user-fork-btn" data-idx="${idx}">Branch</button></div></div></div>`;
   }
 
+  const hasVisibleText = Boolean(String(item.content || '').trim());
+  // A silent turn used to render as an empty bubble with no actions, which read
+  // like the app had frozen. Say what happened and offer the retry.
+  const blankReplyHtml =
+    !item.isStreaming && !hasVisibleText
+      ? '<div class="md-body empty-reply-note">No written reply came back from the model. Regenerate to try again.</div>'
+      : '';
   const thinkingCombined = (item.thinking || []).join('').trim();
   const thinkingHtml = formatThinkingHtml(thinkingCombined, item.isStreaming && !item.content);
 
@@ -2002,7 +2036,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
   const provLabel = provKey === 'ollama' ? 'Local' : state.presets?.[provKey]?.label?.split(' ')[0] || provKey;
   const isSpeaking = state.speakingMessageIndex === idx;
 
-  const showActions = (!item.isStreaming && item.content) || item.isError;
+  const showActions = !item.isStreaming || item.isError;
   const actionsHtml = showActions
     ? `<div class="msg-actions">
         <button type="button" class="msg-action-btn retry-turn-btn" data-idx="${idx}">Regenerate</button>
@@ -2037,7 +2071,7 @@ function buildDisplayItemHtml(item, idx, isLastCompleted = false) {
         <div class="live-thinking-slot">${thinkingHtml}</div>
         <div class="live-tools-slot">${toolsSummaryHtml}${toolsHtml}</div>
         <div class="live-self-improved-slot">${selfImprovedHtml}</div>
-        <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}</div>
+        <div class="live-md-slot">${item.content ? `<div class="md-body">${renderMarkdown(item.content)}</div>` : ''}${blankReplyHtml}</div>
         ${actionsHtml}
         ${buildFollowupChipsHtml(item, idx, isLastCompleted)}
       </div>
@@ -2410,6 +2444,12 @@ function renderQueuedBar() {
  * for debugging but shown last.
  */
 const ERROR_HINTS = [
+  // Specific before generic: these messages also contain "Ollama", so they must
+  // not be reported as "the local model is not responding".
+  [/XML syntax error|malformed (tool|function)|closed by <\//i, {
+    title: 'The model produced a malformed tool call.',
+    hint: 'It is retried automatically — send it again if this one failed, or switch to a smaller model.',
+  }],
   [/ECONNREFUSED|connection refused|fetch failed|ENOTFOUND|EAI_AGAIN|network|ollama/i, {
     title: "The local model isn't responding.",
     hint: 'Make sure Ollama is running — use "Start / Check Ollama" in Models & Settings.',
@@ -2624,6 +2664,12 @@ async function sendPrompt(overridePayload = null) {
             if (Number.isFinite(evt.usage.durationMs)) recordLatency(evt.usage.durationMs);
             const totalTok = (Number(evt.usage.promptTokens) || 0) + (Number(evt.usage.completionTokens) || 0);
             if (totalTok > 0) recordTokenUsage(totalTok);
+            if (evt.usage.model && Number(evt.usage.completionTokens) > 0) {
+              recordModelSpeed(evt.usage.model, {
+                durationMs: Number(evt.usage.durationMs),
+                completionTokens: Number(evt.usage.completionTokens),
+              });
+            }
           }
           return;
         } else if (evt.type === 'error') {
@@ -2684,16 +2730,25 @@ function renderModelPopover() {
   const currentProv = state.config?.provider || 'ollama';
   const currentModel = state.config?.model || 'qwen3.5:4b';
 
+  const speeds = getModelSpeeds();
+  const fastestModel = Object.entries(speeds)
+    .filter(([, entry]) => Number(entry?.tps) > 0)
+    .sort((a, b) => Number(b[1].tps) - Number(a[1].tps))[0]?.[0];
   const localItems =
     ollamaModels.length > 0
       ? ollamaModels
-          .map(
-            (m) => `
+          .map((m) => {
+            // Show the speed this Mac actually measured, not a spec sheet number.
+            // It is the only honest way to answer "is 9B worth the wait?".
+            const tps = Number(speeds[m.name]?.tps) || 0;
+            const speedText = tps > 0 ? ` · ~${tps.toFixed(1)} tok/s` : '';
+            const fastestTag = fastestModel === m.name && tps > 0 ? ' · fastest' : '';
+            return `
           <button type="button" class="popover-item ${currentProv === 'ollama' && currentModel === m.name ? 'selected' : ''}" data-provider="ollama" data-model="${escapeHtml(m.name)}">
             <span>${escapeHtml(m.name)}</span>
-            <small>${formatBytes(m.size)}</small>
-          </button>`
-          )
+            <small>${formatBytes(m.size)}${speedText}${fastestTag}</small>
+          </button>`;
+          })
           .join('')
       : `<div class="status-sub" style="padding:6px 10px;">No local models pulled yet (pull qwen3.5:9b in Settings)</div>`;
 
@@ -3951,14 +4006,7 @@ function wireEvents() {
       const id = dismissBtn.dataset.dismissSug;
       state.suggestions = (state.suggestions || []).filter((s) => s.id !== id);
       renderSmartAssist();
-      apiRequest('/api/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ id }) })
-        .then((res) => {
-          if (Array.isArray(res.suggestions)) {
-            state.suggestions = res.suggestions;
-            renderSmartAssist();
-          }
-        })
-        .catch(() => {});
+      apiRequest('/api/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ id }) }).catch(() => {});
       return;
     }
     const runBtn = e.target.closest('[data-run-sug]');
@@ -4107,6 +4155,19 @@ function wireEvents() {
 
   // Single delegated event listener on #chat-messages so buttons work smoothly even while streaming
   $('#chat-messages').addEventListener('click', async (e) => {
+    const privacyBtn = e.target.closest('[data-privacy-pane]');
+    if (privacyBtn) {
+      try {
+        await apiRequest('/api/system/privacy-pane', {
+          method: 'POST',
+          body: JSON.stringify({ pane: privacyBtn.dataset.privacyPane || 'allfiles' }),
+        });
+        showToast('Opened Privacy & Security settings');
+      } catch (err) {
+        showToast(err.message || 'Could not open Privacy settings.');
+      }
+      return;
+    }
     const copyCodeBtn = e.target.closest('.copy-code-btn');
     if (copyCodeBtn) {
       navigator.clipboard.writeText(copyCodeBtn.dataset.code || '');
@@ -5031,6 +5092,13 @@ async function init() {
   // number that matters to a desktop app; paint entries can lag when the window
   // launches behind another app.
   state.uiReadyMs = performance.now();
+  // Preload the configured local model while the user reads the dashboard.
+  // Without this the first prompt paid the whole model load (one measured turn
+  // spent ~120 s before its first token); the requester is idempotent, so focus
+  // and this call collapse into one request.
+  if (state.config?.provider === 'ollama' && state.config?.model) {
+    setTimeout(() => requestOllamaWarmup(state.config.model).catch(() => {}), 1500);
+  }
 }
 
 init().catch((err) => showToast(err.message));
