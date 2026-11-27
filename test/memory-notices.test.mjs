@@ -97,7 +97,7 @@ test('the loop leaves ordinary turns free of memory notices', async (t) => {
 
   await runAgentTurn({
     session,
-    userMessage: 'what is 2 + 2?',
+    userMessage: 'please explain how the water cycle works',
     paths,
     providerConfig: { provider: 'ollama', model: 'test-model', safetyMode: 'auto' },
     persistSession: false,
@@ -105,5 +105,6 @@ test('the loop leaves ordinary turns free of memory notices', async (t) => {
     chatFn: scriptedChat([{ content: '4', toolCalls: [] }], seen),
   });
 
+  assert.ok(seen.length > 0, 'the turn must reach the model for this check to mean anything');
   assert.ok(!seen[0].join('\n').includes('[Memory]'), 'no notice when nothing was captured');
 });
