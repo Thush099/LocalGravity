@@ -15,6 +15,18 @@ final class GravityWebView: WKWebView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func mouseDown(with event: NSEvent) {
+        // The window uses .fullSizeContentView, so this web view covers the
+        // titlebar and swallows its drag. Drag the window from the empty top
+        // strip instead; clicks below stay normal web interaction.
+        let loc = convert(event.locationInWindow, from: nil)
+        if loc.y > bounds.height - 30, event.clickCount == 1 {
+            window?.performDrag(with: event)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
             return .copy

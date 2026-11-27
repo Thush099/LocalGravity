@@ -4577,9 +4577,9 @@ html.is-macos-native body {
 
 html.is-macos-native .sidebar {
   padding-top: 42px;
-  background: color-mix(in srgb, var(--bg-sidebar) 56%, transparent);
-  backdrop-filter: saturate(180%) blur(28px);
-  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  background: color-mix(in srgb, var(--bg-sidebar) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(40px);
+  -webkit-backdrop-filter: saturate(180%) blur(40px);
 }
 
 html.is-macos-native .workspace {
@@ -4589,12 +4589,13 @@ html.is-macos-native .workspace {
 html.is-macos-native .workspace-header {
   padding-top: 14px;
   min-height: 54px;
-  background: color-mix(in srgb, var(--bg-sidebar) 58%, transparent);
-  backdrop-filter: saturate(180%) blur(28px);
-  -webkit-backdrop-filter: saturate(180%) blur(28px);
+  background: color-mix(in srgb, var(--bg-sidebar) 90%, transparent);
+  backdrop-filter: saturate(180%) blur(40px);
+  -webkit-backdrop-filter: saturate(180%) blur(40px);
 }
 
-/* Frosted-glass cards let the desktop blur read through the whole surface. */
+/* Refined glass: cards stay mostly opaque and readable, with just a soft
+   hint of the desktop blur at the edges. */
 html.is-macos-native .dash-card,
 html.is-macos-native .stat-tile,
 html.is-macos-native .hero-tile,
@@ -4611,9 +4612,9 @@ html.is-macos-native .skill-card,
 html.is-macos-native .session-card,
 html.is-macos-native .agenda-item,
 html.is-macos-native .modal-card {
-  background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
-  backdrop-filter: blur(28px) saturate(1.7);
-  -webkit-backdrop-filter: blur(28px) saturate(1.7);
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  backdrop-filter: blur(40px) saturate(1.5);
+  -webkit-backdrop-filter: blur(40px) saturate(1.5);
 }
 
 html.is-macos-native .app-shell.sidebar-collapsed .workspace-header {
