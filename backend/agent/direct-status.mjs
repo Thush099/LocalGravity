@@ -17,7 +17,7 @@ const DIAGNOSTIC_RE =
 
 /**
  * @param {string} message
- * @returns {'memory'|'disk'|'battery'|'uptime'|null} which metric a direct question asks for
+ * @returns {'memory'|'disk'|'battery'|'uptime'|'processes'|'top_cpu'|'top_memory'|null} which metric a direct question asks for
  */
 export function detectSystemStatusMetric(message) {
   const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
@@ -35,6 +35,24 @@ export function detectSystemStatusMetric(message) {
   if (diskLike && (howMuch || stateWord)) return 'disk';
   if (/\bbattery\b/.test(t) && (howMuch || stateWord)) return 'battery';
   if (/\buptime\b/.test(t) || /\bhow long has (?:my |this |the )?(?:mac|computer|machine|laptop)\b/.test(t)) return 'uptime';
+
+  // Running processes and resource hogs are read-only listings, not diagnoses.
+  if (
+    /\b(?:memory|ram)\s+hogs?\b/.test(t) ||
+    /\bwhat(?:'s|\s+is|\s+are)?\s+(?:using|eating|hogging|taking)\s+(?:up\s+)?(?:my\s+|the\s+)?(?:memory|ram)\b/.test(t) ||
+    /\b(?:biggest|top|largest)\s+(?:memory|ram)\b/.test(t)
+  ) return 'top_memory';
+  if (
+    /\b(?:cpu|processor)\s+hogs?\b/.test(t) ||
+    /\bwhat(?:'s|\s+is|\s+are)?\s+(?:using|eating|hogging|taking)\s+(?:up\s+)?(?:my\s+|the\s+)?(?:cpu|processor)\b/.test(t) ||
+    /\b(?:biggest|top|largest)\s+(?:cpu|processor)\b/.test(t)
+  ) return 'top_cpu';
+  if (
+    /\bwhat(?:'s|\s+is|\s+are)?\s+(?:currently\s+)?(?:running|open)\b/.test(t) ||
+    /\bwhat\s+(?:apps?|programs?|processes?)\s+(?:are\s+)?(?:running|open)\b/.test(t) ||
+    /\b(?:running|open)\s+(?:apps?|programs?|processes?)\b/.test(t) ||
+    /\btop\s+processes?\b/.test(t)
+  ) return 'processes';
   return null;
 }
 
@@ -43,7 +61,7 @@ function gb(bytes) {
 }
 
 /**
- * @param {'memory'|'disk'|'battery'|'uptime'} metric
+ * @param {'memory'|'disk'|'battery'|'uptime'|'processes'|'top_cpu'|'top_memory'} metric
  * @param {object} snapshot a collectSystemSnapshot() result
  * @returns {string|null}
  */
@@ -74,6 +92,16 @@ export function formatSystemStatus(metric, snapshot) {
     const mins = Math.floor((up % 3600) / 60);
     const since = new Date(Date.now() - up * 1000).toLocaleString();
     return `Up **${days}d ${hours}h ${mins}m** (since ${since}).`;
+  }
+  if (metric === 'processes' || metric === 'top_cpu' || metric === 'top_memory') {
+    const list = (metric === 'top_memory' ? snapshot.processesByMemory : snapshot.processes) || [];
+    if (!list.length) return 'No process information available.';
+    const label =
+      metric === 'top_memory' ? 'Top memory users' : metric === 'top_cpu' ? 'Top CPU users' : 'Top processes by CPU';
+    const rows = list
+      .slice(0, 5)
+      .map((p) => `- ${p.command}: ${p.cpuPercent ?? '?'}% CPU, ${p.memPercent ?? '?'}% RAM`);
+    return `${label}:\n${rows.join('\n')}`;
   }
   return null;
 }

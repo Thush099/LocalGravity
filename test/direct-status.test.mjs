@@ -93,3 +93,41 @@ test('formats a local-weather answer with the real conditions', () => {
   assert.equal(formatWeather({ ok: false, error: 'offline' }), null);
   assert.equal(formatWeather({ ok: true, temp: null }), null);
 });
+
+test('detects running-process and resource-hog questions', () => {
+  assert.equal(detectSystemStatusMetric('what apps are running'), 'processes');
+  assert.equal(detectSystemStatusMetric("what's running right now"), 'processes');
+  assert.equal(detectSystemStatusMetric('top processes'), 'processes');
+  assert.equal(detectSystemStatusMetric('what is using my memory'), 'top_memory');
+  assert.equal(detectSystemStatusMetric('memory hogs'), 'top_memory');
+  assert.equal(detectSystemStatusMetric("what's eating my ram"), 'top_memory');
+  assert.equal(detectSystemStatusMetric('top cpu processes'), 'top_cpu');
+  assert.equal(detectSystemStatusMetric('what is using my cpu'), 'top_cpu');
+});
+
+test('process-hog questions stay with the model for diagnosis or advice', () => {
+  assert.equal(detectSystemStatusMetric('why is my ram full'), null);
+  assert.equal(detectSystemStatusMetric('how do I free up memory'), null);
+  assert.equal(detectSystemStatusMetric('close some apps to save memory'), null);
+});
+
+test('formats running-process and resource-hog answers', () => {
+  const snapshot = {
+    processes: [
+      { pid: 1, command: 'WindowServer', cpuPercent: 21.3, memPercent: 4.2, rssBytes: 800000000 },
+      { pid: 2, command: 'Chrome', cpuPercent: 12.1, memPercent: 18.4, rssBytes: 3500000000 },
+    ],
+    processesByMemory: [
+      { pid: 2, command: 'Chrome', cpuPercent: 12.1, memPercent: 18.4, rssBytes: 3500000000 },
+      { pid: 1, command: 'WindowServer', cpuPercent: 21.3, memPercent: 4.2, rssBytes: 800000000 },
+    ],
+  };
+  const proc = formatSystemStatus('processes', snapshot);
+  assert.match(proc, /Top processes by CPU/);
+  assert.match(proc, /WindowServer/);
+  assert.match(proc, /21\.3% CPU/);
+  const mem = formatSystemStatus('top_memory', snapshot);
+  assert.match(mem, /Top memory users/);
+  assert.match(mem, /Chrome/);
+  assert.equal(formatSystemStatus('processes', { processes: [] }), 'No process information available.');
+});
