@@ -14,6 +14,7 @@ import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import { answerDirectSystemStatus, answerDirectWeather } from './direct-status.mjs';
+import { matchNamedHomeList } from '../tools/fast-answer.mjs';
 import {
   loadLearnedFixesExcerpt,
   normalizeToolCall,
@@ -251,13 +252,17 @@ export async function runAgentTurn({
     }
   }
 
-  if (
-    provider === 'ollama' &&
-    attachments.length === 0 &&
-    DIRECT_DIRECTORY_LIST_RE.test(fullUserText)
-  ) {
+  const directListPath = (() => {
+    if (provider !== 'ollama' || attachments.length > 0) return null;
+    const named = matchNamedHomeList(fullUserText);
+    if (named) return path.join(os.homedir(), named.label);
+    if (DIRECT_DIRECTORY_LIST_RE.test(fullUserText)) return cwd || os.homedir();
+    return null;
+  })();
+
+  if (directListPath) {
     const toolCallId = `direct_list_${Date.now().toString(36)}`;
-    const args = { path: cwd || os.homedir(), recursive: false, max_entries: 50 };
+    const args = { path: directListPath, recursive: false, max_entries: 50 };
     onEvent?.({ type: 'tool_call', toolCallId, name: 'list_dir', arguments: args });
     const result = await executeToolCall({ name: 'list_dir', args }, { paths, cwd });
     onEvent?.({ type: 'tool_result', toolCallId, name: 'list_dir', ok: result.ok, output: result.output });
@@ -281,7 +286,9 @@ export async function runAgentTurn({
         : `The ${directoryName} folder is empty.`;
     const usage = {
       durationMs: Math.max(1, Date.now() - turnStartedAt),
-      model: providerConfig.model || '',
+      // Direct listing answers without the model; report no model, like the
+      // other deterministic fast-paths, so usage stays honest.
+      model: '',
     };
     session.messages.push({ role: 'assistant', content, usage, createdAt: new Date().toISOString() });
     session.updatedAt = new Date().toISOString();

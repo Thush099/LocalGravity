@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tryFastAnswer } from '../backend/tools/fast-answer.mjs';
+import { tryFastAnswer, matchNamedHomeList } from '../backend/tools/fast-answer.mjs';
 
 test('answers pure arithmetic instantly', () => {
   const r = tryFastAnswer('calculate 25*4+7');
@@ -80,4 +80,21 @@ test('ignores empty and over-long input', () => {
   assert.equal(tryFastAnswer(''), null);
   assert.equal(tryFastAnswer('   '), null);
   assert.equal(tryFastAnswer('calculate 1+1 ' + 'x'.repeat(300)), null);
+});
+
+test('matchNamedHomeList shortcuts clear home-folder listing requests', () => {
+  assert.equal(matchNamedHomeList('List the files in my Downloads folder')?.label, 'Downloads');
+  assert.equal(matchNamedHomeList("What's in Documents?")?.label, 'Documents');
+  assert.equal(matchNamedHomeList('Show me the contents of Desktop')?.label, 'Desktop');
+});
+
+test('matchNamedHomeList stays null for ambiguous, complex, or non-listing input', () => {
+  // Named folder outside the whitelist is ambiguous -> model.
+  assert.equal(matchNamedHomeList('What is in this folder named archive?'), null);
+  // Complexity qualifiers need reasoning -> model.
+  assert.equal(matchNamedHomeList('List the contents recursively in this folder'), null);
+  assert.equal(matchNamedHomeList('list files in Downloads sorted by size'), null);
+  // No listing intent -> model.
+  assert.equal(matchNamedHomeList("What's happening here?"), null);
+  assert.equal(matchNamedHomeList('move Downloads to the trash'), null);
 });

@@ -10,6 +10,41 @@
  */
 import { evaluateExpression, extractPureCalculation } from './calc-tool.mjs';
 
+// Standard home subfolders we can list instantly. Named folders outside this
+// whitelist ("this folder named archive") stay ambiguous and fall to the model.
+const HOME_FOLDERS = {
+  downloads: 'Downloads', desktop: 'Desktop', documents: 'Documents',
+  pictures: 'Pictures', photos: 'Pictures', movies: 'Movies', music: 'Music',
+  applications: 'Applications', public: 'Public',
+};
+
+// Extra qualifiers mean the request wants more than a plain top-level list —
+// sorting, recursion, filtering, or a date/size window — so it needs the model.
+const LIST_COMPLEXITY_RE =
+  /\b(recursive\w*|subfolders?|subdirectories|sort(?:ed|ing)?|by\s+(?:size|name|date|kind)|largest|biggest|smallest|newest|oldest|recent\w*|hidden|from\s+(?:last|the)\s+(?:week|month|day|year)|older\s+than|newer\s+than|larger\s+than|smaller\s+than|filter\w*|matching|except|excluding|\w+\.(?:pdf|jpg|png|docx?|xlsx?|zip|txt))\b/i;
+
+/**
+ * Detect a simple, unambiguous request to list a standard home folder
+ * ("List the files in my Downloads folder", "What's in Documents?").
+ * Returns `{ name, label }` for the resolved home subfolder, or `null` to let
+ * the model handle it. Read-only and conservative: a fixed folder whitelist,
+ * clear listing intent, and no complexity qualifiers.
+ */
+export function matchNamedHomeList(message) {
+  const text = String(message || '').trim();
+  if (!text || text.length > 80) return null;
+  if (LIST_COMPLEXITY_RE.test(text)) return null;
+  const intent =
+    /\b(?:list|show|what(?:'s|\s+is|\s+are)?\s+(?:in|inside|are\s+in)|contents?\s+of|files?\s+(?:in|of))\b/i;
+  if (!intent.test(text)) return null;
+  const folder =
+    /\b(downloads?|desktop|documents?|pictures?|photos|movies|music|applications?|public)\b/i;
+  const m = text.match(folder);
+  if (!m) return null;
+  const label = HOME_FOLDERS[m[1].toLowerCase().replace(/s$/, '')] || HOME_FOLDERS[m[1].toLowerCase()];
+  return label ? { name: m[1], label } : null;
+}
+
 const NUM_RE = '(\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?)';
 const WORD_RE = '([a-z]+)';
 
