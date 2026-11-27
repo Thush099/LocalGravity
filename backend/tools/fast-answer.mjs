@@ -82,8 +82,12 @@ function convert(value, fromRaw, toRaw) {
 
 function fmtNumber(n) {
   if (!Number.isFinite(n)) return String(n);
-  const rounded = Math.abs(n) >= 100 ? Math.round(n * 100) / 100 : Math.round(n * 1e6) / 1e6;
-  return String(rounded);
+  if (n === 0) return '0';
+  const abs = Math.abs(n);
+  // Cap at 5 significant digits and drop trailing zeros so conversions read
+  // cleanly ("37.778 c" not "37.777778 c"). Extreme magnitudes use exponential.
+  if (abs >= 1e12 || abs < 1e-9) return n.toExponential(3);
+  return String(Number(n.toPrecision(5)));
 }
 
 function matchConversion(text) {
