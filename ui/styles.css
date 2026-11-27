@@ -2947,11 +2947,29 @@ button, input, textarea, select {
 }
 
 .dash-runtime-card {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .dash-runtime-card .dash-card-head {
   margin-bottom: 0;
+  /* Two actions under memory pressure don't fit beside the title at half-width.
+     Stack the summary full-width above the buttons so neither is squeezed. */
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.dash-runtime-card .dash-card-head > div:first-child {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.dash-runtime-card .dash-card-head .toolbar-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.dash-runtime-card .dash-card-head .secondary-btn {
+  white-space: nowrap;
 }
 
 .segmented-tabs-sm {
@@ -3200,9 +3218,10 @@ button, input, textarea, select {
   margin-bottom: 0;
 }
 
-/* The runtime summary is a status bar — give it the full width below the grid. */
+/* Mac snapshot + Local AI runtime are both compact status cards. Share the last
+   row instead of leaving one card alone beside an empty half-row. */
 .dash-grid > .dash-runtime-card {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 /* The Today hero: briefing + network, front and center on open. The briefing is wider;
