@@ -4577,7 +4577,7 @@ html.is-macos-native body {
 
 html.is-macos-native .sidebar {
   padding-top: 42px;
-  background: rgba(17, 19, 24, 0.52);
+  background: color-mix(in srgb, var(--bg-sidebar) 56%, transparent);
   backdrop-filter: saturate(180%) blur(28px);
   -webkit-backdrop-filter: saturate(180%) blur(28px);
 }
@@ -4589,9 +4589,9 @@ html.is-macos-native .workspace {
 html.is-macos-native .workspace-header {
   padding-top: 14px;
   min-height: 54px;
-  background: rgba(17, 19, 24, 0.55);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  background: color-mix(in srgb, var(--bg-sidebar) 58%, transparent);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
 }
 
 /* Frosted-glass cards let the desktop blur read through the whole surface. */
@@ -4611,7 +4611,7 @@ html.is-macos-native .skill-card,
 html.is-macos-native .session-card,
 html.is-macos-native .agenda-item,
 html.is-macos-native .modal-card {
-  background: rgba(21, 24, 31, 0.52);
+  background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
   backdrop-filter: blur(28px) saturate(1.7);
   -webkit-backdrop-filter: blur(28px) saturate(1.7);
 }
