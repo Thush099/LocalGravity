@@ -4570,24 +4570,50 @@ button,
   user-select: none;
 }
 
+html.is-macos-native,
 html.is-macos-native body {
   background: transparent;
 }
 
 html.is-macos-native .sidebar {
   padding-top: 42px;
-  background: var(--bg-sidebar-translucent);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  background: rgba(17, 19, 24, 0.52);
+  backdrop-filter: saturate(180%) blur(28px);
+  -webkit-backdrop-filter: saturate(180%) blur(28px);
 }
 
 html.is-macos-native .workspace {
-  background: var(--bg-canvas);
+  background: transparent;
 }
 
 html.is-macos-native .workspace-header {
   padding-top: 14px;
   min-height: 54px;
+  background: rgba(17, 19, 24, 0.55);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+}
+
+/* Frosted-glass cards let the desktop blur read through the whole surface. */
+html.is-macos-native .dash-card,
+html.is-macos-native .stat-tile,
+html.is-macos-native .hero-tile,
+html.is-macos-native .suggestion-card,
+html.is-macos-native .smart-assist-card,
+html.is-macos-native .quick-card,
+html.is-macos-native .card,
+html.is-macos-native .settings-section,
+html.is-macos-native .provider-card,
+html.is-macos-native .superpower-card,
+html.is-macos-native .plan-panel,
+html.is-macos-native .tool-card,
+html.is-macos-native .skill-card,
+html.is-macos-native .session-card,
+html.is-macos-native .agenda-item,
+html.is-macos-native .modal-card {
+  background: rgba(21, 24, 31, 0.52);
+  backdrop-filter: blur(28px) saturate(1.7);
+  -webkit-backdrop-filter: blur(28px) saturate(1.7);
 }
 
 html.is-macos-native .app-shell.sidebar-collapsed .workspace-header {
