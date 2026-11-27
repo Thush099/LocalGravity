@@ -114,3 +114,25 @@ test('a single data-hungry app is called out by name', () => {
   assert.ok(!suggestActions({}).some((s) => s.id === 'data-hog'));
 });
 
+test('suggests freeing RAM under memory pressure', () => {
+  const urgent = suggestActions({ memoryUsedPercent: 92, swapUsedGB: 3 }).find((s) => s.id === 'free-ram');
+  assert.ok(urgent);
+  assert.equal(urgent.tone, 'urgent');
+  assert.match(urgent.detail, /3\.0 GB is spilling/);
+  assert.ok(urgent.action);
+
+  const warn = suggestActions({ memoryUsedPercent: 84, swapUsedGB: 2 }).find((s) => s.id === 'free-ram');
+  assert.equal(warn?.tone, 'warn');
+
+  // Heavy swap alone counts as pressure even when used% reads just under 80.
+  const swapOnly = suggestActions({ memoryUsedPercent: 79, swapUsedGB: 8 }).find((s) => s.id === 'free-ram');
+  assert.ok(swapOnly, 'heavy swap surfaces pressure even below 80% used');
+  assert.equal(swapOnly.tone, 'warn');
+  assert.match(swapOnly.title, /Recent memory crunch/, 'framed around the swap, not the recovered used%');
+
+  // Quiet when there is no pressure, or high usage without real swapping.
+  assert.ok(!suggestActions({ memoryUsedPercent: 50, swapUsedGB: 0 }).some((s) => s.id === 'free-ram'));
+  assert.ok(!suggestActions({ memoryUsedPercent: 84, swapUsedGB: 0.2 }).some((s) => s.id === 'free-ram'));
+  assert.ok(!suggestActions({}).some((s) => s.id === 'free-ram'));
+});
+

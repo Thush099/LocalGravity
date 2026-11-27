@@ -262,7 +262,7 @@ export async function emailSummary({ limit = 25 } = {}) {
       count: 0,
       error: denied
         ? 'Mail access is not authorized yet. Enable LocalGravity under System Settings → Privacy & Security → Automation → Mail, then ask again.'
-        : `Could not read Mail: ${result.error}`,
+        : 'Couldn\u2019t read Mail right now. Make sure Mail is open and try again.',
     };
   }
   const messages = result.output
@@ -327,6 +327,9 @@ export async function fetchApproxLocation() {
   }
 }
 
+const WEATHER_CACHE_TTL_MS = 10 * 60 * 1000; // weather shifts slowly; reuse for 10 min
+const weatherResultCache = new Map(); // "lat,lon" -> { at, result }
+
 export async function weatherSummary({ lat, lon, city } = {}) {
   try {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -334,6 +337,11 @@ export async function weatherSummary({ lat, lon, city } = {}) {
       if (!loc) return { ok: false, error: 'Could not determine an approximate location for weather.' };
       ({ lat, lon } = loc);
       city = city || loc.city;
+    }
+    const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    const hit = weatherResultCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < WEATHER_CACHE_TTL_MS) {
+      return { ...hit.result, city: city || hit.result.city };
     }
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}` +
@@ -345,7 +353,7 @@ export async function weatherSummary({ lat, lon, city } = {}) {
     const data = await res.json();
     const cur = data.current || {};
     const daily = data.daily || {};
-    return {
+    const result = {
       ok: true,
       city: city || '',
       temp: Number.isFinite(Number(cur.temperature_2m)) ? Math.round(Number(cur.temperature_2m)) : null,
@@ -356,6 +364,8 @@ export async function weatherSummary({ lat, lon, city } = {}) {
       low: Number.isFinite(Number(daily.temperature_2m_min?.[0])) ? Math.round(Number(daily.temperature_2m_min[0])) : null,
       wind: Number.isFinite(Number(cur.wind_speed_10m)) ? Math.round(Number(cur.wind_speed_10m)) : null,
     };
+    weatherResultCache.set(cacheKey, { at: Date.now(), result });
+    return result;
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }

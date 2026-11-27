@@ -2947,11 +2947,29 @@ button, input, textarea, select {
 }
 
 .dash-runtime-card {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .dash-runtime-card .dash-card-head {
   margin-bottom: 0;
+  /* Two actions under memory pressure don't fit beside the title at half-width.
+     Stack the summary full-width above the buttons so neither is squeezed. */
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.dash-runtime-card .dash-card-head > div:first-child {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.dash-runtime-card .dash-card-head .toolbar-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.dash-runtime-card .dash-card-head .secondary-btn {
+  white-space: nowrap;
 }
 
 .segmented-tabs-sm {
@@ -3200,9 +3218,10 @@ button, input, textarea, select {
   margin-bottom: 0;
 }
 
-/* The runtime summary is a status bar — give it the full width below the grid. */
+/* Mac snapshot + Local AI runtime are both compact status cards. Share the last
+   row instead of leaving one card alone beside an empty half-row. */
 .dash-grid > .dash-runtime-card {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 /* The Today hero: briefing + network, front and center on open. The briefing is wider;
@@ -3223,15 +3242,15 @@ button, input, textarea, select {
 
 .net-flex {
   display: flex;
-  gap: 22px;
+  gap: 16px;
   align-items: center;
   margin-top: 14px;
   flex-wrap: wrap;
 }
 
 .net-flex .donut-svg {
-  width: 184px;
-  height: 184px;
+  width: 132px;
+  height: 132px;
   flex: none;
 }
 
@@ -3576,6 +3595,10 @@ button, input, textarea, select {
 
 .donut-legend-label {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-secondary);
 }
 
@@ -4547,24 +4570,51 @@ button,
   user-select: none;
 }
 
+html.is-macos-native,
 html.is-macos-native body {
   background: transparent;
 }
 
 html.is-macos-native .sidebar {
   padding-top: 42px;
-  background: var(--bg-sidebar-translucent);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  background: color-mix(in srgb, var(--bg-sidebar) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(40px);
+  -webkit-backdrop-filter: saturate(180%) blur(40px);
 }
 
 html.is-macos-native .workspace {
-  background: var(--bg-canvas);
+  background: transparent;
 }
 
 html.is-macos-native .workspace-header {
   padding-top: 14px;
   min-height: 54px;
+  background: color-mix(in srgb, var(--bg-sidebar) 90%, transparent);
+  backdrop-filter: saturate(180%) blur(40px);
+  -webkit-backdrop-filter: saturate(180%) blur(40px);
+}
+
+/* Refined glass: cards stay mostly opaque and readable, with just a soft
+   hint of the desktop blur at the edges. */
+html.is-macos-native .dash-card,
+html.is-macos-native .stat-tile,
+html.is-macos-native .hero-tile,
+html.is-macos-native .suggestion-card,
+html.is-macos-native .smart-assist-card,
+html.is-macos-native .quick-card,
+html.is-macos-native .card,
+html.is-macos-native .settings-section,
+html.is-macos-native .provider-card,
+html.is-macos-native .superpower-card,
+html.is-macos-native .plan-panel,
+html.is-macos-native .tool-card,
+html.is-macos-native .skill-card,
+html.is-macos-native .session-card,
+html.is-macos-native .agenda-item,
+html.is-macos-native .modal-card {
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  backdrop-filter: blur(40px) saturate(1.5);
+  -webkit-backdrop-filter: blur(40px) saturate(1.5);
 }
 
 html.is-macos-native .app-shell.sidebar-collapsed .workspace-header {
@@ -4730,17 +4780,9 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(140% 110% at 0% 0%, color-mix(in srgb, var(--tile) 16%, transparent) 0%, transparent 62%),
+    radial-gradient(140% 110% at 0% 0%, color-mix(in srgb, var(--tile) 8%, transparent) 0%, transparent 58%),
     var(--bg-surface);
-  border-color: color-mix(in srgb, var(--tile) 24%, var(--border-subtle));
-}
-
-.stat-tile::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--tile) 0%, color-mix(in srgb, var(--tile) 30%, transparent) 55%, transparent 100%);
+  border-color: color-mix(in srgb, var(--tile) 15%, var(--border-subtle));
 }
 
 .stat-tile:hover {
@@ -4777,17 +4819,9 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(120% 130% at 100% 0%, color-mix(in srgb, var(--hero) 17%, transparent) 0%, transparent 58%),
+    radial-gradient(120% 130% at 100% 0%, color-mix(in srgb, var(--hero) 8%, transparent) 0%, transparent 55%),
     var(--bg-surface);
-  border-color: color-mix(in srgb, var(--hero) 22%, var(--border-subtle));
-}
-
-.dash-hero .dash-card::after {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--hero) 0%, color-mix(in srgb, var(--hero) 32%, transparent) 58%, transparent 100%);
+  border-color: color-mix(in srgb, var(--hero) 15%, var(--border-subtle));
 }
 
 .dash-card-title {
@@ -4814,18 +4848,14 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
 .smart-assist-card {
   --tone: var(--accent);
   position: relative;
-  padding-left: 16px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 12%, var(--bg-surface)) 0%, var(--bg-surface) 72%);
-  border-color: color-mix(in srgb, var(--tone) 22%, var(--border-subtle));
-  border-left: 3px solid color-mix(in srgb, var(--tone) 78%, transparent);
-  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  background: color-mix(in srgb, var(--tone) 5%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--tone) 16%, var(--border-subtle));
+  transition: transform 140ms ease, border-color 140ms ease;
 }
 
 .smart-assist-card:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--tone) 38%, var(--border-subtle));
-  border-left-color: var(--tone);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--tone) 12%, transparent);
+  border-color: color-mix(in srgb, var(--tone) 30%, var(--border-subtle));
 }
 
 .smart-assist-card[data-tone="urgent"] { --tone: var(--signal-red); }
@@ -4930,10 +4960,7 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
 }
 
 #dash-greeting {
-  background: linear-gradient(96deg, var(--text-primary) 0%, color-mix(in srgb, var(--accent) 78%, var(--text-primary)) 82%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--text-primary);
 }
 
 

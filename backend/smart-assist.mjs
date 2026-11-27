@@ -49,6 +49,8 @@ export function suggestActions(state = {}) {
     scheduledToday = null,
     monthNetworkGB = null,
     topApp = null,
+    memoryUsedPercent = null,
+    swapUsedGB = null,
   } = state;
   const out = [];
 
@@ -69,6 +71,34 @@ export function suggestActions(state = {}) {
         detail: 'A quick clean-up keeps things running smoothly.',
         action: 'Show me the biggest files and folders I could archive or delete.',
         actionLabel: 'Review storage',
+      }));
+    }
+  }
+
+  // Memory pressure slows everything down — especially the local AI model, which
+  // needs gigabytes of free RAM to run instead of swapping to disk. Surfacing it
+  // is the single biggest lever on why answers feel slow.
+  if (memoryUsedPercent != null) {
+    const swapGB = Number(swapUsedGB) || 0;
+    const swapping = swapGB > 1;
+    const critical = memoryUsedPercent >= 90;
+    const usedTight = memoryUsedPercent >= 80 && swapping;
+    // Swap this deep means the machine has been thrashing — worth surfacing even after
+    // used% recovers below 80. Frame the message around whichever signal actually fired.
+    if (critical || usedTight || swapGB >= 3) {
+      const current = critical || usedTight;
+      out.push(suggestion({
+        id: 'free-ram',
+        tone: critical ? 'urgent' : 'warn',
+        priority: 92,
+        title: current ? `Memory is tight (${memoryUsedPercent.toFixed(0)}% used)` : `Recent memory crunch (${swapGB.toFixed(1)} GB in swap)`,
+        detail: current
+          ? swapping
+            ? `About ${swapGB.toFixed(1)} GB is spilling to disk, so apps — including the local AI model — run slowly.`
+            : 'Closing a big app will make everything snappier, including the local AI.'
+          : `The Mac recently ran short on memory and pushed ${swapGB.toFixed(1)} GB to disk, so apps crawled. Closing a big app keeps the local AI at full speed.`,
+        action: 'Show me what is using my memory right now.',
+        actionLabel: 'See memory hogs',
       }));
     }
   }

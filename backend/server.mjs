@@ -10,7 +10,7 @@ import zlib from 'node:zlib';
 import { INSTANT_ACTION_IDS, runInstantAction } from './actions.mjs';
 import { setAppForeground } from './tools/macos-tool.mjs';
 import { compactConversation } from './agent/compactor.mjs';
-import { evaluateExpression, extractPureCalculation } from './tools/calc-tool.mjs';
+import { tryFastAnswer } from './tools/fast-answer.mjs';
 import { runAgentTurn } from './agent/loop.mjs';
 import { removeAllLaunchAgents, setAutomationSchedule } from './automations.mjs';
 import { emailSummary, fetchWorldNews, weatherSummary } from './daily-briefing.mjs';
@@ -490,6 +490,19 @@ export function createAgentServer({
 
   const computeSuggestions = async () => {
     await ensureBriefingDiskCacheLoaded();
+    // The memory-pressure rule needs memory/swap figures, which otherwise only arrive via
+    // /api/system/metrics. Collect once if that cache is still empty so a fresh launch
+    // surfaces RAM pressure instead of silently skipping the suggestion.
+    if (!cachedMetrics) {
+      await collectSystemMetrics()
+        .then((m) => {
+          if (m) {
+            cachedMetrics = m;
+            cachedMetricsAt = Date.now();
+          }
+        })
+        .catch(() => {});
+    }
     // Do not read ~/Downloads just to count files for a suggestion: on macOS that
     // raises the folder-permission dialog at launch, before the user asked for
     // anything. The agent reads the folder only when a turn actually needs it.
@@ -518,6 +531,11 @@ export function createAgentServer({
           ? Number(cachedBriefing.network.monthBytes) / 1024 ** 3
           : null,
       topApp: (cachedBriefing?.network?.monthApps || []).find((a) => Number(a?.total) > 0) || null,
+      memoryUsedPercent: cachedMetrics?.memory?.usedPercent ?? null,
+      swapUsedGB:
+        cachedMetrics?.memory?.swap?.usedBytes != null
+          ? Number(cachedMetrics.memory.swap.usedBytes) / 1024 ** 3
+          : null,
     };
     return buildSuggestions(snap, dismissed, { limit: 4 });
   };
@@ -1137,16 +1155,16 @@ export function createAgentServer({
             }
           };
 
-          // Deterministic fast-path: a pure calculation is answered instantly on
-          // device with no model round-trip, so quick maths never stalls on slow
-          // local inference. Anything ambiguous falls through to the model.
-          const pureExpr = extractPureCalculation(body.message || '');
-          if (pureExpr && !(Array.isArray(body.attachments) && body.attachments.length) && !body.instantAction) {
+          // Deterministic fast-path: arithmetic, unit conversions, percentages,
+          // and the current time/date are answered instantly on device with no
+          // model round-trip, so quick lookups never stall on slow local
+          // inference. Anything ambiguous falls through to the model.
+          const fast = (!Array.isArray(body.attachments) || !body.attachments.length) && !body.instantAction
+            ? tryFastAnswer(body.message || '')
+            : null;
+          if (fast) {
             const startedAt = Date.now();
-            const computed = evaluateExpression(pureExpr);
-            const content = computed.ok
-              ? `\`${pureExpr}\` = **${computed.formatted}**`
-              : `Could not compute \`${pureExpr}\`: ${computed.error}`;
+            const content = fast.answer;
             const usage = { durationMs: Date.now() - startedAt, model: '' };
             if (!Array.isArray(session.messages)) session.messages = [];
             session.messages.push({ role: 'user', content: String(body.message || '').trim(), createdAt: new Date().toISOString() });
@@ -1154,7 +1172,7 @@ export function createAgentServer({
             session.updatedAt = new Date().toISOString();
             await saveSession(session, paths).catch(() => {});
             emitSse({ type: 'text_delta', text: content });
-            emitSse({ type: 'done', status: computed.ok ? 'completed' : 'error', usage });
+            emitSse({ type: 'done', status: fast.ok ? 'completed' : 'error', usage });
             res.end();
             return;
           }

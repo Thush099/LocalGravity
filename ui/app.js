@@ -137,6 +137,7 @@ const INSTANT_ACTIONS = [
   { id: 'schedule_today', label: 'Today’s schedule', desc: 'Timetable entries for today' },
   { id: 'organize_plan', label: 'Organize preview', desc: 'Preview how loose files would sort, without moving anything' },
   { id: 'docker_ps', label: 'Docker status', desc: 'List running containers' },
+  { id: 'top_processes', label: 'Memory & CPU hogs', desc: 'What is eating your RAM and CPU right now — close a big one to speed up the local AI' },
 ];
 
 const SLASH_COMMANDS = [
@@ -814,7 +815,7 @@ function renderNetwork() {
   const monthApps = (net.monthApps || []).filter((a) => Number(a?.total) > 0);
   const usingMonth = monthApps.length > 0;
   const donut = renderNetworkDonut(usingMonth ? monthApps : net.topApps || [], {
-    size: 188,
+    size: 132,
     centerLabel: usingMonth ? 'this month' : 'since launch',
   });
   const bars = renderNetworkHistoryChart(net.history || {}, { month: net.month || '' });

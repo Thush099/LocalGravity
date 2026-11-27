@@ -4,6 +4,10 @@ import path from 'node:path';
 import { executeToolCall } from './tools/registry.mjs';
 import { getRuntimePaths } from './state/paths.mjs';
 import { recentFileMoves } from './state/file-journal.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Instant actions run entirely on-device with no model round-trip. They are a fixed,
@@ -528,6 +532,32 @@ const ACTIONS = {
       }
       if (dirs.length === 0) return 'No Downloads or Desktop folder found.';
       return largestFilesReport(dirs, { limit: 15 });
+    },
+  },
+  top_processes: {
+    title: 'Memory & CPU hogs',
+    async run() {
+      let rows = [];
+      try {
+        const { stdout } = await execFileAsync('ps', ['-A', '-o', 'rss=,pcpu=,pid=,comm='], { maxBuffer: 8 * 1024 * 1024 });
+        rows = stdout
+          .split('\n')
+          .map((line) => line.trim().split(/\s+/))
+          .filter((parts) => parts.length >= 4 && Number.isFinite(Number(parts[0])));
+      } catch {
+        return 'Could not read the process table.';
+      }
+      const shortName = (p) => p.slice(3).join(' ').split('/').pop();
+      const fmt = (p) => `  ${String(Math.round(Number(p[0]) / 1024)).padStart(5)} MB  ${String(Number(p[1]).toFixed(1)).padStart(5)}% CPU  ${shortName(p)}`;
+      const byMem = [...rows].sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, 8);
+      const byCpu = rows.filter((p) => Number(p[1]) > 0.5).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 5);
+      return [
+        'Top memory consumers (RAM is the local-model speed bottleneck — closing a big one speeds up every task):',
+        ...byMem.map(fmt),
+        '',
+        'Top CPU consumers:',
+        ...(byCpu.length ? byCpu.map(fmt) : ['  (nothing above 0.5% CPU right now)']),
+      ].join('\n');
     },
   },
 };

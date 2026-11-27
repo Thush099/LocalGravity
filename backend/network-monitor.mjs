@@ -33,10 +33,12 @@ export function parseNettop(text) {
     if (!trimmed) continue;
     const parts = trimmed.split(',');
     if (!parts[0]) continue; // header row has an empty first field
-    const name = parts[0].replace(/\.\d+$/, ''); // drop the trailing .pid
+    const pidMatch = /^(.*)\.(\d+)$/.exec(parts[0]);
+    const name = pidMatch ? pidMatch[1] : parts[0]; // drop the trailing .pid
+    const pid = pidMatch ? Number(pidMatch[2]) : null;
     const bytesIn = Number(parts[1]) || 0;
     const bytesOut = Number(parts[2]) || 0;
-    rows.push({ name, bytesIn, bytesOut });
+    rows.push({ name, pid, bytesIn, bytesOut });
   }
   return rows;
 }
@@ -69,6 +71,32 @@ function isPhysicalInterface(name) {
   return /^(en|eth|wl|wlan)\d/i.test(name);
 }
 
+// nettop truncates long process names to ~15 chars ("DeepAI Code Helper" comes back as
+// "DeepAI Code Hel"), but its .PID suffix is exact. Resolve each PID to the executable's
+// base name once via `ps` so callers see real names, not cut-off ones. Returns an empty
+// map on failure, which leaves the (truncated) nettop names as a graceful fallback.
+async function processNamesByPid(execFileFn) {
+  try {
+    const { stdout } = await execFileFn('ps', ['-A', '-o', 'pid=,comm='], {
+      timeout: EXEC_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const map = new Map();
+    for (const line of String(stdout ?? '').split('\n')) {
+      const trimmed = line.trim();
+      const sp = trimmed.indexOf(' ');
+      if (sp < 1) continue;
+      const pid = Number(trimmed.slice(0, sp));
+      const comm = trimmed.slice(sp + 1).trim();
+      const base = comm.split('/').pop() || comm;
+      if (pid && base) map.set(pid, base);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
 /** Per-process network usage (cumulative since each process started), largest first. */
 export async function perAppUsage({ limit = 12, execFileFn = execFileAsync, bypassCache = false } = {}) {
   const isDefaultExec = execFileFn === execFileAsync;
@@ -83,16 +111,20 @@ export async function perAppUsage({ limit = 12, execFileFn = execFileAsync, bypa
 
   perAppInFlight = (async () => {
     try {
-      const { stdout } = await execFileFn('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
-        timeout: EXEC_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      const [{ stdout }, pidNames] = await Promise.all([
+        execFileFn('nettop', ['-P', '-L', '1', '-x', '-J', 'bytes_in,bytes_out'], {
+          timeout: EXEC_TIMEOUT_MS,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+        processNamesByPid(execFileFn),
+      ]);
       const byName = new Map();
       for (const row of parseNettop(stdout)) {
-        const cur = byName.get(row.name) || { name: row.name, bytesIn: 0, bytesOut: 0 };
+        const name = (row.pid && pidNames.get(row.pid)) || row.name;
+        const cur = byName.get(name) || { name, bytesIn: 0, bytesOut: 0 };
         cur.bytesIn += row.bytesIn;
         cur.bytesOut += row.bytesOut;
-        byName.set(row.name, cur);
+        byName.set(name, cur);
       }
       const apps = [...byName.values()]
         .map((a) => ({ ...a, total: a.bytesIn + a.bytesOut }))
@@ -237,6 +269,37 @@ export function foldUsageSample(state, { total = 0, apps = [] } = {}, now = new 
 }
 
 /**
+ * Before process names were resolved from nettop's .pid, long names were folded into the
+ * running totals cut off at 15 chars, so a key like "DeepAI Code Hel" sat next to its full
+ * form "DeepAI Code Helper" and split a month's totals across both spellings. Fold each
+ * truncated key into the full name that starts with it. Pure: mutates and returns state.
+ */
+export function reconcileAppNames(state, apps = []) {
+  const fullNames = [...new Set(apps.map((a) => a.name))];
+  const rename = new Map();
+  for (const bucket of [state.apps, state.lastApps]) {
+    for (const key of Object.keys(bucket || {})) {
+      if (fullNames.includes(key) || rename.has(key)) continue;
+      const match = fullNames.find((f) => f.startsWith(key) && f !== key);
+      if (match) rename.set(key, match);
+    }
+  }
+  for (const [from, to] of rename) {
+    if (state.apps && from in state.apps) {
+      state.apps[to] = (state.apps[to] || 0) + state.apps[from];
+      delete state.apps[from];
+    }
+    if (state.lastApps && from in state.lastApps) {
+      // lastApps holds cumulative counter baselines, not additive deltas: keep the
+      // destination's own baseline if it already exists, else carry the old one over.
+      if (state.lastApps[to] == null) state.lastApps[to] = state.lastApps[from];
+      delete state.lastApps[from];
+    }
+  }
+  return state;
+}
+
+/**
  * Record one live usage sample: gather current interface + per-app counters and fold
  * them into the persisted running totals.
  */
@@ -252,6 +315,7 @@ export async function recordNetworkSample({ stateFile } = {}) {
     // No prior state yet — first sample seeds the baseline with a zero delta.
   }
 
+  reconcileAppNames(state, apps);
   state = foldUsageSample(state, { total, apps }, new Date());
 
   await fs.mkdir(path.dirname(file), { recursive: true });
