@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSystemStatusMetric, formatSystemStatus, detectWeatherQuery, formatWeather } from '../backend/agent/direct-status.mjs';
+import { detectSystemStatusMetric, formatSystemStatus, detectWeatherQuery, formatWeather, detectOnDemandLookup, answerDirectSystemStatus } from '../backend/agent/direct-status.mjs';
 
 test('detects direct system-status questions', () => {
   assert.equal(detectSystemStatusMetric('how much RAM is free'), 'memory');
@@ -130,4 +130,22 @@ test('formats running-process and resource-hog answers', () => {
   assert.match(mem, /Top memory users/);
   assert.match(mem, /Chrome/);
   assert.equal(formatSystemStatus('processes', { processes: [] }), 'No process information available.');
+});
+
+test('detects single-value system lookups that skip the model', () => {
+  assert.equal(detectOnDemandLookup('what is my ip address'), 'ip');
+  assert.equal(detectOnDemandLookup('my ip'), 'ip');
+  assert.equal(detectOnDemandLookup('local ip'), 'ip');
+  assert.equal(detectOnDemandLookup('what is the macos version'), 'os_version');
+  assert.equal(detectOnDemandLookup('macos version'), 'os_version');
+  assert.equal(detectOnDemandLookup('what is my computer name'), 'computer_name');
+  assert.equal(detectOnDemandLookup('hostname'), 'computer_name');
+});
+
+test('leaves how-to and diagnosis questions to the model', async () => {
+  // "how do I find my IP" wants instructions, not the value.
+  assert.equal(await answerDirectSystemStatus('how do I find my ip address'), null);
+  assert.equal(await answerDirectSystemStatus('why is my mac so slow'), null);
+  // Not every noun phrase is a lookup request.
+  assert.equal(detectOnDemandLookup('the server ip address is wrong'), null);
 });

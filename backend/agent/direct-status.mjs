@@ -9,11 +9,18 @@
  * "close apps to speed up") returns null and falls through to the model, which
  * is what should reason about it.
  */
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { collectSystemMetrics } from '../system-monitor.mjs';
 import { weatherSummary } from '../daily-briefing.mjs';
 
+const run = promisify(execFile);
+
 const DIAGNOSTIC_RE =
   /\b(why|how come|slow|sluggish|fix|speed|clean|free up|close|quit|kill|increase|reduce|optimize|draining|drain|improve|better|should|best|make|cause|reason)\b/i;
+
+// "how do I find my IP" asks for instructions, not the value — leave those to the model.
+const HOW_TO_RE = /\bhow\s+(?:do|can|to|would|should|could)\b/i;
 
 /**
  * @param {string} message
@@ -22,7 +29,7 @@ const DIAGNOSTIC_RE =
 export function detectSystemStatusMetric(message) {
   const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
   if (!t || t.length > 80) return null;
-  if (DIAGNOSTIC_RE.test(t)) return null;
+  if (DIAGNOSTIC_RE.test(t) || HOW_TO_RE.test(t)) return null;
 
   const howMuch = /\bhow much\b/.test(t);
   const stateWord = /\b(free|left|remaining|available|usage|used|level|percentage|percent|status|charge|do i have)\b/.test(t);
@@ -53,6 +60,32 @@ export function detectSystemStatusMetric(message) {
     /\b(?:running|open)\s+(?:apps?|programs?|processes?)\b/.test(t) ||
     /\btop\s+processes?\b/.test(t)
   ) return 'processes';
+  return null;
+}
+
+// Single-value system lookups answered on demand (each one command, no model).
+export function detectOnDemandLookup(t) {
+  if (/\b(?:my|local|this)\s+(?:ip|ip\s+address)\b/.test(t)) return 'ip';
+  if (/\b(?:macos|mac\s+os|os)\s+version\b/.test(t)) return 'os_version';
+  if (/\b(?:computer|machine|device|host)\s*name\b/.test(t) || /\bhostname\b/.test(t)) return 'computer_name';
+  return null;
+}
+
+// Each lookup is one read-only command; return null on failure so the model can answer.
+async function lookupSystemValue(metric) {
+  const exec = async (cmd, args) => (await run(cmd, args).catch(() => ({ stdout: '' }))).stdout.trim();
+  if (metric === 'ip') {
+    const ip = await exec('/usr/sbin/ipconfig', ['getifaddr', 'en0']);
+    return ip ? `Local IP: **${ip}**.` : null;
+  }
+  if (metric === 'os_version') {
+    const version = await exec('/usr/bin/sw_vers', ['-productVersion']);
+    return version ? `macOS **${version}**.` : null;
+  }
+  if (metric === 'computer_name') {
+    const name = await exec('/usr/sbin/scutil', ['--get', 'ComputerName']);
+    return name ? `This Mac is named **${name}**.` : null;
+  }
   return null;
 }
 
@@ -113,6 +146,14 @@ export function formatSystemStatus(metric, snapshot) {
  * @returns {Promise<{ answer: string } | null>}
  */
 export async function answerDirectSystemStatus(message) {
+  const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  if (!HOW_TO_RE.test(t) && !DIAGNOSTIC_RE.test(t)) {
+    const onDemand = detectOnDemandLookup(t);
+    if (onDemand) {
+      const answer = await lookupSystemValue(onDemand);
+      if (answer) return { answer };
+    }
+  }
   const metric = detectSystemStatusMetric(message);
   if (!metric) return null;
   const snapshot = await collectSystemMetrics({ sampleMs: 0 }).catch(() => null);
