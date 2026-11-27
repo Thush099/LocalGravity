@@ -673,6 +673,12 @@ function describeModelRuntime() {
 
 let suggestionRequestId = 0;
 
+function showPanelError(selector, label) {
+  const el = $(selector);
+  if (!el) return;
+  el.innerHTML = `<div class="panel-error" role="alert">Couldn’t load ${label} — will retry on the next refresh.</div>`;
+}
+
 async function refreshSuggestions() {
   const requestId = ++suggestionRequestId;
   try {
@@ -681,7 +687,10 @@ async function refreshSuggestions() {
     state.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     renderSmartAssist();
   } catch {
-    // Keep existing suggestions silently if unavailable
+    // Keep existing suggestions silently if unavailable; surface a first-load failure.
+    if (!state.suggestions || state.suggestions.length === 0) {
+      showPanelError('#dash-smart-assist', 'suggestions');
+    }
   }
 }
 
@@ -1156,7 +1165,10 @@ async function refreshSystemMetrics() {
       if (!hadMetrics) refreshSuggestions();
     } else if (state.view === 'monitor') renderMonitor();
   } catch {
-    // Keep the last snapshot; the next tick retries.
+    // Keep the last snapshot; surface a first-load failure.
+    if (!state.metrics) {
+      showPanelError('#dash-stats', 'system metrics');
+    }
   }
 }
 
@@ -1264,7 +1276,10 @@ async function loadSchedule() {
     renderScheduleWeek();
     renderSidebarBadges();
   } catch {
-    // Keep the last known schedule; the next view switch retries.
+    // Keep the last known schedule; surface a first-load failure.
+    if (!state.schedule || state.schedule.length === 0) {
+      showPanelError('#dash-agenda', 'the schedule');
+    }
   }
 }
 

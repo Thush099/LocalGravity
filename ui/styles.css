@@ -5060,3 +5060,12 @@ html.is-macos-native .app-shell.sidebar-collapsed #view-settings .view-header {
   border-color: color-mix(in srgb, var(--signal-red) 42%, transparent);
   background: color-mix(in srgb, var(--signal-red) 12%, transparent);
 }
+
+.panel-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--signal-red);
+  background: color-mix(in srgb, var(--signal-red) 10%, transparent);
+}
