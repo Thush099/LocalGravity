@@ -14,7 +14,7 @@ import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import { answerDirectSystemStatus, answerDirectWeather } from './direct-status.mjs';
-import { matchNamedHomeList } from '../tools/fast-answer.mjs';
+import { matchNamedHomeList, tryFastAnswer } from '../tools/fast-answer.mjs';
 import {
   loadLearnedFixesExcerpt,
   normalizeToolCall,
@@ -240,7 +240,10 @@ export async function runAgentTurn({
   // "battery level", "how long has this been up") are single lookups needing no
   // interpretation, so answer them on device without waiting on local inference.
   if (provider === 'ollama' && attachments.length === 0) {
-    const statusAnswer = (await answerDirectSystemStatus(fullUserText)) || (await answerDirectWeather(fullUserText));
+    const statusAnswer =
+      (await answerDirectSystemStatus(fullUserText)) ||
+      (await answerDirectWeather(fullUserText)) ||
+      tryFastAnswer(fullUserText);
     if (statusAnswer) {
       const usage = { durationMs: Math.max(1, Date.now() - turnStartedAt), model: '' };
       session.messages.push({ role: 'assistant', content: statusAnswer.answer, usage, createdAt: new Date().toISOString() });

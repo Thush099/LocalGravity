@@ -81,6 +81,38 @@ test('runAgentTurn fulfills a simple current-folder listing without a model roun
   assert.ok(events.some((event) => event.type === 'done' && event.status === 'completed'));
 });
 
+test('runAgentTurn answers pure arithmetic on device without a model round-trip', async (t) => {
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-direct-calc-'));
+  t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
+  const paths = getRuntimePaths(tmpRoot);
+
+  let chatCalls = 0;
+  const events = [];
+  const session = { id: 'direct-calc', title: 'Direct calc', messages: [] };
+  const result = await runAgentTurn({
+    session,
+    userMessage: 'What is 37*19+5?',
+    paths,
+    cwd: tmpRoot,
+    providerConfig: { provider: 'ollama', model: 'qwen3.5:9b', safetyMode: 'auto' },
+    persistSession: false,
+    chatFn: async () => {
+      chatCalls++;
+      throw new Error('A pure calculation should not call the model');
+    },
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(chatCalls, 0);
+  const response = result.session.messages.at(-1);
+  assert.equal(response.role, 'assistant');
+  assert.match(response.content, /708/);
+  assert.equal(response.usage.model, '');
+  assert.ok(events.some((event) => event.type === 'text_delta' && /708/.test(event.text)));
+  assert.ok(events.some((event) => event.type === 'done' && event.status === 'completed'));
+});
+
 test('runAgentTurn shortcuts only explicit current-folder listing phrasing', async (t) => {
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lg-list-phrases-'));
   t.after(() => fs.rm(tmpRoot, { recursive: true, force: true }));
