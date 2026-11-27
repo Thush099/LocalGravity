@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRss, rankNews, weatherDescription, summarizeEmailDigest } from '../backend/daily-briefing.mjs';
+import { parseRss, rankNews, weatherDescription, summarizeEmailDigest, weatherSummary } from '../backend/daily-briefing.mjs';
 
 // Real BBC RSS shape: <item> with CDATA-wrapped <title>/<description>, plain <link>/<pubDate>.
 const RSS_FIXTURE = `<rss version="2.0"><channel><title>World</title>
@@ -82,4 +82,32 @@ test('summarizeEmailDigest keeps an all-bulk inbox out of the thread list', () =
   assert.equal(bulkOnly.total, 1);
   assert.equal(bulkOnly.threads.length, 0, 'bulk-only senders are not surfaced as threads');
   assert.ok(bulkOnly.summary.includes('1 new email'), bulkOnly.summary);
+});
+test('weatherSummary caches the result so repeat lookups skip the network', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        current: { temperature_2m: 29, apparent_temperature: 32, weather_code: 0, wind_speed_10m: 10 },
+        daily: { temperature_2m_max: [32], temperature_2m_min: [25] },
+      }),
+    };
+  };
+  try {
+    const lat = 6.93;
+    const lon = 79.85;
+    const first = await weatherSummary({ lat, lon, city: 'Colombo' });
+    const second = await weatherSummary({ lat, lon, city: 'Colombo' });
+    assert.equal(first.ok, true);
+    assert.equal(first.temp, 29);
+    assert.equal(second.temp, 29);
+    assert.equal(second.city, 'Colombo');
+    assert.equal(fetchCalls, 1); // second call served from the cache, no network
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
