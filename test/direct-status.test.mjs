@@ -149,3 +149,10 @@ test('leaves how-to and diagnosis questions to the model', async () => {
   // Not every noun phrase is a lookup request.
   assert.equal(detectOnDemandLookup('the server ip address is wrong'), null);
 });
+
+test('detects the connected wifi network lookup', () => {
+  assert.equal(detectOnDemandLookup('what is my wifi'), 'wifi');
+  assert.equal(detectOnDemandLookup('what network am i connected to'), 'wifi');
+  assert.equal(detectOnDemandLookup('my wifi network'), 'wifi');
+  assert.equal(detectOnDemandLookup('the wifi network is down'), null);
+});

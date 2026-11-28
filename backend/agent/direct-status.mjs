@@ -68,6 +68,10 @@ export function detectOnDemandLookup(t) {
   if (/\b(?:my|local|this)\s+(?:ip|ip\s+address)\b/.test(t)) return 'ip';
   if (/\b(?:macos|mac\s+os|os)\s+version\b/.test(t)) return 'os_version';
   if (/\b(?:computer|machine|device|host)\s*name\b/.test(t) || /\bhostname\b/.test(t)) return 'computer_name';
+  // Wi-Fi name only for a clear lookup; a status report ("my wifi is down") goes to the model.
+  if (/\b(?:down|not\s+working|broken|slow|disconnect|no\s+internet|dropping)\b/.test(t)) return null;
+  if (/\b(?:my|this|current)\s+(?:wifi|wi-fi|wireless|network)\b/.test(t) ||
+      /\bnetwork\s+(?:am i|are we|do i)\s+(?:connected|on)\b/.test(t)) return 'wifi';
   return null;
 }
 
@@ -85,6 +89,11 @@ async function lookupSystemValue(metric) {
   if (metric === 'computer_name') {
     const name = await exec('/usr/sbin/scutil', ['--get', 'ComputerName']);
     return name ? `This Mac is named **${name}**.` : null;
+  }
+  if (metric === 'wifi') {
+    const out = await exec('/usr/sbin/networksetup', ['-getairportnetwork', 'en0']);
+    const ssid = out.includes(':') ? out.split(':').slice(1).join(':').trim() : '';
+    return ssid && !/not associated|off/i.test(ssid) ? `Connected to Wi-Fi **${ssid}**.` : null;
   }
   return null;
 }
