@@ -92,8 +92,9 @@ async function lookupSystemValue(metric) {
   }
   if (metric === 'wifi') {
     const out = await exec('/usr/sbin/networksetup', ['-getairportnetwork', 'en0']);
+    if (/not associated|off/i.test(out)) return "This Mac isn't connected to Wi-Fi right now.";
     const ssid = out.includes(':') ? out.split(':').slice(1).join(':').trim() : '';
-    return ssid && !/not associated|off/i.test(ssid) ? `Connected to Wi-Fi **${ssid}**.` : null;
+    return ssid ? `Connected to Wi-Fi **${ssid}**.` : null;
   }
   return null;
 }
