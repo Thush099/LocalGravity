@@ -845,10 +845,21 @@ function renderNetwork() {
   const legendNote = usingMonth
     ? ''
     : '<div class="net-legend-note">Per-app totals build up while LocalGravity runs.</div>';
-  const emptyHint =
-    !hasTraffic && !Number(net.monthBytes || 0)
-      ? '<div class="net-empty-hint">No traffic sampled yet — this fills in after the first five-minute sample.</div>'
-      : '';
+  const emptyHint = (() => {
+    if (!hasTraffic && !Number(net.monthBytes || 0)) {
+      return '<div class="net-empty-hint">No traffic sampled yet — this fills in after the first five-minute sample.</div>';
+    }
+    // A month that only has a few recorded days (the app started tracking
+    // mid-month) reads as broken unless we say so. Name the start date so the
+    // empty leading days look intentional rather than like missing data.
+    const activeDays = Object.keys(net.history || {}).filter((k) => Number(net.history[k]) > 0).sort();
+    const first = activeDays[0] || '';
+    if (first && !first.endsWith('-01') && activeDays.length < 20) {
+      const since = new Date(first).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `<div class="net-empty-hint">Daily totals recorded since ${escapeHtml(since)}.</div>`;
+    }
+    return '';
+  })();
   const speedMbps = state.lastSpeedMbps ?? net.lastSpeedMbps ?? null;
   el.innerHTML = `
     <div class="net-flex">
