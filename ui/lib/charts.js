@@ -423,6 +423,12 @@ export function renderNetworkHistoryChart(history = {}, { month = '', width = 52
     values.push({ day: d, bytes: Math.max(0, Number(history?.[key]) || 0) });
   }
   const max = Math.max(1, ...values.map((v) => v.bytes));
+  // One huge day (a big download, a backup) shouldn't crush every other bar to a
+  // sliver. If the top day dwarfs the runner-up, scale by a lower reference and
+  // clamp the outlier to full height so ordinary days stay readable.
+  const nonzero = values.map((v) => v.bytes).filter((b) => b > 0).sort((a, b) => b - a);
+  const second = nonzero[1] || 0;
+  const scaleRef = second > 0 && max > second * 3 ? second * 2 : max;
   const baseY = height - 16;
   const topY = 8;
   const plotH = baseY - topY;
@@ -431,7 +437,7 @@ export function renderNetworkHistoryChart(history = {}, { month = '', width = 52
 
   const bars = values
     .map((v, i) => {
-      const h = v.bytes > 0 ? Math.max(2, (v.bytes / max) * plotH) : 0;
+      const h = v.bytes > 0 ? Math.max(2, Math.min(plotH, (v.bytes / scaleRef) * plotH)) : 0;
       const x = i * (barW + gap);
       if (h <= 0) return '';
       const dt = new Date(y, m - 1, v.day);
