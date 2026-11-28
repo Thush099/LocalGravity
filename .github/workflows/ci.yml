@@ -30,12 +30,16 @@ jobs:
       - name: Install ffmpeg (used by the media inspection tool)
         run: brew install ffmpeg
 
+      - name: Install ImageMagick (used to generate the app icon)
+        run: brew install imagemagick
+
       - name: Run checks
         run: npm run check
 
       - name: Build and verify macOS app bundle
         env:
           APP_BUNDLE_OVERRIDE: ${{ runner.temp }}/LocalGravity-CI.app
+          LOCALGRAVITY_ADHOC_SIGNING: '1'
         run: |
           bash scripts/build-app.sh
           plutil -lint "$APP_BUNDLE_OVERRIDE/Contents/Info.plist"

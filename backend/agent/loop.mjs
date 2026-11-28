@@ -10,8 +10,24 @@ import { getRepoPath, getRuntimePaths } from '../state/paths.mjs';
 import { saveConfig, saveSession } from '../state/storage.mjs';
 import { executeToolCall, evaluateToolSafety, generateToolPreview, TOOL_DEFINITIONS } from '../tools/registry.mjs';
 import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from './compactor.mjs';
+import { captureExplicitMemory } from './memory-capture.mjs';
+import { captureStandingPreference } from './standing-preferences.mjs';
+import { memoryCaptureNotices } from './memory-notices.mjs';
+import { failureNudge, mentionsFailure, recordActionFailure, unreportedFailureNote } from './turn-receipts.mjs';
+import { captureForget, forgetNotices } from './memory-forget.mjs';
+import { priorSessionNote } from './session-digest.mjs';
+import { dueReminderNotices } from './reminder-notices.mjs';
+import { appendAction, isTrailTool } from './action-log.mjs';
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
+import { planCompletionNote, planNudgeMessage, unfinishedPlanSteps } from './plan-accountability.mjs';
+import { goalContinuityNote, loadOpenGoals, persistGoalState } from './goal-continuity.mjs';
+import {
+  decompositionNudge,
+  unverifiedCompletionNote,
+  unverifiedCompletions,
+  verificationNudgeMessage,
+} from './goal-verification.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
 import { answerDirectSystemStatus, answerDirectWeather } from './direct-status.mjs';
 import { matchNamedHomeList, tryFastAnswer } from '../tools/fast-answer.mjs';
@@ -207,7 +223,21 @@ export async function runAgentTurn({
       ? `${String(userMessage || '').trim()}\n\n[Attached files]\n${attached.notes.join('\n')}`
       : String(userMessage || '').trim();
 
+  // Deterministic memory capture: an explicit "remember that …" is persisted
+  // even if the model never calls the knowledge tool itself. Matches the raw
+  // user message so attached-file notes can never mask the request.
+  const capturedFact = await captureExplicitMemory(userMessage, paths);
+  // A durable instruction ("from now on …", "never …") is a standing preference:
+  // it outlives the session and is injected into every later system prompt, so it
+  // is stored before the memory doc is loaded for this turn.
+  const capturedRule = await captureStandingPreference(userMessage, paths);
+  // The other end of capture: "forget that …" removes exactly one matching
+  // MEMORY.md bullet, and only when it is unambiguous.
+  const forgotten = await captureForget(userMessage, paths);
+
   if (!Array.isArray(session.messages)) session.messages = [];
+  // A brand-new session is not a blank slate: the last conversation is on disk.
+  const isFirstTurn = session.messages.length === 0;
   if (fullUserText || attached.images.length > 0) {
     session.messages.push({
       role: 'user',
@@ -218,6 +248,49 @@ export async function runAgentTurn({
     });
     session.updatedAt = new Date().toISOString();
     if (persistSession) await saveSession(session, paths);
+  }
+
+  // Continuity: on the first turn only, hand the model where the last session
+  // actually stopped — quoted, bounded, and explicitly ignorable. Turn-local,
+  // like the memory notices below, so it never becomes a standing preamble.
+  if (isFirstTurn && !isHeadless) {
+    const continuity = await priorSessionNote({ paths, excludeSessionId: session?.id }).catch(() => '');
+    if (continuity) {
+      session.messages.push({
+        role: 'user',
+        content: continuity,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // A reminder that came due while the user was living their life should not wait
+  // for them to ask. Turn-local, skipped in headless runs (an automation is not a
+  // person to remind), and only the quoted reminders are marked as delivered.
+  if (!isHeadless) {
+    const reminderNotes = await dueReminderNotices(paths).catch(() => []);
+    for (const note of reminderNotes) {
+      session.messages.push({
+        role: 'user',
+        content: note,
+        isSelfCorrection: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  // A capture the user cannot see is a capture they will not trust: tell the
+  // model what was just written so the reply confirms it instead of guessing.
+  // These notes are turn-local (stripped with the other self-correction turns).
+  const memoryNotices = [...memoryCaptureNotices({ fact: capturedFact, rule: capturedRule }), ...forgetNotices(forgotten)];
+  for (const notice of memoryNotices) {
+    session.messages.push({
+      role: 'user',
+      content: notice,
+      isSelfCorrection: true,
+      createdAt: new Date().toISOString(),
+    });
   }
 
   const provider = providerConfig.provider || 'ollama';
@@ -306,7 +379,16 @@ export async function runAgentTurn({
   const numCtx = Number(providerConfig.numCtx) || 8192;
   const tracker = new TurnStruggleTracker();
   const executedToolResults = [];
+  // Actions that did not happen this turn (blocked, denied, failed) — the ledger
+  // behind the "never claim a change you did not make" check.
+  const failedActions = [];
   let emptyOutputRetried = false;
+  let latestPlan = null;
+  let planNudged = false;
+  let failureNudged = false;
+  let decompNudged = false;
+  let verifyNudged = false;
+  const unverifiedDone = new Set();
 
   const [skills, knowledgeDocs, memoryDoc, learnedFixesExcerpt] = await Promise.all([
     listSkills(paths),
@@ -327,11 +409,14 @@ export async function runAgentTurn({
   });
   const activeTools = isLocalOllama ? compactToolDefinitions(selectedTools) : selectedTools;
 
+  const goalContext = goalContinuityNote(await loadOpenGoals(paths).catch(() => []), fullUserText);
   const systemPrompt = buildSystemPrompt({
     skills,
     suggestedSkills,
     knowledgeDocs,
     memoryContent: memoryDoc?.content || '',
+    goalContext,
+    memoryQuery: fullUserText,
     learnedFixesContent: learnedFixesExcerpt,
     repoPath: getRepoPath(),
     safetyMode,
@@ -444,6 +529,77 @@ export async function runAgentTurn({
       // Clean up temporary self-correction prompt from persisted history once resolved
       session.messages = session.messages.filter((m) => !m.isSelfCorrection);
 
+      // Plan accountability: never end a turn that silently abandons its own
+      // published plan. Nudge once to finish the remaining steps; if the model
+      // still ends there, append an honest note so the user sees what remains.
+      const isFinalAnswer = normalizedCalls.length === 0;
+      const unfinishedSteps = unfinishedPlanSteps(latestPlan);
+      // A change that did not happen must not be reported as done. Nudge once
+      // with the real reason; the note below covers an answer that still
+      // overclaims.
+      if (isFinalAnswer && failedActions.length > 0 && !failureNudged && step < maxSteps - 1) {
+        failureNudged = true;
+        session.messages.push({
+          role: 'assistant',
+          content: finalContent || response.content || '',
+          thinking: response.thinking || '',
+          createdAt: new Date().toISOString(),
+        });
+        session.messages.push({
+          role: 'user',
+          content: failureNudge(failedActions),
+          isSelfCorrection: true,
+          createdAt: new Date().toISOString(),
+        });
+        continue;
+      }
+      if (isFinalAnswer && unfinishedSteps.length > 0 && !planNudged && step < maxSteps - 1) {
+        planNudged = true;
+        session.messages.push({
+          role: 'assistant',
+          content: finalContent || response.content || '',
+          thinking: response.thinking || '',
+          createdAt: new Date().toISOString(),
+        });
+        session.messages.push({
+          role: 'user',
+          content: planNudgeMessage(unfinishedSteps),
+          isSelfCorrection: true,
+          createdAt: new Date().toISOString(),
+        });
+        continue;
+      }
+      // A claim backed by an action later in this same turn is no longer
+      // unverified at turn end: re-check the flagged set against the full
+      // tool log and correct the persisted goal record to match.
+      let unverifiedSteps = [...unverifiedDone].map((text) => ({ text }));
+      if (isFinalAnswer && unverifiedDone.size > 0) {
+        unverifiedSteps = unverifiedCompletions(
+          [],
+          unverifiedSteps.map((s) => ({ ...s, status: 'done' })),
+          executedToolResults,
+        );
+        if (latestPlan && unverifiedSteps.length !== unverifiedDone.size) {
+          await persistGoalState(latestPlan, {
+            paths,
+            sessionId: session?.id,
+            unverifiedTexts: unverifiedSteps.map((s) => s.text),
+          }).catch(() => {});
+        }
+      }
+      if (isFinalAnswer && (unfinishedSteps.length > 0 || unverifiedSteps.length > 0)) {
+        const note = planCompletionNote(unfinishedSteps) + unverifiedCompletionNote(unverifiedSteps);
+        finalContent = `${finalContent || response.content || ''}${note}`;
+        onEvent?.({ type: 'text_delta', text: note });
+      }
+      // The nudge is a request; this is the guarantee. If the answer still makes
+      // no mention of an action that failed, say so, with the tool's own words.
+      if (isFinalAnswer && failedActions.length > 0 && !mentionsFailure(finalContent || response.content || '')) {
+        const note = unreportedFailureNote(failedActions);
+        finalContent = `${finalContent || response.content || ''}${note}`;
+        onEvent?.({ type: 'text_delta', text: note });
+      }
+
       const assistantEntry = {
         role: 'assistant',
         content: normalizedCalls.length > 0 ? '' : finalContent || response.content || '',
@@ -509,7 +665,57 @@ export async function runAgentTurn({
         return gate.decision === 'allow';
       };
 
-      const recordCompletedToolCall = (tc, effectiveArgs, result) => {
+      const recordCompletedToolCall = async (tc, effectiveArgs, result) => {
+        // Durable trail: what actually changed on this machine, kept across
+        // sessions so "did that land?" has an answer later.
+        if (isTrailTool(tc.name)) {
+          await appendAction(paths, {
+            sessionId: session?.id,
+            tool: tc.name,
+            kind: result?.ok ? 'ok' : 'failed',
+            detail: result?.output,
+          });
+        }
+        if (tc.name === 'update_plan' && Array.isArray(result.plan)) {
+          // Cross-turn completion verification: a step newly marked done must
+          // have an observable action behind it this turn, or it stays flagged
+          // as unverified in the goal record for later turns to see.
+          for (const step of unverifiedCompletions(latestPlan, result.plan, executedToolResults)) {
+            unverifiedDone.add(step.text);
+          }
+          if (unverifiedDone.size > 0 && !verifyNudged) {
+            verifyNudged = true;
+            session.messages.push({
+              role: 'user',
+              content: verificationNudgeMessage([...unverifiedDone].map((text) => ({ text }))),
+              isSelfCorrection: true,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          latestPlan = result.plan;
+          await persistGoalState(result.plan, {
+            paths,
+            sessionId: session?.id,
+            unverifiedTexts: [...unverifiedDone],
+          }).catch(() => {});
+        }
+        // Goal decomposition: acting on a compound request without a plan gets
+        // one nudge to decompose it before the work goes untracked.
+        if (!decompNudged && !latestPlan && !PARALLEL_SAFE_READ_TOOLS.has(tc.name)) {
+          const nudge = decompositionNudge(fullUserText, {
+            planPublished: false,
+            mutatingAction: true,
+          });
+          if (nudge) {
+            decompNudged = true;
+            session.messages.push({
+              role: 'user',
+              content: nudge,
+              isSelfCorrection: true,
+              createdAt: new Date().toISOString(),
+            });
+          }
+        }
         const outcome = tracker.recordToolOutcome({
           name: tc.name,
           args: effectiveArgs,
@@ -527,6 +733,9 @@ export async function runAgentTurn({
           ok: result.ok,
           output: result.output,
         });
+        if (!result.ok) {
+          recordActionFailure(failedActions, { name: tc.name, reason: result.output, kind: 'error' });
+        }
 
         session.messages.push({
           role: 'tool',
@@ -597,6 +806,7 @@ export async function runAgentTurn({
             const { tc: batchTc, effectiveArgs: batchArgs } = batch[bIdx];
             const out = batchOutputs[bIdx];
             if (out.isDuplicate) {
+              recordActionFailure(failedActions, { name: batchTc.name, reason: out.message, kind: 'blocked' });
               session.messages.push({
                 role: 'tool',
                 toolCallId: batchTc.id,
@@ -612,7 +822,7 @@ export async function runAgentTurn({
                 output: out.message,
               });
             } else {
-              recordCompletedToolCall(batchTc, batchArgs, out.result);
+              await recordCompletedToolCall(batchTc, batchArgs, out.result);
             }
           }
           continue;
@@ -622,6 +832,7 @@ export async function runAgentTurn({
         if (tc.parseError) {
           tracker.recordParseError(tc.name, tc.parseError);
           const errOut = `Tool call "${tc.name}" failed JSON parsing: ${tc.parseError}. Re-emit valid double-quoted JSON arguments.`;
+          recordActionFailure(failedActions, { name: tc.name, reason: 'arguments failed JSON parsing', kind: 'blocked' });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: errOut });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: errOut });
           continue;
@@ -633,6 +844,7 @@ export async function runAgentTurn({
         // Break infinite duplicate tool call loops within the same turn
         const dupCheck = tracker.checkDuplicateCall(tc.name, effectiveArgs);
         if (dupCheck.isDuplicate) {
+          recordActionFailure(failedActions, { name: tc.name, reason: dupCheck.message, kind: 'blocked' });
           session.messages.push({
             role: 'tool',
             toolCallId: tc.id,
@@ -664,6 +876,8 @@ export async function runAgentTurn({
 
         if (gate.decision === 'block') {
           const blockedMsg = `Blocked by safety policy: ${gate.reason}`;
+          recordActionFailure(failedActions, { name: tc.name, reason: blockedMsg, kind: 'blocked' });
+          await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'blocked', detail: blockedMsg });
           session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: blockedMsg });
           onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: blockedMsg });
           continue;
@@ -686,6 +900,8 @@ export async function runAgentTurn({
 
           if (!decision?.approved) {
             const deniedMsg = `User denied ${tc.name}: ${decision?.reason || 'Cancelled by user.'}`;
+            recordActionFailure(failedActions, { name: tc.name, reason: deniedMsg, kind: 'blocked' });
+            await appendAction(paths, { sessionId: session?.id, tool: tc.name, kind: 'denied', detail: deniedMsg });
             session.messages.push({ role: 'tool', toolCallId: tc.id, toolName: tc.name, ok: false, content: deniedMsg });
             onEvent?.({ type: 'tool_result', toolCallId: tc.id, name: tc.name, ok: false, output: deniedMsg });
             continue;
@@ -718,7 +934,7 @@ export async function runAgentTurn({
           }
         );
 
-        recordCompletedToolCall(tc, effectiveArgs, result);
+        await recordCompletedToolCall(tc, effectiveArgs, result);
       }
 
       session.updatedAt = new Date().toISOString();

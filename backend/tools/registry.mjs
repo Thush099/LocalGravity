@@ -23,6 +23,7 @@ import {
   spotlightSearchTool,
   takeScreenshotTool,
 } from './macos-tool.mjs';
+import { cancelReminder } from './reminders.mjs';
 import { searchWebTool } from './web-tool.mjs';
 import { updatePlanTool } from './plan-tool.mjs';
 import { classifyCommand, classifyFileWrite, expandUserPath } from './safety.mjs';
@@ -37,6 +38,7 @@ import { sqliteTool } from './sqlite-tool.mjs';
 import { dockerTool } from './docker-tool.mjs';
 import { delegateTaskTool } from './agent-tool.mjs';
 import { collectSystemMetrics, summarizeSystemMetrics } from '../system-monitor.mjs';
+import { briefingTool } from './briefing-tool.mjs';
 
 export const TOOL_DEFINITIONS = [
   {
@@ -324,6 +326,21 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'cancel_reminder',
+      description:
+        'Cancel a reminder you set earlier, by its id or by (part of) its text. Stops the pending macOS notification and stops the briefing reporting it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Id of the reminder to cancel.' },
+          message: { type: 'string', description: 'Part of the reminder text, if the id is not known.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'inspect_media',
       description: 'Visually inspect a photo or extract a video frame so you can see and verify edits.',
       parameters: {
@@ -547,6 +564,31 @@ export const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           count: { type: 'number', description: 'How many top news stories to include (default 3).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'briefing',
+      description:
+        'A grounded situational briefing: system health, today\'s schedule, and any observed items worth flagging (high CPU, low battery, tight storage, imminent events). Use proactively on a greeting, "what\'s up", "how\'s my day", or when the user wants a quick orientation. Reports only observed state — never invents tasks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          focus: {
+            type: 'string',
+            description: 'Optional focus to frame the briefing around (e.g. "deep work", "travel").',
+          },
+          include_system: {
+            type: 'boolean',
+            description: 'Include live system metrics (default true).',
+          },
+          include_schedule: {
+            type: 'boolean',
+            description: 'Include today\'s schedule (default true).',
+          },
         },
       },
     },
@@ -800,6 +842,7 @@ const HARMLESS_ACTION_TOOLS = new Set([
   'open_url',
   'take_screenshot',
   'set_reminder',
+  'cancel_reminder',
 ]);
 
 /**
@@ -1101,7 +1144,26 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
       case 'run_shortcut':
         return await runShortcutTool(args);
       case 'set_reminder':
-        return await setReminderTool(args);
+        return await setReminderTool({ ...args, paths });
+      case 'cancel_reminder': {
+        const cancelled = await cancelReminder(paths, { id: args.id, message: args.message }).catch(
+          () => null,
+        );
+        if (!cancelled) {
+          const asked = String(args.id || args.message || '').trim();
+          return {
+            ok: false,
+            output: asked
+              ? `No pending reminder matches "${asked}".`
+              : 'Say which reminder to cancel — its id or part of its text.',
+          };
+        }
+        return {
+          ok: true,
+          output: `Cancelled the reminder "${cancelled.message}" scheduled for ${new Date(cancelled.fireAt).toLocaleString()}.`,
+          reminderId: cancelled.id,
+        };
+      }
       case 'spotlight_search':
         return await spotlightSearchTool(args);
       case 'take_screenshot':
@@ -1126,6 +1188,16 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         const metrics = await collectSystemMetrics();
         if (args.include_processes === false) metrics.processes = [];
         return { ok: true, output: summarizeSystemMetrics(metrics) };
+      }
+      case 'briefing': {
+        return {
+          ok: true,
+          output: await briefingTool({
+            focus: args.focus,
+            include_system: args.include_system,
+            include_schedule: args.include_schedule,
+          }),
+        };
       }
       case 'large_files': {
         // Lazy-loaded: actions.mjs imports executeToolCall from this module, so a

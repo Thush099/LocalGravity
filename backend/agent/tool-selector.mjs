@@ -1,5 +1,9 @@
 const MEDIA_EXT_RE = /\.(?:png|jpe?g|webp|heic|gif|tiff?|bmp|mp4|mov|mkv|webm|m4v|avi)$/i;
 
+// Hard bound on per-turn schema wire size for local models (prefill cost). Realistic
+// turns pick well under this; it only trims pathological pattern-heavy matches.
+export const MAX_SELECTED_TOOLS = 16;
+
 // Actionable requests get a small tool core even when no domain pattern matched, so the
 // local model can always act instead of replying that it cannot.
 const MUTATING_TASK_RE = /\b(?:fix|edit|write|create|make|build|install|uninstall|clean|organize|sort|delete|remove|move|copy|rename|update|refactor|debug|implement|generate|convert|deploy|commit|test|run|execute|compile|repair|replace|set\s+up|configure)\b/i;
@@ -184,7 +188,7 @@ const DOMAIN_TOOL_GROUPS = [
     pattern: /\b(?:clipboard|copy|paste|pbcopy|pbpaste)\b/i,
   },
   {
-    tools: ['show_notification', 'set_reminder'],
+    tools: ['show_notification', 'set_reminder', 'cancel_reminder'],
     pattern: /\b(?:notify|notification|alert|remind|reminder|timer|alarm|nudge|in \d+\s*(?:sec|second|min|minute|hour|hr)s?)\b/i,
   },
   {
@@ -215,6 +219,10 @@ const DOMAIN_TOOL_GROUPS = [
     tools: ['search_web', 'fetch_url', 'open_url'],
     pattern: /https?:\/\/|\b(?:search\s+the\s+web|web\s+search|google|internet|online|latest|news|look\s+up|lookup|fetch|url|website|webpage|web page|docs|github|article|link|scrape)\b/i,
   },
+  {
+    tools: ['briefing'],
+    pattern: /\b(?:briefing|what'?s up|how'?s my day|how'?s my (?:mac|computer|system)|daily (?:brief|summary)|what'?s (?:new|happening|today)|status report|how are (?:things|we))\b/i,
+  },
 ];
 
 /**
@@ -234,6 +242,14 @@ export function selectToolsForTurn(
   if (isPureTextTransform(userMessage)) return [];
 
   const selected = new Set();
+  const add = (name, bucket) => {
+    if (selected.has(name)) return;
+    selected.add(name);
+    bucket.push(name);
+  };
+  const continuityAdded = [];
+  const domainAdded = [];
+  const fallbackAdded = [];
 
   if (mode === 'researcher') {
     for (const name of ['search_web', 'fetch_url', 'open_url']) selected.add(name);
@@ -262,7 +278,7 @@ export function selectToolsForTurn(
     }
     if (Array.isArray(msg.toolCalls)) {
       for (const tc of msg.toolCalls) {
-        if (tc?.name) selected.add(tc.name);
+        if (tc?.name) add(tc.name, continuityAdded);
       }
     }
   }
@@ -274,7 +290,7 @@ export function selectToolsForTurn(
   const combinedText = recentTextParts.join('\n');
   for (const group of DOMAIN_TOOL_GROUPS) {
     if (group.pattern.test(combinedText)) {
-      for (const name of group.tools) selected.add(name);
+      for (const name of group.tools) add(name, domainAdded);
     }
   }
 
@@ -282,9 +298,27 @@ export function selectToolsForTurn(
   const isTaskLike = isMutatingTask || READ_TASK_RE.test(combinedText) || LOCAL_CONTEXT_RE.test(combinedText);
   const hasDiscoveryTool = [...selected].some((name) => DISCOVERY_TOOLS.has(name));
   if (isMutatingTask) {
-    for (const name of TASK_FALLBACK_TOOLS.mutating) selected.add(name);
+    for (const name of TASK_FALLBACK_TOOLS.mutating) add(name, fallbackAdded);
   } else if (isTaskLike && !hasDiscoveryTool) {
-    for (const name of TASK_FALLBACK_TOOLS.read) selected.add(name);
+    for (const name of TASK_FALLBACK_TOOLS.read) add(name, fallbackAdded);
+  }
+
+  // Cap schema wire size: every tool definition is per-turn model prefill cost, and a
+  // pattern-heavy message can match the whole catalog. Evict the pattern-matched tail
+  // first, then the oldest session-continuity picks, then fallbacks. Mode groups and
+  // media tools are never dropped.
+  let overflow = selected.size - MAX_SELECTED_TOOLS;
+  while (overflow > 0 && domainAdded.length) {
+    selected.delete(domainAdded.pop());
+    overflow -= 1;
+  }
+  while (overflow > 0 && continuityAdded.length) {
+    selected.delete(continuityAdded.shift());
+    overflow -= 1;
+  }
+  while (overflow > 0 && fallbackAdded.length) {
+    selected.delete(fallbackAdded.pop());
+    overflow -= 1;
   }
 
   return allTools.filter((tool) => selected.has(tool?.function?.name));

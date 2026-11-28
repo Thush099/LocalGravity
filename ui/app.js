@@ -185,7 +185,9 @@ const HUMAN_TOOL_META = {
   open_app: { label: 'Open App', summarize: (a) => a.name || '' },
   manage_notes: { label: 'Apple Notes', summarize: (a) => `${a.action || 'list'}${a.title ? ` · ${a.title}` : ''}` },
   set_reminder: { label: 'Set Reminder', summarize: (a) => `${a.seconds || 0}s` },
+  cancel_reminder: { label: 'Cancel Reminder', summarize: (a) => a.message || a.id || '' },
   system_stats: { label: 'System Stats', summarize: () => 'CPU, RAM, GPU & Swap' },
+  briefing: { label: 'Situational Briefing', summarize: (a) => a.focus || 'System & schedule' },
   network_usage: { label: 'Network Usage', summarize: () => 'Data used per app & this month' },
   speed_test: { label: 'Speed Test', summarize: () => 'Live internet speed' },
   world_news: { label: 'World News', summarize: () => 'Top global headlines' },
@@ -671,6 +673,12 @@ function describeModelRuntime() {
 
 let suggestionRequestId = 0;
 
+function showPanelError(selector, label) {
+  const el = $(selector);
+  if (!el) return;
+  el.innerHTML = `<div class="panel-error" role="alert">Couldn’t load ${label} — will retry on the next refresh.</div>`;
+}
+
 async function refreshSuggestions() {
   const requestId = ++suggestionRequestId;
   try {
@@ -679,7 +687,10 @@ async function refreshSuggestions() {
     state.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
     renderSmartAssist();
   } catch {
-    // Keep existing suggestions silently if unavailable
+    // Keep existing suggestions silently if unavailable; surface a first-load failure.
+    if (!state.suggestions || state.suggestions.length === 0) {
+      showPanelError('#dash-smart-assist', 'suggestions');
+    }
   }
 }
 
@@ -1154,7 +1165,10 @@ async function refreshSystemMetrics() {
       if (!hadMetrics) refreshSuggestions();
     } else if (state.view === 'monitor') renderMonitor();
   } catch {
-    // Keep the last snapshot; the next tick retries.
+    // Keep the last snapshot; surface a first-load failure.
+    if (!state.metrics) {
+      showPanelError('#dash-stats', 'system metrics');
+    }
   }
 }
 
@@ -1262,7 +1276,10 @@ async function loadSchedule() {
     renderScheduleWeek();
     renderSidebarBadges();
   } catch {
-    // Keep the last known schedule; the next view switch retries.
+    // Keep the last known schedule; surface a first-load failure.
+    if (!state.schedule || state.schedule.length === 0) {
+      showPanelError('#dash-agenda', 'the schedule');
+    }
   }
 }
 
