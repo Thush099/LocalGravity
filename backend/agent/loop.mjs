@@ -13,7 +13,7 @@ import { compactConversation, estimateMessagesTokens, estimateToolsTokens } from
 import { buildSystemPrompt } from './prompt.mjs';
 import { selectRelevantSkills } from './skill-match.mjs';
 import { compactToolDefinitions, selectToolsForTurn } from './tool-selector.mjs';
-import { answerDirectSystemStatus, answerDirectWeather, answerDirectLargeFiles } from './direct-status.mjs';
+import { answerDirectSystemStatus, answerDirectWeather } from './direct-status.mjs';
 import { matchNamedHomeList, tryFastAnswer } from '../tools/fast-answer.mjs';
 import {
   loadLearnedFixesExcerpt,
@@ -243,7 +243,6 @@ export async function runAgentTurn({
     const statusAnswer =
       (await answerDirectSystemStatus(fullUserText)) ||
       (await answerDirectWeather(fullUserText)) ||
-      (await answerDirectLargeFiles(fullUserText)) ||
       tryFastAnswer(fullUserText);
     if (statusAnswer) {
       const usage = { durationMs: Math.max(1, Date.now() - turnStartedAt), model: '' };
