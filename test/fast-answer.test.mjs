@@ -98,3 +98,15 @@ test('matchNamedHomeList stays null for ambiguous, complex, or non-listing input
   assert.equal(matchNamedHomeList("What's happening here?"), null);
   assert.equal(matchNamedHomeList('move Downloads to the trash'), null);
 });
+
+test('does date math with a base date plus or minus an offset', () => {
+  const plus = tryFastAnswer('2025-01-15 plus 45 days');
+  assert.ok(plus && /February 29|Mar 1|March 1/.test(plus.answer), plus && plus.answer);
+  const add = tryFastAnswer('add 45 days to 2025-01-15');
+  assert.ok(add && add.answer === plus.answer, 'add-phrase matches plus-phrase');
+  const minus = tryFastAnswer('2025-01-15 minus 2 weeks');
+  assert.ok(minus && /January 1\b/.test(minus.answer), minus && minus.answer);
+  assert.ok(/minus 2 weeks/.test(minus.answer), `label keeps the unit: ${minus && minus.answer}`);
+  // Ambiguous or malformed date math stays with the model.
+  assert.equal(tryFastAnswer('2025-01-15 plus 45 daysx'), null);
+});

@@ -223,6 +223,30 @@ function matchDateMath(text) {
     const target = addDays(now, n);
     return { kind: 'date-math', ok: true, answer: `${n} days from now is **${fmt(target)}**.` };
   }
+  // "2025-01-15 plus 45 days" / "Mar 5 minus 2 weeks" — a base date plus or minus an offset.
+  m = text.match(/^(.+?)\s+(plus|\+|minus|-|after|before)\s+(\d+)\s+(days?|weeks?)$/i);
+  if (m) {
+    const base = parseDateToken(m[1], now);
+    const unitWord = /week/i.test(m[4]) ? 'weeks' : 'days';
+    const n = Number(m[3]) * (/week/i.test(m[4]) ? 7 : 1);
+    const subtract = /^(minus|before|-)$/i.test(m[2]);
+    if (base) {
+      const target = addDays(base, subtract ? -n : n);
+      return { kind: 'date-math', ok: true, answer: `${fmt(base)} ${subtract ? 'minus' : 'plus'} ${m[3]} ${unitWord} is **${fmt(target)}**.` };
+    }
+  }
+  // "add 45 days to 2025-01-15" / "subtract 2 weeks from Mar 5".
+  m = text.match(/^(add|subtract)\s+(\d+)\s+(days?|weeks?)\s+(?:to|from)\s+(.+)$/i);
+  if (m) {
+    const base = parseDateToken(m[4], now);
+    const unitWord = /week/i.test(m[3]) ? 'weeks' : 'days';
+    const n = Number(m[2]) * (/week/i.test(m[3]) ? 7 : 1);
+    const subtract = /^subtract$/i.test(m[1]);
+    if (base) {
+      const target = addDays(base, subtract ? -n : n);
+      return { kind: 'date-math', ok: true, answer: `${fmt(base)} ${subtract ? 'minus' : 'plus'} ${m[2]} ${unitWord} is **${fmt(target)}**.` };
+    }
+  }
   return null;
 }
 
