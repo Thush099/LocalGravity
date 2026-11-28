@@ -98,6 +98,10 @@ export function detectOnDemandLookup(t) {
   if (/\b(?:my|local|this)\s+(?:ip|ip\s+address)\b/.test(t)) return 'ip';
   if (/\b(?:macos|mac\s+os|os)\s+version\b/.test(t)) return 'os_version';
   if (/\b(?:computer|machine|device|host)\s*name\b/.test(t) || /\bhostname\b/.test(t)) return 'computer_name';
+  // CPU/cores only for a clear lookup; "my cpu is slow" is diagnosis and handled by the DIAGNOSTIC guard.
+  if (/\b(?:how many|number of)\s+(?:cpu\s+)?(?:cores?|processors?|threads?)\b/.test(t) ||
+      /\b(?:what|which)\s+(?:cpu|processor|chip)\b/.test(t) ||
+      /\b(?:cpu|processor|chip)\s+(?:info|specs?|count|cores?)\b/.test(t)) return 'cpu';
   // Wi-Fi name only for a clear lookup; a status report ("my wifi is down") goes to the model.
   if (/\b(?:down|not\s+working|broken|slow|disconnect|no\s+internet|dropping)\b/.test(t)) return null;
   if (/\b(?:my|this|current)\s+(?:wifi|wi-fi|wireless|network)\b/.test(t) ||
@@ -119,6 +123,13 @@ async function lookupSystemValue(metric) {
   if (metric === 'computer_name') {
     const name = await exec('/usr/sbin/scutil', ['--get', 'ComputerName']);
     return name ? `This Mac is named **${name}**.` : null;
+  }
+  if (metric === 'cpu') {
+    const brand = await exec('/usr/sbin/sysctl', ['-n', 'machdep.cpu.brand_string']);
+    const physical = await exec('/usr/sbin/sysctl', ['-n', 'hw.physicalcpu']);
+    const logical = await exec('/usr/sbin/sysctl', ['-n', 'hw.ncpu']);
+    if (!brand && !physical) return null;
+    return `**${brand || 'CPU'}** — ${physical || '?'} cores / ${logical || '?'} threads.`;
   }
   if (metric === 'wifi') {
     const out = await exec('/usr/sbin/networksetup', ['-getairportnetwork', 'en0']);

@@ -163,3 +163,10 @@ test('answers disk-usage lookups on device and leaves how-to to the model', asyn
   assert.equal(await answerDirectLargeFiles('how do I free up disk space'), null);
   assert.equal(await answerDirectLargeFiles('what is 2+2'), null);
 });
+
+test('detects cpu/cores lookups and leaves diagnosis to the model', () => {
+  assert.equal(detectOnDemandLookup('how many cores does this have'), 'cpu');
+  assert.equal(detectOnDemandLookup('what processor is in this mac'), 'cpu');
+  assert.equal(detectOnDemandLookup('cpu info'), 'cpu');
+  assert.equal(detectOnDemandLookup('my cpu is slow'), null); // diagnosis, not a lookup
+});
