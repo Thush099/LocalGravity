@@ -3123,6 +3123,7 @@ button, input, textarea, select {
 
 .dash-storage-alert {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3137,6 +3138,23 @@ button, input, textarea, select {
 
 .dash-storage-alert .primary-btn {
   flex: none;
+}
+
+.storage-audit-out {
+  flex-basis: 100%;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary, #000) 45%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  box-sizing: border-box;
 }
 
 .stat-label {

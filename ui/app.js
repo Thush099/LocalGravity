@@ -598,9 +598,12 @@ function setStatSpark(sparkId, valueId, percent, valueLabel, values = [], color 
 
 // When storage runs low, surface a prominent, actionable recovery path that
 // launches the Clean-downloads capability instead of a bare warning.
+let storageAuditText = '';
+let lastAlertDisk = null;
 function renderStorageAlert(disk) {
   const el = $('#dash-storage-alert');
   if (!el) return;
+  lastAlertDisk = disk;
   if (!isStorageLow(disk)) {
     el.classList.add('hidden');
     el.innerHTML = '';
@@ -610,7 +613,28 @@ function renderStorageAlert(disk) {
   const usedPercent = disk?.usedPercent ?? 0;
   el.classList.remove('hidden');
   el.innerHTML = `<span>Storage is low — ${escapeHtml(formatBytes(freeBytes))} free (${Math.round(usedPercent)}% used). Clearing downloads is the fastest way to reclaim space.</span>
-    <button type="button" class="primary-btn" data-clean-downloads="1">Clean downloads plan</button>`;
+    <button type="button" class="primary-btn" data-storage-audit="1">${storageAuditText ? 'Hide details' : "What's eating space?"}</button>
+    <button type="button" class="primary-btn" data-clean-downloads="1">Clean downloads plan</button>
+    ${storageAuditText ? `<pre class="storage-audit-out">${escapeHtml(storageAuditText)}</pre>` : ''}`;
+}
+
+// Fetch the instant storage audit (read-only culprits) on demand and show it
+// inline, so a full disk explains itself without waiting on the slow model.
+async function loadStorageAudit() {
+  if (storageAuditText) {
+    storageAuditText = '';
+    renderStorageAlert(lastAlertDisk);
+    return;
+  }
+  storageAuditText = 'Scanning what is eating your space…';
+  renderStorageAlert(lastAlertDisk);
+  try {
+    const res = await apiRequest('/api/actions/run', { method: 'POST', body: JSON.stringify({ action: 'storage_audit' }) });
+    storageAuditText = res?.output || '(no output)';
+  } catch (err) {
+    storageAuditText = `Could not load the storage audit: ${err.message}`;
+  }
+  renderStorageAlert(lastAlertDisk);
 }
 
 async function runCapability(promptText, autorun = true) {
@@ -4026,6 +4050,7 @@ function wireEvents() {
   $('#theme-toggle-btn')?.addEventListener('click', cycleTheme);
   $('#dash-storage-alert')?.addEventListener('click', (e) => {
     if (e.target.closest('[data-clean-downloads]')) runCapability(getCleanDownloadsPrompt(), true);
+    if (e.target.closest('[data-storage-audit]')) loadStorageAudit();
   });
 
   $$('.superpower-card').forEach((card) => {
