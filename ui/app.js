@@ -171,6 +171,7 @@ const HUMAN_TOOL_META = {
   calculate: { label: 'Calculator', summarize: (a) => a.expression || '' },
   update_plan: { label: 'Task Plan', summarize: (a) => `${a.steps?.length || 0} steps` },
   inspect_media: { label: 'Inspect Media', summarize: (a) => a.path ? String(a.path).split('/').pop() : '' },
+  download_media: { label: 'Download Media', summarize: (a) => a.url ? String(a.url).split('/').filter(Boolean).pop() || a.url : '' },
   take_screenshot: { label: 'Take Screenshot', summarize: (a) => a.mode || 'screen' },
   search_web: { label: 'Web Search', summarize: (a) => a.query || '' },
   fetch_url: { label: 'Fetch Page', summarize: (a) => a.url || '' },

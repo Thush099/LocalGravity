@@ -10,6 +10,7 @@ import { calculateTool } from './calc-tool.mjs';
 import { runCommandTool } from './exec-tool.mjs';
 import { buildCompactDiff, editFileTool, listDir, moveFileTool, readFileTool, searchFilesTool, writeFileTool } from './fs-tools.mjs';
 import { inspectMediaTool } from './media-tool.mjs';
+import { downloadMediaTool } from './download-tool.mjs';
 import { readDocumentTool } from './doc-tool.mjs';
 import {
   copyToClipboardTool,
@@ -333,6 +334,23 @@ export const TOOL_DEFINITIONS = [
           timestamp_sec: { type: 'number', description: 'Optional video timestamp in seconds.' },
         },
         required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'download_media',
+      description: 'Download a media file (audio or video) from a URL via yt-dlp — SoundCloud, YouTube, Vimeo, movies, and other sites. Saves into one folder, bounded and with a timeout. Use when the user asks to download a song, track, video, or movie.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The http(s) URL of the media to download.' },
+          output_dir: { type: 'string', description: 'Optional folder to save into (default ~/Downloads).' },
+          audio_only: { type: 'boolean', description: 'Extract audio only (mp3) instead of downloading the video.' },
+          max_items: { type: 'number', description: 'Max items to download for a playlist (1-10, default 1).' },
+        },
+        required: ['url'],
       },
     },
   },
@@ -1122,6 +1140,8 @@ export async function executeToolCall({ name: rawName, args: rawArgs = {} }, con
         return await searchWebTool(args, { fetchFn: context.fetchFn || globalThis.fetch });
       case 'inspect_media':
         return await inspectMediaTool(args, { cwd: context.cwd });
+      case 'download_media':
+        return await downloadMediaTool(args, { cwd: context.cwd });
       case 'system_stats': {
         const metrics = await collectSystemMetrics();
         if (args.include_processes === false) metrics.processes = [];

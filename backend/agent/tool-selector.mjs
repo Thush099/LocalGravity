@@ -163,6 +163,13 @@ const DOMAIN_TOOL_GROUPS = [
       /\b(?:photo|image|picture|video|clip|reel|frame|ffmpeg|magick|sips|crop|resize|thumbnail|color\s+grade|audio|png|jpe?g|mp4|mov|webp|heic)\b|\bwhat(?:'s| is)\s+on\s+(?:my\s+|the\s+)?(?:screen|display)\b/i,
   },
   {
+    tools: ['download_media'],
+    // Downloading media is its own verb; don't drag it into every "video"/"audio"
+    // mention (inspect_media covers those). Require download intent or a media site.
+    pattern:
+      /\b(?:download|grab|rip|save|pull)\b.{0,50}\b(?:song|track|audio|music|video|movie|film|clip|album|playlist|mp3|mp4|media|episode|podcast)\b|\b(?:download|save|grab|rip)\b.{0,40}\b(?:soundcloud|youtube|youtu\.be|vimeo)\b/i,
+  },
+  {
     tools: ['spotlight_search'],
     pattern: /\b(?:spotlight|mdfind|find my|locate|where is my|pdf|keynote|pages|numbers|invoice|resume|receipt|downloads)\b/i,
   },
