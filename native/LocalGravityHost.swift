@@ -44,6 +44,17 @@ final class GravityWebView: WKWebView {
     }
 }
 
+/// Transparent strip layered over the web view's top edge. A full-size WKWebView
+/// swallows titlebar drags — its internal WKContentView consumes mouse events before
+/// any GravityWebView.mouseDown override runs — so this strip, sitting above the web
+/// view, owns the window drag from the top edge. The traffic-light buttons live in the
+/// titlebar above this strip, so they stay clickable.
+final class WindowDragStrip: NSView {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow!
     private var visualEffectView: NSVisualEffectView!
@@ -309,6 +320,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
 
         visualEffectView.addSubview(webView)
+
+        let dragStrip = WindowDragStrip(
+            frame: NSRect(x: 0, y: visualEffectView.bounds.height - 28, width: visualEffectView.bounds.width, height: 28))
+        dragStrip.autoresizingMask = [.width, .minYMargin]
+        visualEffectView.addSubview(dragStrip, positioned: .above, relativeTo: webView)
+
         window.contentView = visualEffectView
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
