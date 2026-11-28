@@ -63,6 +63,22 @@ export function detectSystemStatusMetric(message) {
   return null;
 }
 
+// Deterministic disk-usage lookup: "largest files" / "what's using my disk" runs the
+// bounded large-files scan directly instead of a slow model round-trip.
+export async function answerDirectLargeFiles(message) {
+  const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  if (!t || t.length > 80) return null;
+  if (HOW_TO_RE.test(t)) return null;
+  const hit =
+    /\b(?:largest|biggest|top)\s+files?\b/.test(t) ||
+    /\bwhat(?:'s| is|s)?\s+(?:using|taking|eating|hogging)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space)\b/.test(t) ||
+    /\b(?:disk|storage|space)\s+(?:usage|use|hog)\b/.test(t);
+  if (!hit) return null;
+  const { largeFilesTool } = await import('../actions.mjs');
+  const res = await largeFilesTool({ limit: 8 }).catch(() => null);
+  return res?.ok && res.output ? { answer: res.output } : null;
+}
+
 // Single-value system lookups answered on demand (each one command, no model).
 export function detectOnDemandLookup(t) {
   if (/\b(?:my|local|this)\s+(?:ip|ip\s+address)\b/.test(t)) return 'ip';

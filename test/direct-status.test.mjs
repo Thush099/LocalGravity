@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectSystemStatusMetric, formatSystemStatus, detectWeatherQuery, formatWeather, detectOnDemandLookup, answerDirectSystemStatus } from '../backend/agent/direct-status.mjs';
+import { detectSystemStatusMetric, formatSystemStatus, detectWeatherQuery, formatWeather, detectOnDemandLookup, answerDirectSystemStatus, answerDirectLargeFiles } from '../backend/agent/direct-status.mjs';
 
 test('detects direct system-status questions', () => {
   assert.equal(detectSystemStatusMetric('how much RAM is free'), 'memory');
@@ -155,4 +155,12 @@ test('detects the connected wifi network lookup', () => {
   assert.equal(detectOnDemandLookup('what network am i connected to'), 'wifi');
   assert.equal(detectOnDemandLookup('my wifi network'), 'wifi');
   assert.equal(detectOnDemandLookup('the wifi network is down'), null);
+});
+
+test('detects disk-usage lookups and leaves how-to to the model', async () => {
+  // These are deterministic scans, not model questions.
+  const hit = await answerDirectLargeFiles('what is using my disk space');
+  assert.ok(hit && typeof hit.answer === 'string' && hit.answer.length > 0, 'returns a report');
+  assert.equal(await answerDirectLargeFiles('how do I free up disk space'), null);
+  assert.equal(await answerDirectLargeFiles('what is 2+2'), null);
 });
