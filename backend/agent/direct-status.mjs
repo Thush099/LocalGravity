@@ -63,6 +63,36 @@ export function detectSystemStatusMetric(message) {
   return null;
 }
 
+// Deterministic disk-usage lookup: "largest files" / "what's using my disk" runs the
+// bounded large-files scan directly instead of a slow model round-trip. Wrapped so a
+// scan/import failure never breaks the fast-path chain — it just falls to the model.
+export async function answerDirectLargeFiles(message) {
+  try {
+    const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+    if (!t || t.length > 80) return null;
+    if (HOW_TO_RE.test(t)) return null;
+    const hit =
+      /\b(?:largest|biggest|top)\s+files?\b/.test(t) ||
+      /\bwhat(?:'s| is|s)?\s+(?:using|taking|eating|hogging)\s+(?:up\s+)?(?:my\s+)?(?:disk|storage|space)\b/.test(t) ||
+      /\b(?:disk|storage|space)\s+(?:usage|use|hog)\b/.test(t);
+    if (!hit) return null;
+    const [os, path, fs, actions] = await Promise.all([
+      import('node:os'), import('node:path'), import('node:fs/promises'), import('../actions.mjs'),
+    ]);
+    const home = os.default.homedir();
+    const dirs = [];
+    for (const name of ['Downloads', 'Desktop', 'Documents']) {
+      const dir = path.default.join(home, name);
+      try { await fs.default.access(dir); dirs.push(dir); } catch { /* not present */ }
+    }
+    if (!dirs.length) return null;
+    const output = await actions.largestFilesReport(dirs, { limit: 8, maxEntries: 1200, maxDirs: 150 });
+    return output ? { answer: output } : null;
+  } catch {
+    return null;
+  }
+}
+
 // Single-value system lookups answered on demand (each one command, no model).
 export function detectOnDemandLookup(t) {
   if (/\b(?:my|local|this)\s+(?:ip|ip\s+address)\b/.test(t)) return 'ip';
